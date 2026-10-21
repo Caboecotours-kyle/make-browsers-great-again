@@ -1,0 +1,166 @@
+{
+  "date": "2026-10-21 03:16",
+  "chrome_version": "155.0.8059.85",
+  "workload": {
+    "profiles": 3,
+    "tabs": 50,
+    "urls": [
+      "https://www.youtube.com/",
+      "https://x.com/",
+      "https://www.spotify.com/",
+      "https://www.netflix.com/",
+      "https://www.bbc.com/news",
+      "https://www.bbc.com/sport",
+      "https://arstechnica.com/",
+      "https://techcrunch.com/",
+      "https://www.google.com/maps/search/coffee+near+san+francisco",
+      "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+      "https://www.amazon.com/",
+      "https://www.amazon.com/s?k=mechanical+keyboard",
+      "https://www.imdb.com/",
+      "https://www.imdb.com/chart/top/",
+      "https://www.twitch.tv/",
+      "https://www.twitch.tv/directory",
+      "https://maps.google.com/",
+      "https://github.com/",
+      "https://linear.app/",
+      "https://stripe.com/",
+      "https://www.google.com/",
+      "https://github.com/rust-lang/rust",
+      "https://github.com/chromiumembedded/cef",
+      "https://github.com/torvalds/linux",
+      "https://github.com/apple/swift",
+      "https://github.com/microsoft/vscode",
+      "https://github.com/facebook/react",
+      "https://news.ycombinator.com/",
+      "https://lobste.rs/",
+      "https://news.ycombinator.com/newest",
+      "https://www.cloudflare.com/",
+      "https://tailwindcss.com/",
+      "https://nodejs.org/en",
+      "https://www.google.com/search?q=chromium+embedded+framework",
+      "https://www.wikipedia.org/",
+      "https://www.apple.com/",
+      "https://www.microsoft.com/",
+      "https://en.wikipedia.org/wiki/Web_browser",
+      "https://en.wikipedia.org/wiki/Chromium_(web_browser)",
+      "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+      "https://en.wikipedia.org/wiki/Swift_(programming_language)",
+      "https://en.wikipedia.org/wiki/MacOS",
+      "https://archive.org/",
+      "https://en.wikipedia.org/wiki/Linux",
+      "https://en.wikipedia.org/wiki/Internet",
+      "https://en.wikipedia.org/wiki/Arc_(web_browser)",
+      "https://en.wikipedia.org/wiki/Apple_silicon",
+      "https://en.wikipedia.org/wiki/WebKit",
+      "https://www.producthunt.com/",
+      "https://archive.org/details/texts"
+    ]
+  },
+  "runs": {
+    "mbga-default": {
+      "first_window_s": 0.9584758281707764,
+      "loaded": {
+        "total_mb": 900.4775619506836,
+        "processes": 6,
+        "by_kind": {
+          "browser": {
+            "count": 1,
+            "mb": 170.1892852783203
+          },
+          "gpu-process": {
+            "count": 1,
+            "mb": 86.20440673828125
+          },
+          "utility": {
+            "count": 2,
+            "mb": 48.01759338378906
+          },
+          "renderer": {
+            "count": 2,
+            "mb": 596.066276550293
+          }
+        }
+      },
+      "tabs_with_title": 46,
+      "idle_loaded": {
+        "seconds": 120.0,
+        "cpu_percent": 0.17630825465272637,
+        "power_mw": 1.3639354753939037,
+        "wakeups_per_s": 8.299010746779514,
+        "memory": {
+          "total_mb": 899.5244369506836,
+          "processes": 6,
+          "by_kind": {
+            "browser": {
+              "count": 1,
+              "mb": 169.1424102783203
+            },
+            "gpu-process": {
+              "count": 1,
+              "mb": 86.22003173828125
+            },
+            "utility": {
+              "count": 2,
+              "mb": 48.01759338378906
+            },
+            "renderer": {
+              "count": 2,
+              "mb": 596.144401550293
+            }
+          }
+        }
+      },
+      "after_idle": {
+        "total_mb": 681.0712890625,
+        "processes": 6,
+        "by_kind": {
+          "browser": {
+            "count": 1,
+            "mb": 164.5955352783203
+          },
+          "gpu-process": {
+            "count": 1,
+            "mb": 84.59503173828125
+          },
+          "utility": {
+            "count": 2,
+            "mb": 48.61134338378906
+          },
+          "renderer": {
+            "count": 2,
+            "mb": 383.2693786621094
+          }
+        }
+      },
+      "idle_after": {
+        "seconds": 120.0,
+        "cpu_percent": 0.19008866044085745,
+        "power_mw": 0.4421148806618853,
+        "wakeups_per_s": 6.698948154501712,
+        "memory": {
+          "total_mb": 680.3213119506836,
+          "processes": 6,
+          "by_kind": {
+            "browser": {
+              "count": 1,
+              "mb": 163.7830352783203
+            },
+            "gpu-process": {
+              "count": 1,
+              "mb": 84.59503173828125
+            },
+            "utility": {
+              "count": 2,
+              "mb": 48.61134338378906
+            },
+            "renderer": {
+              "count": 2,
+              "mb": 383.33190155029297
+            }
+          }
+        }
+      }
+    }
+  }
+}

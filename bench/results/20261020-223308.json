@@ -1,0 +1,418 @@
+{
+  "date": "2026-10-20 21:56",
+  "chrome_version": "155.0.8059.85",
+  "workload": {
+    "profiles": 3,
+    "tabs": 50,
+    "urls": [
+      "https://www.youtube.com/",
+      "https://x.com/",
+      "https://www.spotify.com/",
+      "https://www.netflix.com/",
+      "https://www.bbc.com/news",
+      "https://www.bbc.com/sport",
+      "https://arstechnica.com/",
+      "https://techcrunch.com/",
+      "https://www.google.com/maps/search/coffee+near+san+francisco",
+      "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+      "https://www.amazon.com/",
+      "https://www.amazon.com/s?k=mechanical+keyboard",
+      "https://www.imdb.com/",
+      "https://www.imdb.com/chart/top/",
+      "https://www.twitch.tv/",
+      "https://www.twitch.tv/directory",
+      "https://maps.google.com/",
+      "https://github.com/",
+      "https://linear.app/",
+      "https://stripe.com/",
+      "https://www.google.com/",
+      "https://github.com/rust-lang/rust",
+      "https://github.com/chromiumembedded/cef",
+      "https://github.com/torvalds/linux",
+      "https://github.com/apple/swift",
+      "https://github.com/microsoft/vscode",
+      "https://github.com/facebook/react",
+      "https://news.ycombinator.com/",
+      "https://lobste.rs/",
+      "https://news.ycombinator.com/newest",
+      "https://www.cloudflare.com/",
+      "https://tailwindcss.com/",
+      "https://nodejs.org/en",
+      "https://www.google.com/search?q=chromium+embedded+framework",
+      "https://www.wikipedia.org/",
+      "https://www.apple.com/",
+      "https://www.microsoft.com/",
+      "https://en.wikipedia.org/wiki/Web_browser",
+      "https://en.wikipedia.org/wiki/Chromium_(web_browser)",
+      "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+      "https://en.wikipedia.org/wiki/Swift_(programming_language)",
+      "https://en.wikipedia.org/wiki/MacOS",
+      "https://archive.org/",
+      "https://en.wikipedia.org/wiki/Linux",
+      "https://en.wikipedia.org/wiki/Internet",
+      "https://en.wikipedia.org/wiki/Arc_(web_browser)",
+      "https://en.wikipedia.org/wiki/Apple_silicon",
+      "https://en.wikipedia.org/wiki/WebKit",
+      "https://www.producthunt.com/",
+      "https://archive.org/details/texts"
+    ]
+  },
+  "runs": {
+    "chrome": {
+      "first_window_s": 0.8271629810333252,
+      "loaded": {
+        "total_mb": 4280.292022705078,
+        "processes": 65,
+        "by_kind": {
+          "browser": {
+            "count": 1,
+            "mb": 282.8616409301758
+          },
+          "gpu-process": {
+            "count": 1,
+            "mb": 327.8765335083008
+          },
+          "utility": {
+            "count": 6,
+            "mb": 241.03724670410156
+          },
+          "renderer": {
+            "count": 57,
+            "mb": 3428.5166015625
+          }
+        }
+      },
+      "idle_loaded": {
+        "seconds": 120.0,
+        "cpu_percent": 29.32596140551511,
+        "power_mw": 361.2682379380586,
+        "wakeups_per_s": 420.59772658707914,
+        "memory": {
+          "total_mb": 4194.744415283203,
+          "processes": 64,
+          "by_kind": {
+            "browser": {
+              "count": 1,
+              "mb": 282.0803909301758
+            },
+            "gpu-process": {
+              "count": 1,
+              "mb": 333.4234085083008
+            },
+            "utility": {
+              "count": 5,
+              "mb": 217.73941040039062
+            },
+            "renderer": {
+              "count": 57,
+              "mb": 3361.501205444336
+            }
+          }
+        }
+      },
+      "after_idle": {
+        "total_mb": 4283.856010437012,
+        "processes": 65,
+        "by_kind": {
+          "browser": {
+            "count": 1,
+            "mb": 282.5179138183594
+          },
+          "gpu-process": {
+            "count": 1,
+            "mb": 315.5015335083008
+          },
+          "utility": {
+            "count": 5,
+            "mb": 217.70816040039062
+          },
+          "renderer": {
+            "count": 58,
+            "mb": 3468.128402709961
+          }
+        }
+      },
+      "idle_after": {
+        "seconds": 120.0,
+        "cpu_percent": 22.31958232181028,
+        "power_mw": 136.33779992656014,
+        "wakeups_per_s": 371.968084695739,
+        "memory": {
+          "total_mb": 4292.324760437012,
+          "processes": 65,
+          "by_kind": {
+            "browser": {
+              "count": 1,
+              "mb": 282.5179138183594
+            },
+            "gpu-process": {
+              "count": 1,
+              "mb": 315.5015335083008
+            },
+            "utility": {
+              "count": 5,
+              "mb": 217.67691040039062
+            },
+            "renderer": {
+              "count": 58,
+              "mb": 3476.628402709961
+            }
+          }
+        }
+      },
+      "memory_saver_state": null,
+      "restore": {
+        "first_window_s": 0.7629451751708984,
+        "at_30s": {
+          "total_mb": 2049.554786682129,
+          "processes": 31,
+          "by_kind": {
+            "browser": {
+              "count": 3,
+              "mb": 185.5654296875
+            },
+            "gpu-process": {
+              "count": 1,
+              "mb": 551.4545211791992
+            },
+            "utility": {
+              "count": 5,
+              "mb": 120.66105651855469
+            },
+            "renderer": {
+              "count": 22,
+              "mb": 1191.873779296875
+            }
+          }
+        },
+        "at_90s": {
+          "total_mb": 1628.3430099487305,
+          "processes": 23,
+          "by_kind": {
+            "browser": {
+              "count": 1,
+              "mb": 171.67363739013672
+            },
+            "gpu-process": {
+              "count": 1,
+              "mb": 533.4388961791992
+            },
+            "utility": {
+              "count": 5,
+              "mb": 116.48918151855469
+            },
+            "renderer": {
+              "count": 16,
+              "mb": 806.7412948608398
+            }
+          }
+        }
+      }
+    },
+    "mbga-awake": {
+      "first_window_s": 1.1007349491119385,
+      "loaded": {
+        "total_mb": 3105.1112060546875,
+        "processes": 34,
+        "by_kind": {
+          "browser": {
+            "count": 1,
+            "mb": 230.1580810546875
+          },
+          "gpu-process": {
+            "count": 1,
+            "mb": 191.53253173828125
+          },
+          "utility": {
+            "count": 4,
+            "mb": 226.44171142578125
+          },
+          "renderer": {
+            "count": 28,
+            "mb": 2456.9788818359375
+          }
+        }
+      },
+      "tabs_with_title": 47,
+      "idle_loaded": {
+        "seconds": 120.0,
+        "cpu_percent": 6.621161805550313,
+        "power_mw": 14.299992720750758,
+        "wakeups_per_s": 38.85075162544617,
+        "memory": {
+          "total_mb": 3006.7050247192383,
+          "processes": 34,
+          "by_kind": {
+            "browser": {
+              "count": 1,
+              "mb": 230.1424560546875
+            },
+            "gpu-process": {
+              "count": 1,
+              "mb": 185.09503173828125
+            },
+            "utility": {
+              "count": 4,
+              "mb": 227.20733642578125
+            },
+            "renderer": {
+              "count": 28,
+              "mb": 2364.2602005004883
+            }
+          }
+        }
+      },
+      "restore": {
+        "first_window_s": 0.9292957782745361,
+        "at_30s": {
+          "total_mb": 320.02166748046875,
+          "processes": 5,
+          "by_kind": {
+            "browser": {
+              "count": 1,
+              "mb": 79.7045669555664
+            },
+            "gpu-process": {
+              "count": 1,
+              "mb": 70.28239440917969
+            },
+            "utility": {
+              "count": 2,
+              "mb": 51.47076416015625
+            },
+            "renderer": {
+              "count": 1,
+              "mb": 118.5639419555664
+            }
+          }
+        },
+        "at_90s": {
+          "total_mb": 298.22479248046875,
+          "processes": 5,
+          "by_kind": {
+            "browser": {
+              "count": 1,
+              "mb": 87.28271484375
+            },
+            "gpu-process": {
+              "count": 1,
+              "mb": 67.67301940917969
+            },
+            "utility": {
+              "count": 2,
+              "mb": 48.51763916015625
+            },
+            "renderer": {
+              "count": 1,
+              "mb": 94.75141906738281
+            }
+          }
+        }
+      }
+    },
+    "mbga-default": {
+      "first_window_s": 1.165574073791504,
+      "loaded": {
+        "total_mb": 1007.9979019165039,
+        "processes": 10,
+        "by_kind": {
+          "browser": {
+            "count": 1,
+            "mb": 182.0642852783203
+          },
+          "gpu-process": {
+            "count": 1,
+            "mb": 86.21998596191406
+          },
+          "utility": {
+            "count": 4,
+            "mb": 192.64474487304688
+          },
+          "renderer": {
+            "count": 4,
+            "mb": 547.0688858032227
+          }
+        }
+      },
+      "tabs_with_title": 47,
+      "idle_loaded": {
+        "seconds": 120.0,
+        "cpu_percent": 0.22517283879825933,
+        "power_mw": 0.7076092483830007,
+        "wakeups_per_s": 11.440671226749751,
+        "memory": {
+          "total_mb": 1007.4041519165039,
+          "processes": 10,
+          "by_kind": {
+            "browser": {
+              "count": 1,
+              "mb": 181.9392852783203
+            },
+            "gpu-process": {
+              "count": 1,
+              "mb": 86.21998596191406
+            },
+            "utility": {
+              "count": 4,
+              "mb": 191.95724487304688
+            },
+            "renderer": {
+              "count": 4,
+              "mb": 547.2876358032227
+            }
+          }
+        }
+      },
+      "after_idle": {
+        "total_mb": 581.2757186889648,
+        "processes": 8,
+        "by_kind": {
+          "browser": {
+            "count": 1,
+            "mb": 178.65801239013672
+          },
+          "gpu-process": {
+            "count": 1,
+            "mb": 61.46998596191406
+          },
+          "utility": {
+            "count": 4,
+            "mb": 190.66036987304688
+          },
+          "renderer": {
+            "count": 2,
+            "mb": 150.4873504638672
+          }
+        }
+      },
+      "idle_after": {
+        "seconds": 120.0,
+        "cpu_percent": 0.17793118978873884,
+        "power_mw": 1.2908378590211889,
+        "wakeups_per_s": 4.549505726353072,
+        "memory": {
+          "total_mb": 599.9944686889648,
+          "processes": 8,
+          "by_kind": {
+            "browser": {
+              "count": 1,
+              "mb": 178.54863739013672
+            },
+            "gpu-process": {
+              "count": 1,
+              "mb": 81.78248596191406
+            },
+            "utility": {
+              "count": 4,
+              "mb": 190.72286987304688
+            },
+            "renderer": {
+              "count": 2,
+              "mb": 148.9404754638672
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,252 @@
+[
+  {
+    "trial": "baseline",
+    "switches": "",
+    "total_mb": 3084.267204284668,
+    "processes": 34,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 231.9393081665039
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 182.26683807373047
+      },
+      "utility": {
+        "count": 4,
+        "mb": 238.84796142578125
+      },
+      "renderer": {
+        "count": 28,
+        "mb": 2431.2130966186523
+      }
+    }
+  },
+  {
+    "trial": "safe",
+    "switches": "--enable-features=MemoryPurgeInBackground:memory_purge_background_min_delay/20s/memory_purge_background_max_delay/30s,NetworkServiceInProcess2 --disable-features=AudioServiceOutOfProcess,Prerender2,BackForwardCache --enable-low-end-device-mode --js-flags=--optimize-for-size --js-flags=--max-semi-space-size=1",
+    "total_mb": 2918.8115158081055,
+    "processes": 32,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 311.51757049560547
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 171.65760040283203
+      },
+      "utility": {
+        "count": 2,
+        "mb": 51.48632049560547
+      },
+      "renderer": {
+        "count": 28,
+        "mb": 2384.1500244140625
+      }
+    }
+  },
+  {
+    "trial": "safe+v8-saver",
+    "switches": "--enable-features=MemoryPurgeInBackground:memory_purge_background_min_delay/20s/memory_purge_background_max_delay/30s,NetworkServiceInProcess2 --disable-features=AudioServiceOutOfProcess,Prerender2,BackForwardCache --enable-low-end-device-mode --js-flags=--optimize-for-size --js-flags=--max-semi-space-size=1 --js-flags=--memory-saver-mode",
+    "total_mb": 2922.670867919922,
+    "processes": 32,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 311.58011627197266
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 168.29820251464844
+      },
+      "utility": {
+        "count": 2,
+        "mb": 51.61138916015625
+      },
+      "renderer": {
+        "count": 28,
+        "mb": 2391.1811599731445
+      }
+    }
+  },
+  {
+    "trial": "safe+shared",
+    "switches": "--enable-features=MemoryPurgeInBackground:memory_purge_background_min_delay/20s/memory_purge_background_max_delay/30s,NetworkServiceInProcess2 --disable-features=AudioServiceOutOfProcess,Prerender2,BackForwardCache --enable-low-end-device-mode --js-flags=--optimize-for-size --js-flags=--max-semi-space-size=1 --disable-site-isolation-trials --renderer-process-limit=8",
+    "total_mb": 2245.1160430908203,
+    "processes": 14,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 290.0956268310547
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 140.86070251464844
+      },
+      "utility": {
+        "count": 2,
+        "mb": 50.142616271972656
+      },
+      "renderer": {
+        "count": 10,
+        "mb": 1764.0170974731445
+      }
+    }
+  },
+  {
+    "trial": "safe+shared+pa",
+    "switches": "--enable-features=MemoryPurgeInBackground:memory_purge_background_min_delay/20s/memory_purge_background_max_delay/30s,NetworkServiceInProcess2 --disable-features=AudioServiceOutOfProcess,Prerender2,BackForwardCache --enable-low-end-device-mode --js-flags=--optimize-for-size --js-flags=--max-semi-space-size=1 --disable-site-isolation-trials --renderer-process-limit=8 --disable-features=PartitionAllocBackupRefPtr,PartitionAllocSchedulerLoopQuarantine,PartitionAllocWithAdvancedChecks,PartitionAllocEventuallyZeroFreedMemory",
+    "total_mb": 2293.6627349853516,
+    "processes": 14,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 285.8768997192383
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 159.95447540283203
+      },
+      "utility": {
+        "count": 2,
+        "mb": 49.45509338378906
+      },
+      "renderer": {
+        "count": 10,
+        "mb": 1798.3762664794922
+      }
+    }
+  },
+  {
+    "trial": "baseline",
+    "switches": "",
+    "total_mb": 3108.7200088500977,
+    "processes": 34,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 220.8299102783203
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 182.21998596191406
+      },
+      "utility": {
+        "count": 4,
+        "mb": 240.51988220214844
+      },
+      "renderer": {
+        "count": 28,
+        "mb": 2465.150230407715
+      }
+    }
+  },
+  {
+    "trial": "safe",
+    "switches": "--enable-features=MemoryPurgeInBackground:memory_purge_background_min_delay/20s/memory_purge_background_max_delay/30s,NetworkServiceInProcess2 --disable-features=AudioServiceOutOfProcess,Prerender2,BackForwardCache --enable-low-end-device-mode --js-flags=--optimize-for-size --js-flags=--max-semi-space-size=1",
+    "total_mb": 2775.7474822998047,
+    "processes": 31,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 282.59580993652344
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 149.06380462646484
+      },
+      "utility": {
+        "count": 2,
+        "mb": 51.564491271972656
+      },
+      "renderer": {
+        "count": 27,
+        "mb": 2292.5233764648438
+      }
+    }
+  },
+  {
+    "trial": "safe+v8-saver",
+    "switches": "--enable-features=MemoryPurgeInBackground:memory_purge_background_min_delay/20s/memory_purge_background_max_delay/30s,NetworkServiceInProcess2 --disable-features=AudioServiceOutOfProcess,Prerender2,BackForwardCache --enable-low-end-device-mode --js-flags=--optimize-for-size --js-flags=--max-semi-space-size=1 --js-flags=--memory-saver-mode",
+    "total_mb": 2816.763153076172,
+    "processes": 31,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 299.3456726074219
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 152.03255462646484
+      },
+      "utility": {
+        "count": 2,
+        "mb": 51.470741271972656
+      },
+      "renderer": {
+        "count": 27,
+        "mb": 2313.9141845703125
+      }
+    }
+  },
+  {
+    "trial": "safe+shared",
+    "switches": "--enable-features=MemoryPurgeInBackground:memory_purge_background_min_delay/20s/memory_purge_background_max_delay/30s,NetworkServiceInProcess2 --disable-features=AudioServiceOutOfProcess,Prerender2,BackForwardCache --enable-low-end-device-mode --js-flags=--optimize-for-size --js-flags=--max-semi-space-size=1 --disable-site-isolation-trials --renderer-process-limit=8",
+    "total_mb": 2314.116111755371,
+    "processes": 14,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 289.0331039428711
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 163.72010040283203
+      },
+      "utility": {
+        "count": 2,
+        "mb": 48.09571838378906
+      },
+      "renderer": {
+        "count": 10,
+        "mb": 1813.267189025879
+      }
+    }
+  },
+  {
+    "trial": "safe+shared+pa",
+    "switches": "--enable-features=MemoryPurgeInBackground:memory_purge_background_min_delay/20s/memory_purge_background_max_delay/30s,NetworkServiceInProcess2 --disable-features=AudioServiceOutOfProcess,Prerender2,BackForwardCache --enable-low-end-device-mode --js-flags=--optimize-for-size --js-flags=--max-semi-space-size=1 --disable-site-isolation-trials --renderer-process-limit=8 --disable-features=PartitionAllocBackupRefPtr,PartitionAllocSchedulerLoopQuarantine,PartitionAllocWithAdvancedChecks,PartitionAllocEventuallyZeroFreedMemory",
+    "total_mb": 2240.5221099853516,
+    "processes": 14,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 280.8768539428711
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 143.8764190673828
+      },
+      "utility": {
+        "count": 2,
+        "mb": 47.61127471923828
+      },
+      "renderer": {
+        "count": 10,
+        "mb": 1768.1575622558594
+      }
+    }
+  }
+]

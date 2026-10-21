@@ -1,0 +1,262 @@
+[
+  {
+    "trial": "best",
+    "switches": "--renderer-process-limit=4 --disable-quic",
+    "total_mb": 2165.830879211426,
+    "late_mb": 2272.9873123168945,
+    "processes": 11,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 301.26770782470703
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 140.03255462646484
+      },
+      "utility": {
+        "count": 2,
+        "mb": 50.173866271972656
+      },
+      "renderer": {
+        "count": 7,
+        "mb": 1674.3567504882812
+      }
+    }
+  },
+  {
+    "trial": "best+no-strong-cache",
+    "switches": "--renderer-process-limit=4 --disable-quic --disable-features=MemoryCacheStrongReference",
+    "total_mb": 2121.815185546875,
+    "late_mb": 2133.4402770996094,
+    "processes": 11,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 279.45513916015625
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 141.22005462646484
+      },
+      "utility": {
+        "count": 2,
+        "mb": 50.01763916015625
+      },
+      "renderer": {
+        "count": 7,
+        "mb": 1651.1223526000977
+      }
+    }
+  },
+  {
+    "trial": "best+reclaim-tiles",
+    "switches": "--renderer-process-limit=4 --disable-quic --enable-features=ReclaimPrepaintTilesWhenIdle,ReclaimOldPrepaintTiles",
+    "total_mb": 2192.565116882324,
+    "late_mb": 2221.7215270996094,
+    "processes": 11,
+    "tabs_with_title": 46,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 301.1268768310547
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 162.28262329101562
+      },
+      "utility": {
+        "count": 2,
+        "mb": 50.00196838378906
+      },
+      "renderer": {
+        "count": 7,
+        "mb": 1679.1536483764648
+      }
+    }
+  },
+  {
+    "trial": "best+purge-on-freeze",
+    "switches": "--renderer-process-limit=4 --disable-quic --enable-features=MemoryPurgeOnFreeze",
+    "total_mb": 2121.846504211426,
+    "late_mb": 2148.706085205078,
+    "processes": 11,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 300.87705993652344
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 141.28250885009766
+      },
+      "utility": {
+        "count": 2,
+        "mb": 49.86132049560547
+      },
+      "renderer": {
+        "count": 7,
+        "mb": 1629.8256149291992
+      }
+    }
+  },
+  {
+    "trial": "best+small-young-gen",
+    "switches": "--renderer-process-limit=4 --disable-quic --js-flags=--max-semi-space-size=1",
+    "total_mb": 2232.9403915405273,
+    "late_mb": 2258.424949645996,
+    "processes": 11,
+    "tabs_with_title": 48,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 294.79893493652344
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 168.59507751464844
+      },
+      "utility": {
+        "count": 2,
+        "mb": 51.408241271972656
+      },
+      "renderer": {
+        "count": 7,
+        "mb": 1718.1381378173828
+      }
+    }
+  },
+  {
+    "trial": "best",
+    "switches": "--renderer-process-limit=4 --disable-quic",
+    "total_mb": 2249.846389770508,
+    "late_mb": 2251.0029373168945,
+    "processes": 11,
+    "tabs_with_title": 48,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 280.4237060546875
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 166.73572540283203
+      },
+      "utility": {
+        "count": 2,
+        "mb": 50.12701416015625
+      },
+      "renderer": {
+        "count": 7,
+        "mb": 1752.559944152832
+      }
+    }
+  },
+  {
+    "trial": "best+no-strong-cache",
+    "switches": "--renderer-process-limit=4 --disable-quic --disable-features=MemoryCacheStrongReference",
+    "total_mb": 2124.5655517578125,
+    "late_mb": 2141.8937911987305,
+    "processes": 11,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 299.1897201538086
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 140.23565673828125
+      },
+      "utility": {
+        "count": 2,
+        "mb": 51.970924377441406
+      },
+      "renderer": {
+        "count": 7,
+        "mb": 1633.1692504882812
+      }
+    }
+  },
+  {
+    "trial": "best+reclaim-tiles",
+    "switches": "--renderer-process-limit=4 --disable-quic --enable-features=ReclaimPrepaintTilesWhenIdle,ReclaimOldPrepaintTiles",
+    "total_mb": 2138.4245834350586,
+    "late_mb": 2172.377799987793,
+    "processes": 11,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 289.4237060546875
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 142.26690673828125
+      },
+      "utility": {
+        "count": 2,
+        "mb": 50.126991271972656
+      },
+      "renderer": {
+        "count": 7,
+        "mb": 1656.6069793701172
+      }
+    }
+  },
+  {
+    "trial": "best+purge-on-freeze",
+    "switches": "--renderer-process-limit=4 --disable-quic --enable-features=MemoryPurgeOnFreeze",
+    "total_mb": 2161.908866882324,
+    "late_mb": 2108.096481323242,
+    "processes": 11,
+    "tabs_with_title": 48,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 268.59571838378906
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 142.31378173828125
+      },
+      "utility": {
+        "count": 2,
+        "mb": 50.064491271972656
+      },
+      "renderer": {
+        "count": 7,
+        "mb": 1700.9348754882812
+      }
+    }
+  },
+  {
+    "trial": "best+small-young-gen",
+    "switches": "--renderer-process-limit=4 --disable-quic --js-flags=--max-semi-space-size=1",
+    "total_mb": 2114.0647506713867,
+    "late_mb": 2148.8618087768555,
+    "processes": 11,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 273.6580810546875
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 138.89190673828125
+      },
+      "utility": {
+        "count": 2,
+        "mb": 49.86134338378906
+      },
+      "renderer": {
+        "count": 7,
+        "mb": 1651.653419494629
+      }
+    }
+  }
+]

@@ -1,0 +1,202 @@
+[
+  {
+    "trial": "safe+shared",
+    "switches": "--enable-features=MemoryPurgeInBackground:memory_purge_background_min_delay/20s/memory_purge_background_max_delay/30s,NetworkServiceInProcess2 --disable-features=AudioServiceOutOfProcess,Prerender2,BackForwardCache --enable-low-end-device-mode --js-flags=--optimize-for-size --js-flags=--max-semi-space-size=1 --disable-site-isolation-trials --renderer-process-limit=8",
+    "total_mb": 2354.9755325317383,
+    "processes": 14,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 302.2831268310547
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 166.15762329101562
+      },
+      "utility": {
+        "count": 2,
+        "mb": 50.18951416015625
+      },
+      "renderer": {
+        "count": 10,
+        "mb": 1836.3452682495117
+      }
+    }
+  },
+  {
+    "trial": "shared4",
+    "switches": "--enable-features=MemoryPurgeInBackground:memory_purge_background_min_delay/20s/memory_purge_background_max_delay/30s,NetworkServiceInProcess2 --disable-features=AudioServiceOutOfProcess,Prerender2,BackForwardCache --enable-low-end-device-mode --js-flags=--optimize-for-size --js-flags=--max-semi-space-size=1 --disable-site-isolation-trials --renderer-process-limit=4",
+    "total_mb": 2188.063606262207,
+    "processes": 10,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 285.6112289428711
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 162.37630462646484
+      },
+      "utility": {
+        "count": 2,
+        "mb": 49.83009338378906
+      },
+      "renderer": {
+        "count": 6,
+        "mb": 1690.245979309082
+      }
+    }
+  },
+  {
+    "trial": "shared+no-quic",
+    "switches": "--enable-features=MemoryPurgeInBackground:memory_purge_background_min_delay/20s/memory_purge_background_max_delay/30s,NetworkServiceInProcess2 --disable-features=AudioServiceOutOfProcess,Prerender2,BackForwardCache --enable-low-end-device-mode --js-flags=--optimize-for-size --js-flags=--max-semi-space-size=1 --disable-site-isolation-trials --renderer-process-limit=8 --disable-quic",
+    "total_mb": 2286.7096099853516,
+    "processes": 14,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 286.8612518310547
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 141.89190673828125
+      },
+      "utility": {
+        "count": 2,
+        "mb": 50.064491271972656
+      },
+      "renderer": {
+        "count": 10,
+        "mb": 1807.891960144043
+      }
+    }
+  },
+  {
+    "trial": "shared+pa-tuning",
+    "switches": "--enable-features=MemoryPurgeInBackground:memory_purge_background_min_delay/20s/memory_purge_background_max_delay/30s,NetworkServiceInProcess2 --disable-features=AudioServiceOutOfProcess,Prerender2,BackForwardCache --enable-low-end-device-mode --js-flags=--optimize-for-size --js-flags=--max-semi-space-size=1 --disable-site-isolation-trials --renderer-process-limit=8 --enable-features=PartitionAllocUseDenserDistribution,PartitionAllocSortActiveSlotSpans,PartitionAllocStraightenLargerSlotSpanFreeLists --disable-features=PartitionAllocLargeEmptySlotSpanRing,PartitionAllocLargeThreadCacheSize",
+    "total_mb": 2331.256622314453,
+    "processes": 14,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 291.7206268310547
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 161.22003173828125
+      },
+      "utility": {
+        "count": 2,
+        "mb": 50.220741271972656
+      },
+      "renderer": {
+        "count": 10,
+        "mb": 1828.0952224731445
+      }
+    }
+  },
+  {
+    "trial": "safe+shared",
+    "switches": "--enable-features=MemoryPurgeInBackground:memory_purge_background_min_delay/20s/memory_purge_background_max_delay/30s,NetworkServiceInProcess2 --disable-features=AudioServiceOutOfProcess,Prerender2,BackForwardCache --enable-low-end-device-mode --js-flags=--optimize-for-size --js-flags=--max-semi-space-size=1 --disable-site-isolation-trials --renderer-process-limit=8",
+    "total_mb": 2418.85066986084,
+    "processes": 14,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 300.4706497192383
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 163.84507751464844
+      },
+      "utility": {
+        "count": 2,
+        "mb": 51.189491271972656
+      },
+      "renderer": {
+        "count": 10,
+        "mb": 1903.3454513549805
+      }
+    }
+  },
+  {
+    "trial": "shared4",
+    "switches": "--enable-features=MemoryPurgeInBackground:memory_purge_background_min_delay/20s/memory_purge_background_max_delay/30s,NetworkServiceInProcess2 --disable-features=AudioServiceOutOfProcess,Prerender2,BackForwardCache --enable-low-end-device-mode --js-flags=--optimize-for-size --js-flags=--max-semi-space-size=1 --disable-site-isolation-trials --renderer-process-limit=4",
+    "total_mb": 2145.3139266967773,
+    "processes": 10,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 290.7674789428711
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 148.45447540283203
+      },
+      "utility": {
+        "count": 2,
+        "mb": 51.892662048339844
+      },
+      "renderer": {
+        "count": 6,
+        "mb": 1654.1993103027344
+      }
+    }
+  },
+  {
+    "trial": "shared+no-quic",
+    "switches": "--enable-features=MemoryPurgeInBackground:memory_purge_background_min_delay/20s/memory_purge_background_max_delay/30s,NetworkServiceInProcess2 --disable-features=AudioServiceOutOfProcess,Prerender2,BackForwardCache --enable-low-end-device-mode --js-flags=--optimize-for-size --js-flags=--max-semi-space-size=1 --disable-site-isolation-trials --renderer-process-limit=8 --disable-quic",
+    "total_mb": 2248.8814849853516,
+    "processes": 14,
+    "tabs_with_title": 47,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 288.6737518310547
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 141.22007751464844
+      },
+      "utility": {
+        "count": 2,
+        "mb": 50.345741271972656
+      },
+      "renderer": {
+        "count": 10,
+        "mb": 1768.6419143676758
+      }
+    }
+  },
+  {
+    "trial": "shared+pa-tuning",
+    "switches": "--enable-features=MemoryPurgeInBackground:memory_purge_background_min_delay/20s/memory_purge_background_max_delay/30s,NetworkServiceInProcess2 --disable-features=AudioServiceOutOfProcess,Prerender2,BackForwardCache --enable-low-end-device-mode --js-flags=--optimize-for-size --js-flags=--max-semi-space-size=1 --disable-site-isolation-trials --renderer-process-limit=8 --enable-features=PartitionAllocUseDenserDistribution,PartitionAllocSortActiveSlotSpans,PartitionAllocStraightenLargerSlotSpanFreeLists --disable-features=PartitionAllocLargeEmptySlotSpanRing,PartitionAllocLargeThreadCacheSize",
+    "total_mb": 2422.1477966308594,
+    "processes": 14,
+    "tabs_with_title": 48,
+    "by_kind": {
+      "browser": {
+        "count": 1,
+        "mb": 301.9081726074219
+      },
+      "gpu-process": {
+        "count": 1,
+        "mb": 169.01692962646484
+      },
+      "utility": {
+        "count": 2,
+        "mb": 50.486366271972656
+      },
+      "renderer": {
+        "count": 10,
+        "mb": 1900.736328125
+      }
+    }
+  }
+]

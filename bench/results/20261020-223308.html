@@ -1,0 +1,57 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>MBGA vs Chrome: 3 profiles, 50 tabs</title><style>
+.viz-root { color-scheme: light; --surface-1:#fcfcfb; --surface-2:#f1f0ec; --text-primary:#0b0b0b;
+  --text-secondary:#52514e; --rule:#e2e1dc; --series-1:#2a78d6; --series-2:#eb6834; --series-3:#1baf7a; }
+@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) .viz-root {
+  color-scheme: dark; --surface-1:#1a1a19; --surface-2:#262624; --text-primary:#f0efec;
+  --text-secondary:#c3c2b7; --rule:#3a3a37; --series-1:#3987e5; --series-2:#d95926; --series-3:#199e70; } }
+:root[data-theme="dark"] .viz-root { color-scheme: dark; --surface-1:#1a1a19; --surface-2:#262624;
+  --text-primary:#f0efec; --text-secondary:#c3c2b7; --rule:#3a3a37; --series-1:#3987e5;
+  --series-2:#d95926; --series-3:#199e70; }
+body { margin:0; }
+.viz-root { background:var(--surface-1); color:var(--text-primary); padding:28px 32px 40px;
+  font:14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; }
+h1 { font-size:20px; margin:0 0 4px; } h2 { font-size:15px; margin:0 0 2px; }
+.sub, .note { color:var(--text-secondary); margin:0 0 14px; } .note { font-size:12.5px; margin-bottom:12px; }
+.legend { display:flex; gap:18px; margin:14px 0 22px; color:var(--text-secondary); font-size:13px; }
+.legend span::before { content:""; display:inline-block; width:10px; height:10px; border-radius:3px;
+  margin-right:6px; vertical-align:-1px; background:var(--c); }
+.grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(380px, 1fr)); gap:28px 40px; }
+section { border-top:1px solid var(--rule); padding-top:14px; }
+.row { display:grid; grid-template-columns:150px 1fr; align-items:center; min-height:30px; }
+.label { color:var(--text-secondary); font-size:13px; }
+.track { position:relative; display:flex; align-items:center; gap:8px; }
+.bar { height:18px; border-radius:0 4px 4px 0; display:block; }
+.s1 { background:var(--series-1); } .s2 { background:var(--series-2); } .s3 { background:var(--series-3); }
+.value { font-variant-numeric:tabular-nums; font-size:13px; white-space:nowrap; }
+.na { color:var(--text-secondary); font-size:12.5px; font-style:italic; }
+.row[data-tip] { cursor:default; } .row[data-tip]:hover .bar { filter:brightness(1.08); }
+#tip { position:fixed; pointer-events:none; background:var(--surface-2); color:var(--text-primary);
+  border:1px solid var(--rule); border-radius:8px; padding:6px 10px; font-size:12.5px; display:none;
+  box-shadow:0 4px 14px rgba(0,0,0,.12); max-width:360px; }
+details { margin-top:30px; } summary { cursor:pointer; color:var(--text-secondary); }
+table { border-collapse:collapse; margin-top:12px; font-variant-numeric:tabular-nums; font-size:13px; }
+th, td { padding:6px 14px; border-bottom:1px solid var(--rule); text-align:right; }
+th[scope=row], thead th:first-child { text-align:left; color:var(--text-secondary); font-weight:500; }
+.foot { color:var(--text-secondary); font-size:12.5px; margin-top:22px; max-width:900px; }
+</style></head>
+<body><div class="viz-root">
+<h1>MBGA vs Chrome: 3 profiles, 50 tabs</h1>
+<p class="sub">2026-10-20 21:56 · Chrome 155.0.8059.85 (fresh profile) · MBGA on
+Chromium 154 · Apple M1 Max, 64 GB · physical memory footprint summed over every process</p>
+<div class="legend"><span style="--c:var(--series-1)">Chrome</span><span style="--c:var(--series-2)">MBGA, sleeping off</span><span style="--c:var(--series-3)">MBGA, defaults</span></div>
+<div class="grid"><section><h2>Memory with all 50 tabs loaded</h2><p class="note">90 s after the last tab opened. Lower is better.</p><div class="row" data-tip="Chrome: 4,280 MB · 65 processes · 57 renderers"><span class="label">Chrome</span><span class="track"><span class="bar s1" style="width:100.0%"></span><span class="value">4,280 MB</span></span></div><div class="row" data-tip="MBGA, sleeping off: 3,105 MB · 34 processes · 28 renderers"><span class="label">MBGA, sleeping off</span><span class="track"><span class="bar s2" style="width:72.5%"></span><span class="value">3,105 MB</span></span></div><div class="row" data-tip="MBGA, defaults: 1,008 MB · 10 processes · 4 renderers"><span class="label">MBGA, defaults</span><span class="track"><span class="bar s3" style="width:23.5%"></span><span class="value">1,008 MB</span></span></div></section><section><h2>Memory after 12 minutes untouched</h2><p class="note">Same session, nobody touching it. MBGA's defaults put idle tabs to sleep.</p><div class="row" data-tip="Chrome: 4,284 MB · 65 processes · 58 renderers"><span class="label">Chrome</span><span class="track"><span class="bar s1" style="width:100.0%"></span><span class="value">4,284 MB</span></span></div><div class="row"><span class="label">MBGA, sleeping off</span><span class="na">not measured in this run</span></div><div class="row" data-tip="MBGA, defaults: 581 MB · 8 processes · 2 renderers"><span class="label">MBGA, defaults</span><span class="track"><span class="bar s3" style="width:13.6%"></span><span class="value">581 MB</span></span></div></section><section><h2>Idle power with all tabs loaded</h2><p class="note">Average over 2 minutes of idling, summed over every process.</p><div class="row" data-tip="Chrome: 361 mW · CPU 29.3% of one core"><span class="label">Chrome</span><span class="track"><span class="bar s1" style="width:100.0%"></span><span class="value">361 mW</span></span></div><div class="row" data-tip="MBGA, sleeping off: 14 mW · CPU 6.6% of one core"><span class="label">MBGA, sleeping off</span><span class="track"><span class="bar s2" style="width:4.0%"></span><span class="value">14 mW</span></span></div><div class="row" data-tip="MBGA, defaults: 1 mW · CPU 0.2% of one core"><span class="label">MBGA, defaults</span><span class="track"><span class="bar s3" style="width:0.5%"></span><span class="value">1 mW</span></span></div></section><section><h2>Memory 90 s after restoring the session</h2><p class="note">Cold launch with the saved 50-tab session.</p><div class="row" data-tip="Chrome: 1,628 MB · 23 processes · 16 renderers"><span class="label">Chrome</span><span class="track"><span class="bar s1" style="width:100.0%"></span><span class="value">1,628 MB</span></span></div><div class="row" data-tip="MBGA, sleeping off: 298 MB · 5 processes · 1 renderers"><span class="label">MBGA, sleeping off</span><span class="track"><span class="bar s2" style="width:18.3%"></span><span class="value">298 MB</span></span></div><div class="row"><span class="label">MBGA, defaults</span><span class="na">not measured in this run</span></div></section></div>
+<details><summary>All measurements as a table</summary><table><thead><tr><th></th><th>Chrome</th><th>MBGA, sleeping off</th><th>MBGA, defaults</th></tr></thead><tbody><tr><th scope=row>Memory, all loaded</th><td>4,280 MB</td><td>3,105 MB</td><td>1,008 MB</td></tr><tr><th scope=row>Processes, all loaded</th><td>65 </td><td>34 </td><td>10 </td></tr><tr><th scope=row>Renderers, all loaded</th><td>57 </td><td>28 </td><td>4 </td></tr><tr><th scope=row>Idle CPU, all loaded</th><td>29.3%</td><td>6.6%</td><td>0.2%</td></tr><tr><th scope=row>Idle power, all loaded</th><td>361 mW</td><td>14 mW</td><td>1 mW</td></tr><tr><th scope=row>Memory after 12 min</th><td>4,284 MB</td><td>–</td><td>581 MB</td></tr><tr><th scope=row>Idle CPU after 12 min</th><td>22.3%</td><td>–</td><td>0.2%</td></tr><tr><th scope=row>Idle power after 12 min</th><td>136 mW</td><td>–</td><td>1 mW</td></tr><tr><th scope=row>Restore: first window</th><td>0.76 s</td><td>0.93 s</td><td>–</td></tr><tr><th scope=row>Restore: memory at 30 s</th><td>2,050 MB</td><td>320 MB</td><td>–</td></tr><tr><th scope=row>Restore: memory at 90 s</th><td>1,628 MB</td><td>298 MB</td><td>–</td></tr></tbody></table></details>
+<p class="foot">Same 50 URLs in both browsers, split over three profiles (MBGA: favorites, pinned
+tabs and folders, Today tabs; Chrome: one window per profile). Real sites, so page content
+varies between runs. Arc itself was not measured; Chrome stands in as a stock Chromium browser.</p>
+<div id="tip" role="tooltip"></div></div><script>
+const tip = document.getElementById('tip');
+document.querySelectorAll('.row[data-tip]').forEach(row => {
+  row.addEventListener('mousemove', e => {
+    tip.textContent = row.dataset.tip; tip.style.display = 'block';
+    tip.style.left = (e.clientX + 14) + 'px'; tip.style.top = (e.clientY + 12) + 'px';
+  });
+  row.addEventListener('mouseleave', () => tip.style.display = 'none');
+});
+</script></body></html>
