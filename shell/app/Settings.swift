@@ -181,6 +181,10 @@ private final class SettingsPaneController: NSViewController {
             guard let position else { return }
             UserDefaults.standard.set(anchors[position.selectedSegment].rawValue, forKey: DeveloperSettings.anchorKey)
         }
+        let devTools = popUp(["Beside the page", "In a separate window"]) { i in
+            UserDefaults.standard.set(i == 1, forKey: DeveloperSettings.devToolsInWindowKey)
+        }
+        refreshers.append { devTools.selectItem(at: DeveloperSettings.docksDevTools ? 0 : 1) }
         let dependents: [NSControl] = [everywhere, collapses, position]
         refreshers.append {
             let on = DeveloperSettings.enabled
@@ -198,6 +202,8 @@ private final class SettingsPaneController: NSViewController {
             [label("Toolbar:"), collapses],
             [label("Position:"), position],
             [NSGridCell.emptyContentView, caption("You can also drag the toolbar along the top of the page.")],
+            [label("Developer tools open:"), devTools],
+            [NSGridCell.emptyContentView, caption("Beside the page, each tab keeps its own; drag the edge to resize. ⌥⌘I opens and closes them.")],
         ]
     }
 

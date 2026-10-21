@@ -89,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     case "pick": store.togglePicking()
                     case "screenshot": store.screenshotPage()
                     case "source": store.viewSource()
+                    case "devtools": store.openDevTools()
                     default: NSLog("unknown developer action %@", String(action))
                     }
                 }

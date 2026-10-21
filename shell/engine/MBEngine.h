@@ -61,6 +61,8 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
 /// Picking an element ended: one was picked (and DevTools opened on it) or
 /// the person pressed Escape.
 - (void)webViewDidStopPicking:(MBWebView*)view;
+/// DevTools opened or closed: -devToolsWindow appeared or went away.
+- (void)webViewDidChangeDevTools:(MBWebView*)view;
 @end
 
 @interface MBEngine : NSObject
@@ -117,7 +119,12 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
 - (void)zoomIn;
 - (void)zoomOut;
 - (void)resetZoom;
+/// Opens DevTools in a window of its own (CEF can't embed it in a view of
+/// an Alloy-style browser), or brings it forward.
 - (void)showDevTools;
+- (void)closeDevTools;
+/// The DevTools window while open, for the shell to dock beside the page.
+@property(nonatomic, readonly, nullable) NSWindow* devToolsWindow;
 
 // Developer tools. Emulations last until changed or the tab closes.
 

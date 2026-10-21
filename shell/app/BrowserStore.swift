@@ -578,7 +578,16 @@ final class BrowserStore: NSObject {
     func zoomIn() { visibleView?.zoomIn() }
     func zoomOut() { visibleView?.zoomOut() }
     func resetZoom() { visibleView?.resetZoom() }
-    func showDevTools() { visibleView?.showDevTools() }
+    /// ⌥⌘I: opens DevTools, or closes it if docked and open.
+    func showDevTools() {
+        guard let view = visibleView else { return }
+        if view.devToolsWindow != nil { view.closeDevTools() } else { view.showDevTools() }
+    }
+
+    /// Opens DevTools, or brings it forward.
+    func openDevTools() { visibleView?.showDevTools() }
+
+    var visibleDevToolsOpen: Bool { visibleView?.devToolsWindow != nil }
 
     func reloadIgnoringCache() { visibleView?.reloadIgnoringCache() }
 
@@ -1116,6 +1125,7 @@ extension BrowserStore {
 
     /// Turning Developer Mode off drops every emulation with the toolbar.
     @objc fileprivate func defaultsChanged() {
+        webContainer.placeCurrent()
         if !DeveloperSettings.enabled, !devStates.isEmpty {
             for (id, state) in devStates { views[id]?.apply(DevTabState(), from: state) }
             devStates = [:]
@@ -1278,6 +1288,14 @@ extension BrowserStore: MBWebViewDelegate {
             guard isCurrent(view), devStates[view.tabID]?.picking == true else { return }
             devStates[view.tabID]?.picking = false
             if view.tabID == visibleTabID { changed(.developer) }
+        }
+    }
+
+    nonisolated func webViewDidChangeDevTools(_ view: MBWebView) {
+        MainActor.assumeIsolated {
+            guard isCurrent(view), view.tabID == visibleTabID else { return }
+            webContainer.placeCurrent()
+            changed(.developer)
         }
     }
 

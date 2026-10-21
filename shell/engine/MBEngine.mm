@@ -47,6 +47,9 @@
 - (void)engineSetConsoleErrors:(NSUInteger)errors warnings:(NSUInteger)warnings;
 - (void)engineDidFinishLoad:(int)status duration:(NSTimeInterval)duration;
 - (void)engineDidStopPicking;
+- (void)engineShowDevToolsAt:(CefPoint)at;
+- (void)engineDevToolsOpened:(NSWindow*)window;
+- (void)engineDevToolsClosed;
 @end
 
 namespace {
@@ -574,6 +577,52 @@ void ShowDevTools(CefRefPtr<CefBrowser> browser, const CefPoint& at) {
   browser->GetHost()->ShowDevTools(info, AuxiliaryClient::Get(), settings, at);
 }
 
+// DevTools for one tab, reporting its window to the tab so the shell can
+// dock it.
+class DevToolsClient : public BaseClient, public CefLifeSpanHandler {
+ public:
+  explicit DevToolsClient(MBWebView* view) : view_(view) {}
+
+  CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
+
+  void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
+    g_browser_count++;
+    g_auxiliary.push_back(browser);
+    ReportWindow(browser, 40);
+  }
+
+  // The window comes a little after the browser; ask until it's there.
+  void ReportWindow(CefRefPtr<CefBrowser> browser, int tries) {
+    CefRefPtr<DevToolsClient> client(this);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 25 * NSEC_PER_MSEC),
+                   dispatch_get_main_queue(), ^{
+                     NSView* content =
+                         (__bridge NSView*)browser->GetHost()->GetWindowHandle();
+                     if (DebugEvents()) {
+                       NSLog(@"devtools window: view=%@ window=%@", content,
+                             content.window);
+                     }
+                     if (content.window) {
+                       [client->view_ engineDevToolsOpened:content.window];
+                     } else if (tries > 0) {
+                       client->ReportWindow(browser, tries - 1);
+                     }
+                   });
+  }
+
+  void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
+    std::erase_if(g_auxiliary, [&](const CefRefPtr<CefBrowser>& b) {
+      return b->IsSame(browser);
+    });
+    [view_ engineDevToolsClosed];
+    BrowserGone();
+  }
+
+ private:
+  __weak MBWebView* view_;
+  IMPLEMENT_REFCOUNTING(DevToolsClient);
+};
+
 // Downloads the page's icons in order of preference until one decodes.
 class FaviconCallback : public CefDownloadImageCallback {
  public:
@@ -1056,8 +1105,9 @@ class WebClient : public BaseClient,
                    int(Number(value->GetDictionary()->GetValue("backendNodeId"))));
       SetPicking(browser, false);
       // DevTools inspects whatever is at a point, so ask where the node is.
+      __weak MBWebView* weak_view = view_;
       Call(browser, "DOM.getBoxModel", args,
-           [browser](CefRefPtr<CefDictionaryValue> result) {
+           [browser, weak_view](CefRefPtr<CefDictionaryValue> result) {
              CefPoint at;
              CefRefPtr<CefListValue> quad =
                  result && result->GetDictionary("model")
@@ -1070,7 +1120,7 @@ class WebClient : public BaseClient,
                at = CefPoint(int((corner(0) + corner(4)) / 2 * zoom),
                              int((corner(1) + corner(5)) / 2 * zoom));
              }
-             ShowDevTools(browser, at);
+             [weak_view engineShowDevToolsAt:at];
            });
     } else if (name == "Overlay.inspectModeCanceled" && picking_) {
       SetPicking(browser, false);
@@ -1282,8 +1332,8 @@ class WebClient : public BaseClient,
               forType:NSPasteboardTypeString];
         return true;
       case kInspect:
-        ShowDevTools(browser,
-                     CefPoint(params->GetXCoord(), params->GetYCoord()));
+        [view engineShowDevToolsAt:CefPoint(params->GetXCoord(),
+                                            params->GetYCoord())];
         return true;
       default:
         return false;
@@ -1662,9 +1712,45 @@ class WebClient : public BaseClient,
 }
 
 - (void)showDevTools {
+  [self engineShowDevToolsAt:CefPoint()];
+}
+
+- (void)closeDevTools {
   if (_browser) {
-    ShowDevTools(_browser, CefPoint());
+    _browser->GetHost()->CloseDevTools();
   }
+}
+
+- (void)engineShowDevToolsAt:(CefPoint)at {
+  if (!_browser) {
+    return;
+  }
+  // Open already, it comes forward and inspects the point.
+  if (_browser->GetHost()->HasDevTools()) {
+    ShowDevTools(_browser, at);
+    [_devToolsWindow makeKeyAndOrderFront:nil];
+    return;
+  }
+  CefWindowInfo info;
+  CefBrowserSettings settings;
+  _browser->GetHost()->ShowDevTools(info, new DevToolsClient(self), settings,
+                                    at);
+}
+
+- (void)engineDevToolsOpened:(NSWindow*)window {
+  if (!window || _devToolsWindow == window) {
+    return;
+  }
+  _devToolsWindow = window;
+  [self.delegate webViewDidChangeDevTools:self];
+}
+
+- (void)engineDevToolsClosed {
+  if (!_devToolsWindow) {
+    return;
+  }
+  _devToolsWindow = nil;
+  [self.delegate webViewDidChangeDevTools:self];
 }
 
 - (void)reloadIgnoringCache {

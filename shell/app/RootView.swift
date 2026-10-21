@@ -49,6 +49,7 @@ final class RootView: NSView {
         toast.isHidden = true
         if store.layout == .compact { addSubview(rail, positioned: .above, relativeTo: card) }
         handle.onResize = { [weak self] in self?.needsLayout = true }
+        store.webContainer.onPageAreaChange = { [weak self] in self?.needsLayout = true }
 
         store.observe(self) { [weak self] change in self?.handle(change) }
         // The color follows the pages frame by frame.
@@ -131,7 +132,8 @@ final class RootView: NSView {
     private func updateBackdrop(_ curve: Motion.Curve?) {
         let dark = effectiveAppearance.isDark
         let colors = store.tintColors(matchPage: UserDefaults.standard.bool(forKey: TintStyle.matchPageKey), dark: dark)
-        let active = window.map { $0.isKeyWindow || $0.isMainWindow } ?? true
+        // Docked DevTools taking the keyboard doesn't make the window inactive.
+        let active = window.map { $0.isKeyWindow || $0.isMainWindow || NSApp.keyWindow?.parent === $0 } ?? true
         let stops = Theme.gradient(for: Theme.blend(colors, at: store.pager.position), dark: dark, active: active,
                                    style: TintStyle.saved).map(\.cgColor)
         backdrop.setColors(stops, curve: curve)
@@ -178,8 +180,10 @@ final class RootView: NSView {
         emptyHint.frame = card.bounds
         dropPreview.frame = card.bounds
         // The card isn't flipped: the strip runs along its top.
+        // Over the page only, not docked DevTools beside it.
+        let page = store.webContainer.pageArea
         devToolbar.frame = NSRect(x: 0, y: card.bounds.height - DevToolbarView.height,
-                                  width: card.bounds.width, height: DevToolbarView.height)
+                                  width: page.width > 0 ? page.width : card.bounds.width, height: DevToolbarView.height)
         // Out of sight, the sidebar and rail stay attached but hidden:
         // attaching the sidebar again costs a couple of frames as it slides in.
         // The sidebar is either part of the layout, sliding in and out with

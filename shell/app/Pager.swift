@@ -218,6 +218,15 @@ final class WebContainerView: NSView {
     /// The size a tab's page shows at instead of filling the container (a
     /// device preview in Developer Mode), or nil.
     var viewport: ((MBWebView) -> NSSize?)?
+    /// Called when the page's share of the container changes (docked
+    /// DevTools opened, closed or resized), for what floats over the page.
+    var onPageAreaChange: (() -> Void)?
+    /// The part the page fills; DevTools takes the rest, on the right.
+    private(set) var pageArea = NSRect.zero
+    private let devToolsEdge = NSView()
+    /// The visible tab's DevTools window, docked over the panel.
+    private weak var dockedWindow: NSWindow?
+    private lazy var devToolsHandle = DevToolsResizeHandle { [weak self] x in self?.resizeDevTools(to: x) }
 
     override var isFlipped: Bool { true }
 
@@ -315,18 +324,100 @@ extension WebContainerView {
     /// Fills the container with the visible page, or centres it at its
     /// device size below the developer toolbar, on a quiet surround.
     func placeCurrent() {
+        let area = placeDevTools()
+        if area != pageArea {
+            pageArea = area
+            onPageAreaChange?()
+        }
         guard let current else { return }
         guard let size = viewport?(current) else {
-            if current.frame != bounds { current.frame = bounds }
+            if current.frame != area { current.frame = area }
             if current.layer?.cornerRadius != 0 { setPreview(current, radius: 0) }
             return
         }
         let top = DevToolbarView.height, margin: CGFloat = 16
-        let width = min(size.width, bounds.width - 2 * margin)
-        let height = min(size.height, bounds.height - top - margin)
-        let frame = NSRect(x: ((bounds.width - width) / 2).rounded(), y: top, width: max(width, 0), height: max(height, 0))
+        let width = min(size.width, area.width - 2 * margin)
+        let height = min(size.height, area.height - top - margin)
+        let frame = NSRect(x: (area.minX + (area.width - width) / 2).rounded(), y: top,
+                           width: max(width, 0), height: max(height, 0))
         if current.frame != frame { current.frame = frame }
         setPreview(current, radius: min(size.width, size.height) < 500 ? 24 : 12)
+    }
+
+    /// Docks the visible tab's DevTools on the right: CEF only makes DevTools
+    /// windows, so its window, without a title bar, rides on this one as a
+    /// child, laid over the panel. Returns what's left for the page.
+    private func placeDevTools() -> NSRect {
+        guard DeveloperSettings.docksDevTools, let window, let devTools = current?.devToolsWindow else {
+            undock()
+            devToolsEdge.isHidden = true
+            devToolsHandle.isHidden = true
+            return bounds
+        }
+        let saved = CGFloat(UserDefaults.standard.double(forKey: DeveloperSettings.devToolsWidthKey))
+        let width = min(max(saved > 0 ? saved : 440, 280), max(bounds.width - 320, 280))
+        let edge = (bounds.width - width).rounded()
+        if devToolsEdge.superview !== self {
+            devToolsEdge.wantsLayer = true
+            addSubview(devToolsEdge)
+            addSubview(devToolsHandle)
+        }
+        for view in [devToolsEdge, devToolsHandle] {
+            view.layer?.zPosition = 2
+            view.isHidden = false
+        }
+        devToolsEdge.frame = NSRect(x: edge, y: 0, width: 1, height: bounds.height)
+        devToolsEdge.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        devToolsHandle.frame = NSRect(x: edge - 3, y: 0, width: 7, height: bounds.height)
+        if dockedWindow !== devTools {
+            undock()
+            dock(devTools, in: window)
+        }
+        let panel = NSRect(x: edge + 1, y: 0, width: bounds.width - edge - 1, height: bounds.height)
+        let frame = window.convertToScreen(convert(panel, to: nil))
+        if devTools.frame != frame { devTools.setFrame(frame, display: true) }
+        return NSRect(x: 0, y: 0, width: edge, height: bounds.height)
+    }
+
+    private func dock(_ devTools: NSWindow, in window: NSWindow) {
+        devTools.styleMask.insert(.fullSizeContentView)
+        devTools.titlebarAppearsTransparent = true
+        devTools.titleVisibility = .hidden
+        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            devTools.standardWindowButton(button)?.isHidden = true
+        }
+        devTools.isMovable = false
+        devTools.hasShadow = false
+        devTools.collectionBehavior.insert(.fullScreenAuxiliary)
+        window.addChildWindow(devTools, ordered: .above)
+        devTools.orderFront(nil)
+        dockedWindow = devTools
+    }
+
+    /// Puts the docked window away: hidden behind another tab, or back to a
+    /// window of its own when DevTools stops docking.
+    private func undock() {
+        guard let devTools = dockedWindow else { return }
+        dockedWindow = nil
+        devTools.parent?.removeChildWindow(devTools)
+        if DeveloperSettings.docksDevTools {
+            devTools.orderOut(nil)
+            return
+        }
+        devTools.styleMask.remove(.fullSizeContentView)
+        devTools.titlebarAppearsTransparent = false
+        devTools.titleVisibility = .visible
+        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            devTools.standardWindowButton(button)?.isHidden = false
+        }
+        devTools.isMovable = true
+        devTools.hasShadow = true
+        devTools.setFrame(devTools.frame.insetBy(dx: -20, dy: -20).offsetBy(dx: -60, dy: 0), display: true)
+    }
+
+    private func resizeDevTools(to x: CGFloat) {
+        UserDefaults.standard.set(Double(bounds.width - x), forKey: DeveloperSettings.devToolsWidthKey)
+        placeCurrent()
     }
 
     private func setPreview(_ view: MBWebView, radius: CGFloat) {
@@ -344,6 +435,30 @@ extension WebContainerView {
                 : NSColor.white.cgColor
         }
         CATransaction.commit()
+    }
+}
+
+/// The docked DevTools panel's edge, dragged to resize it.
+final class DevToolsResizeHandle: NSView {
+    private let onDrag: (CGFloat) -> Void
+
+    init(onDrag: @escaping (CGFloat) -> Void) {
+        self.onDrag = onDrag
+        super.init(frame: .zero)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .resizeLeftRight)
+    }
+
+    override func mouseDown(with event: NSEvent) {}
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let superview else { return }
+        onDrag(superview.convert(event.locationInWindow, from: nil).x)
     }
 }
 

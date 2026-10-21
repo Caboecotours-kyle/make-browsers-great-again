@@ -20,6 +20,10 @@ enum DeveloperSettings {
     static let collapsesKey = "developerToolbarCollapses"
     /// Where along the top of the page the toolbar sits.
     static let anchorKey = "developerToolbarAnchor"
+    /// DevTools opens in a window of its own instead of beside the page.
+    static let devToolsInWindowKey = "devToolsInWindow"
+    /// The docked DevTools panel's width.
+    static let devToolsWidthKey = "devToolsWidth"
 
     /// MBGA_DEBUG_DEVELOPER=1 (or =expanded, never shrinking) turns
     /// Developer Mode on in a test copy without saving it: the preferences
@@ -31,6 +35,7 @@ enum DeveloperSettings {
     static var collapses: Bool {
         debug == "expanded" ? false : UserDefaults.standard.object(forKey: collapsesKey) as? Bool ?? true
     }
+    static var docksDevTools: Bool { !UserDefaults.standard.bool(forKey: devToolsInWindowKey) }
     static var anchor: DevToolbarAnchor {
         UserDefaults.standard.string(forKey: anchorKey).flatMap(DevToolbarAnchor.init) ?? .center
     }
@@ -599,8 +604,8 @@ final class DevPillView: HoverView {
         for view in [host, problem, errors, warnings, time, reload, pick, devtools, scheme, device, more] as [NSView] {
             content.addSubview(view)
         }
-        errors.action = { store.showDevTools() }
-        warnings.action = { store.showDevTools() }
+        errors.action = { store.openDevTools() }
+        warnings.action = { store.openDevTools() }
         reload.action = { store.hardReload() }
         pick.action = { store.togglePicking() }
         devtools.action = { store.showDevTools() }
@@ -637,6 +642,7 @@ final class DevPillView: HoverView {
         errors.toolTip = "\(report.errors) console error\(report.errors == 1 ? "" : "s"): open Developer Tools"
         warnings.toolTip = "\(report.warnings) console warning\(report.warnings == 1 ? "" : "s"): open Developer Tools"
         pick.isOn = state.picking
+        devtools.isOn = store.visibleDevToolsOpen
         scheme.isHidden = state.colorScheme == .system
         scheme.isOn = true
         scheme.setSymbol(state.colorScheme.symbol)
