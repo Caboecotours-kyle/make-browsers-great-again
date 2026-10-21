@@ -19,8 +19,12 @@ RESULTS = os.path.join(HERE, "results")
 
 
 def get(d, *path):
+    """The value at path, or None if missing or from a run whose page check
+    failed (its page was not on screen the whole time)."""
     for key in path:
         if not isinstance(d, dict) or key not in d:
+            return None
+        if d.get("check", {}).get("ok") is False:
             return None
         d = d[key]
     return d
@@ -50,6 +54,13 @@ METRICS = [
     metric("Battery", "10 ad-heavy tabs in background, first minutes", "Energy Impact", "lower",
            ("battery-background", "early", "energy_impact"), digits=1),
     metric("Battery", "10 ad-heavy tabs in background, after 6 min", "Energy Impact", "lower",
+           ("battery-background", "late", "energy_impact"), digits=1),
+    metric("Battery", "10 ad-heavy pinned tabs in background, first minutes", "Energy Impact",
+           "lower", ("battery-pinned", "early", "energy_impact"),
+           ("battery-background", "early", "energy_impact"), digits=1,
+           note="MBGA keeps pinned tabs running; Chromium has no pinned distinction"),
+    metric("Battery", "10 ad-heavy pinned tabs in background, after 6 min", "Energy Impact",
+           "lower", ("battery-pinned", "late", "energy_impact"),
            ("battery-background", "late", "energy_impact"), digits=1),
     metric("Memory", "50 tabs loaded", "MB", "lower", ("heavy", "loaded", "total_mb")),
     metric("Memory", "50 tabs after 12 idle min", "MB", "lower", ("heavy", "after_idle", "total_mb")),

@@ -34,6 +34,9 @@ TRIALS = {
     # Power: candidates found in the engine's feature list.
     "60hz": "--enable-features=ThrottleMainFrameTo60Hz",
     "unimportant-frames": "--enable-features=ThrottleUnimportantFrameTimers,ThrottleUnimportantFrameRate",
+    "unimportant-frames-250ms": ("--enable-features=ThrottleUnimportantFrameTimers:"
+                                 "unimportant_frame_timers_throttled_wake_up_interval_millis/250,"
+                                 "ThrottleUnimportantFrameRate"),
     "align-wakeups": "--enable-features=AlignWakeUps",
     "timer-slack": "--enable-features=TimerSlackMac",
     "no-damage-frames": "--enable-features=ThrottleRepeatedNoDamageFrames",

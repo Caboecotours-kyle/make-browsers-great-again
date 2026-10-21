@@ -30,7 +30,7 @@ def log(msg):
 
 def build_tools():
     os.makedirs(TOOLS, exist_ok=True)
-    for name in ["sample", "windows", "key", "activate"]:
+    for name in ["sample", "windows", "key", "activate", "frontwatch"]:
         out = os.path.join(TOOLS, name)
         src = os.path.join(HERE, f"{name}.swift")
         if not os.path.exists(out) or os.path.getmtime(out) < os.path.getmtime(src):
@@ -145,9 +145,14 @@ def measure_window(pid, seconds):
     process kind."""
     a, ga = sample(pid), gpu_times()
     top = EnergyImpact(seconds)
+    # Whether the browser stayed in front: another app's windows covering it
+    # would hide its pages and make the window meaningless.
+    front = subprocess.Popen([os.path.join(TOOLS, "frontwatch"), str(pid), str(seconds - 1)],
+                             stdout=subprocess.PIPE, text=True)
     time.sleep(seconds)
     b, gb = sample(pid), gpu_times()
     impact = top.result()
+    front_fraction = float(front.communicate(timeout=30)[0] or 0)
     elapsed = b["t"] - a["t"]
     before = {p["pid"]: p for p in a["procs"]}
     zero = {"cpu_ns": 0, "energy_nj": 0, "wakeups": 0}
@@ -167,7 +172,10 @@ def measure_window(pid, seconds):
         for key, value in row.items():
             total[key] += value
             k[key] += value
-    return {"seconds": round(elapsed, 1), **total, "by_kind": kinds, "memory": summarize(b)}
+    if front_fraction < 0.95:
+        log(f"WARNING: the browser was in front only {front_fraction:.0%} of this window")
+    return {"seconds": round(elapsed, 1), **total, "front_fraction": front_fraction,
+            "by_kind": kinds, "memory": summarize(b)}
 
 
 # --------------------------------------------------------------- test pages

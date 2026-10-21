@@ -6,7 +6,8 @@ measured over its whole process tree. Scenarios (see each module):
 
   heavy, heavy-sleep                    heavy.py    3 profiles, 50 real sites
   battery-static, battery-busy,         battery.py  local test pages
-  battery-video, battery-background
+  battery-video, battery-background,
+  battery-pinned
   startup, speedometer                  speed.py
 
 Groups: heavy, battery, speed, all (the default).
@@ -16,7 +17,8 @@ Usage:
 
 Each run writes bench/results/<timestamp>.json, labelled with the change it
 measures (the current commit's subject unless --label is given), and
-regenerates bench/results/trend.html.
+regenerates bench/results/trend.html. --append FILE adds scenarios to an
+earlier results file instead, for a scenario that run missed.
 """
 
 import argparse
@@ -36,13 +38,14 @@ from common import DEVTOOLS_PORT, PAGE_PORT, ROOT, WORK, build_tools, listening_
 
 GROUPS = {
     "heavy": ["heavy", "heavy-sleep"],
-    "battery": ["battery-static", "battery-busy", "battery-video", "battery-background"],
+    "battery": ["battery-static", "battery-busy", "battery-video", "battery-background",
+                "battery-pinned"],
     "speed": ["startup", "speedometer"],
 }
 GROUPS["all"] = GROUPS["heavy"] + GROUPS["battery"] + GROUPS["speed"]
 MODULES = {**{s: heavy for s in GROUPS["heavy"]}, **{s: battery for s in GROUPS["battery"]},
            **{s: speed for s in GROUPS["speed"]}}
-MBGA_ONLY = {"heavy-sleep"}
+MBGA_ONLY = {"heavy-sleep", "battery-pinned"}
 
 
 def git(*args):
@@ -75,6 +78,8 @@ def main():
     parser.add_argument("scenarios", nargs="*", default=["all"])
     parser.add_argument("--browsers", default="chromium,mbga")
     parser.add_argument("--label", help="what changed (default: the commit subject)")
+    parser.add_argument("--append", metavar="FILE",
+                        help="add these scenarios to an earlier results file of the same build")
     args = parser.parse_args()
 
     scenarios = []
@@ -106,6 +111,14 @@ def main():
     out_dir = os.path.join(ROOT, "bench", "results")
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, time.strftime("%Y%m%d-%H%M%S") + ".json")
+    if args.append:
+        path = os.path.abspath(args.append)
+        with open(path) as f:
+            earlier = json.load(f)
+        for key, versions in results["versions"].items():
+            earlier["versions"].setdefault(key, versions)
+            earlier["results"].setdefault(key, {})
+        results = earlier
     log(f"{results['label']} ({results['commit']}{', uncommitted changes' if dirty else ''})")
 
     # Interleaved per scenario, so slow drift (thermals, network) hits every

@@ -9,6 +9,9 @@ battery-video       A 1080p VP9 video playing.
 battery-background  Ten busy pages in background tabs with the plain article
                     on screen; measured early (0:30-2:30) and late (6:00-8:00,
                     after Chromium's 5-minute intensive timer throttling).
+battery-pinned      The same with the ten pages as pinned tabs, which MBGA
+                    keeps running (MBGA only; Chromium has no such
+                    distinction, so compare with its battery-background).
 """
 
 import os
@@ -28,19 +31,47 @@ BACKGROUND_TABS = 10
 
 def pages(scenario):
     """(background pages, page on screen)."""
-    if scenario == "battery-background":
+    if scenario in ("battery-background", "battery-pinned"):
         return [page_url(f"busy.html?tab={i}") for i in range(BACKGROUND_TABS)], page_url("static.html")
     return [], page_url(scenario.split("-", 1)[1] + ".html")
 
 
+ATTEMPTS = 3
+
+
 def run(browser, scenario):
+    """Runs the scenario, again if its page was not on screen the whole time
+    (someone using the machine can cover the window)."""
+    if scenario == "battery-pinned" and browser.key != "mbga":
+        return None
+    for attempt in range(1, ATTEMPTS + 1):
+        result = run_once(browser, scenario)
+        result["attempts"] = attempt
+        if result["check"]["ok"]:
+            break
+        log(f"{browser.key} {scenario}: not valid, " +
+            ("retrying" if attempt < ATTEMPTS else "giving up"))
+    return result
+
+
+def hidden_ms(pid, front):
+    devtools = DevTools(DEVTOOLS_PORT, pid, match=front)
+    try:
+        return devtools.evaluate("window.__hiddenMs ? window.__hiddenMs() : null")
+    finally:
+        devtools.close()
+
+
+def run_once(browser, scenario):
     background, front = pages(scenario)
     data = os.path.join(WORK, f"{browser.key}-{scenario}")
     is_mbga = browser.key == "mbga"
-    # DevTools is only used after measuring, to check the pages did what the
-    # scenario needs.
+    # DevTools is only used outside the measurement windows, to check the
+    # pages stayed on screen and did what the scenario needs.
     if is_mbga:
-        MBGA.prepare(data, [{"space": "Bench", "today": background + [front]}])
+        tabs = ({"pinned": background, "today": [front]} if scenario == "battery-pinned"
+                else {"today": background + [front]})
+        MBGA.prepare(data, [{"space": "Bench", **tabs}])
         proc = MBGA.launch(data, devtools=True)
     else:
         browser.prepare(data)
@@ -56,20 +87,20 @@ def run(browser, scenario):
     result["window"] = window_bounds(proc.pid)
     log(f"{browser.key} {scenario}: settling")
 
-    if scenario == "battery-background":
-        sleep_until(t0, SETTLE)
+    sleep_until(t0, SETTLE)
+    hidden_before = hidden_ms(proc.pid, front)
+    if background:
         result["early"] = measure_window(proc.pid, WINDOW)
         sleep_until(t0, 6 * 60 if WINDOW >= 60 else 60)
         result["late"] = measure_window(proc.pid, WINDOW)
         summary = (f"early {result['early']['power_mw']:.0f} mW, "
                    f"late {result['late']['power_mw']:.0f} mW")
     else:
-        sleep_until(t0, SETTLE)
         result["idle"] = measure_window(proc.pid, WINDOW)
         summary = (f"{result['idle']['power_mw']:.0f} mW, {result['idle']['cpu_percent']:.1f}% CPU, "
                    f"{result['idle']['gpu_percent']:.1f}% GPU, "
                    f"impact {result['idle']['energy_impact']:.1f}")
-    result["check"] = check(proc.pid, scenario, front)
+    result["check"] = check(proc.pid, scenario, front, hidden_before)
     log(f"{browser.key} {scenario}: {summary}; check {result['check']}")
     browser.quit(proc)
     time.sleep(3)
@@ -84,20 +115,23 @@ CHECKS = {
     "battery-video": "new Promise(r => { const v = document.querySelector('video'); "
                      "const t = v.currentTime; setTimeout(() => r(!v.paused && v.currentTime != t), 500); })",
     "battery-background": "true",
+    "battery-pinned": "true",
 }
 
 
-def check(pid, scenario, front):
-    """The page on screen is visible and doing its thing, and (for the
-    background scenario) every background page is still loaded."""
+def check(pid, scenario, front, hidden_before):
+    """The page on screen stayed visible through the measurement and is doing
+    its thing, and (for the background scenarios) every background page is
+    still loaded."""
     devtools = DevTools(DEVTOOLS_PORT, pid, match=front)
     try:
-        visible = devtools.evaluate("document.visibilityState") == "visible"
+        hidden_during = devtools.evaluate("window.__hiddenMs()") - hidden_before
         works = devtools.evaluate(CHECKS[scenario], await_promise=True) is True
     finally:
         devtools.close()
-    out = {"front_visible": visible, "works": works}
-    if scenario == "battery-background":
+    visible = hidden_during < 1000
+    out = {"front_visible": visible, "hidden_during_ms": round(hidden_during), "works": works}
+    if scenario in ("battery-background", "battery-pinned"):
         out["background_pages"] = sum(1 for t in page_targets(DEVTOOLS_PORT) if "busy.html" in t["url"])
     out["ok"] = visible and works and out.get("background_pages", BACKGROUND_TABS) == BACKGROUND_TABS
     if not out["ok"]:
