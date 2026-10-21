@@ -240,9 +240,60 @@ private final class SettingsPaneController: NSViewController {
                     : "Puts mbga in ~/.local/bin, so any terminal or agent can run it."
             }
         }
+        let workspace = popUp(["In a space of their own", "In the space you're in"]) { [store] i in
+            store.setAgentPreferences { $0.ownSpace = i == 0 }
+        }
+        let profile = NSPopUpButton(frame: .zero, pullsDown: false)
+        profile.onAction { [store, weak profile] in
+            guard let item = profile?.selectedItem else { return }
+            store.setAgentPreferences {
+                if item.tag == -1 {
+                    $0.separateProfile = true
+                } else {
+                    $0.separateProfile = false
+                    $0.profileID = UInt64(item.tag)
+                }
+            }
+        }
+        let blocked = NSTextField(string: "")
+        blocked.placeholderString = "bank.com, mail.google.com"
+        blocked.usesSingleLineMode = false
+        blocked.cell?.wraps = true
+        blocked.cell?.isScrollable = false
+        blocked.lineBreakMode = .byWordWrapping
+        blocked.translatesAutoresizingMaskIntoConstraints = false
+        blocked.widthAnchor.constraint(equalToConstant: 340).isActive = true
+        blocked.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        blocked.onAction { [store, weak blocked] in
+            let sites = (blocked?.stringValue ?? "").components(separatedBy: CharacterSet(charactersIn: ", \n"))
+                .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }
+            store.setAgentPreferences { $0.blockedSites = sites }
+        }
+        refreshers.append { [store] in
+            let preferences = store.agentPreferences
+            workspace.selectItem(at: preferences.ownSpace ? 0 : 1)
+            profile.removeAllItems()
+            let mainProfile = store.snapshot.spaces.first?.profileId
+            for info in store.snapshot.profiles where info.id != preferences.separateProfileID {
+                profile.addItem(withTitle: info.name)
+                profile.lastItem?.tag = Int(info.id)
+            }
+            profile.menu?.addItem(.separator())
+            profile.addItem(withTitle: "A separate profile")
+            profile.lastItem?.tag = -1
+            let chosen = preferences.separateProfile ? -1 : Int(preferences.profileID ?? mainProfile ?? 0)
+            profile.selectItem(withTag: chosen)
+            profile.isEnabled = preferences.ownSpace
+            if blocked.currentEditor() == nil { blocked.stringValue = preferences.blockedSites.joined(separator: ", ") }
+        }
         return [
             [label("Agent access:"), enabled],
             [NSGridCell.emptyContentView, caption("Agents on this Mac (Claude Code, MCP apps, your scripts) can open tabs, read pages, click and type, through the mbga command. They see pages as short outlines rather than screenshots, so it costs them few tokens. Only apps running as you can connect, and the page glows while an agent acts on it.")],
+            [label("Agents work:"), workspace],
+            [label("Signed in as:"), profile],
+            [NSGridCell.emptyContentView, caption("In their own space, agents' tabs stay out of your sidebar and off your screen, so you both use MBGA at once; switch to the Agents space to watch them. Your profile shares your sign-ins; a separate one starts signed out, with its own cookies.")],
+            [label("Keep agents off:"), blocked],
+            [NSGridCell.emptyContentView, caption("Sites agents can't read, use or open, with their subdomains. Separate them with commas.")],
             [label("Command:"), install],
             [NSGridCell.emptyContentView, status],
             [label("MCP:"), setup],

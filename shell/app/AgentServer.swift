@@ -149,6 +149,7 @@ final class AgentServer {
         guard let request = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let argv = request["argv"] as? [String], !argv.isEmpty
         else { return Self.encode(.failure("Expected {\"argv\": [\"command\", ...]}")) }
+        let session = request["session"] as? String ?? "default"
         let done = DispatchSemaphore(value: 0)
         let result = Box()
         Task { @MainActor [weak self] in
@@ -157,7 +158,7 @@ final class AgentServer {
                 done.signal()
                 return
             }
-            result.reply = await commands.run(argv)
+            result.reply = await commands.run(argv, session: session)
             done.signal()
         }
         done.wait()
@@ -181,4 +182,43 @@ final class AgentServer {
 enum AgentReply: Sendable {
     case success(String)
     case failure(String)
+}
+
+/// How agents share the browser with the person, kept in the data folder
+/// (agents.json) rather than the preferences, which test copies share.
+struct AgentPreferences: Codable, Equatable {
+    /// Agents open tabs in a space of their own, not the person's.
+    var ownSpace = true
+    /// Their space uses a profile of its own, with its own cookies and
+    /// sign-ins, instead of one of the person's.
+    var separateProfile = false
+    /// The person's profile agents use (nil: the first space's).
+    var profileID: UInt64?
+    var separateProfileID: UInt64?
+    var spaceID: UInt64?
+    /// Sites agents may not read, use or open, e.g. "bank.com".
+    var blockedSites: [String] = []
+
+    static func load(from directory: URL) -> AgentPreferences {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("agents.json")),
+              let preferences = try? JSONDecoder().decode(AgentPreferences.self, from: data)
+        else { return AgentPreferences() }
+        return preferences
+    }
+
+    func save(to directory: URL) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try? encoder.encode(self).write(to: directory.appendingPathComponent("agents.json"), options: .atomic)
+    }
+
+    /// The blocked site `url` belongs to, if any (a site covers its
+    /// subdomains).
+    func blockedSite(for url: String) -> String? {
+        guard let host = URLComponents(string: url)?.host?.lowercased() else { return nil }
+        return blockedSites.first { site in
+            let site = site.lowercased().trimmingCharacters(in: .whitespaces)
+            return !site.isEmpty && (host == site || host.hasSuffix("." + site))
+        }
+    }
 }

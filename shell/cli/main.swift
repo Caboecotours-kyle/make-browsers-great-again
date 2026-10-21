@@ -43,7 +43,12 @@ Refs can also be css=<selector> or text=<words> when you know the page.
             .slice(0, 5).map(a => a.textContent))'
 
 Every page command takes --tab tN (default: the tab you opened or chose
-last, else the one on screen). Typical loop: open → snapshot → click/fill →
+last, else the one on screen). Set MBGA_SESSION=<name> to keep your own
+current tab apart from other agents'. Your tabs open in the Agents space,
+off the person's screen. Refs in cross-site frames look like f1:e3.
+
+  network [--failed] [--api] [--filter t] [--max N] | network --body N
+                               requests since you first used the tab Typical loop: open → snapshot → click/fill →
 snapshot. Prefer snapshot/read/find over screenshots: far fewer tokens.
 """
 
@@ -59,8 +64,11 @@ enum Failure: Error {
 final class Browser {
     private let fd: Int32
     private var pending = Data()
+    /// Which agent this is: each has its own current tab.
+    private let session: String
 
-    init() throws {
+    init(session: String = ProcessInfo.processInfo.environment["MBGA_SESSION"] ?? "default") throws {
+        self.session = session
         fd = socket(AF_UNIX, SOCK_STREAM, 0)
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
@@ -81,7 +89,7 @@ final class Browser {
     deinit { close(fd) }
 
     func run(_ argv: [String]) throws -> String {
-        var request = try JSONSerialization.data(withJSONObject: ["argv": argv])
+        var request = try JSONSerialization.data(withJSONObject: ["argv": argv, "session": session])
         request.append(0x0A)
         let written = request.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
         guard written == request.count else { throw Failure.message("MBGA closed the connection.") }
@@ -131,6 +139,8 @@ func words(_ line: String) -> [String] {
 /// schema in the model's context instead of one per command.
 func serveMCP() -> Never {
     var browser: Browser?
+    // An MCP client is one agent, with a current tab of its own.
+    let mcpSession = ProcessInfo.processInfo.environment["MBGA_SESSION"] ?? "mcp-\(getpid())"
     let tool: [String: Any] = [
         "name": "browser",
         "description": "Use the MBGA browser on this Mac, as the person's own browser.\n\n" + guide,
@@ -174,13 +184,13 @@ func serveMCP() -> Never {
                 continue
             }
             do {
-                if browser == nil { browser = try Browser() }
+                if browser == nil { browser = try Browser(session: mcpSession) }
                 let text: String
                 do {
                     text = try browser!.run(argv)
                 } catch {
                     // The browser may have restarted; try once on a new connection.
-                    browser = try Browser()
+                    browser = try Browser(session: mcpSession)
                     text = try browser!.run(argv)
                 }
                 var content: [[String: Any]] = [["type": "text", "text": text]]

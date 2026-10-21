@@ -50,6 +50,9 @@
 - (void)engineShowDevToolsAt:(CefPoint)at;
 - (void)engineDevToolsOpened:(NSWindow*)window;
 - (void)engineDevToolsClosed;
+- (void)engineFrameAttached:(NSString*)frame session:(NSString*)session;
+- (void)engineFrameDetached:(NSString*)session;
+- (void)engineNetworkEvent:(NSString*)method params:(NSDictionary*)params;
 @end
 
 namespace {
@@ -693,6 +696,8 @@ class WebClient : public BaseClient,
                   public CefDragHandler,
                   public CefDevToolsMessageObserver {
  public:
+  using RawReply = std::function<void(bool, const std::string&)>;
+
   explicit WebClient(MBWebView* view)
       : view_(view), created_(CFAbsoluteTimeGetCurrent()) {}
 
@@ -1106,11 +1111,127 @@ class WebClient : public BaseClient,
     }
   }
 
+  // Messages for cross-site frames' sessions, which the parsed callbacks
+  // below can't tell from the page's own. Looked at only once frames are
+  // followed or such a command is waiting.
+  bool OnDevToolsMessage(CefRefPtr<CefBrowser> browser,
+                         const void* message,
+                         size_t message_size) override {
+    if (session_replies_.empty() && !following_frames_) {
+      return false;
+    }
+    NSData* data = [NSData dataWithBytesNoCopy:const_cast<void*>(message)
+                                        length:message_size
+                                  freeWhenDone:NO];
+    NSDictionary* object = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (![object isKindOfClass:NSDictionary.class]) {
+      return false;
+    }
+    if (NSNumber* number = object[@"id"]) {
+      auto reply = session_replies_.find(number.intValue);
+      if (reply == session_replies_.end()) {
+        return false;
+      }
+      RawReply done = std::move(reply->second);
+      session_replies_.erase(reply);
+      id payload = object[@"error"] ?: object[@"result"] ?: @{};
+      NSData* json = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+      done(object[@"error"] == nil,
+           std::string(static_cast<const char*>(json.bytes), json.length));
+      return true;
+    }
+    NSString* session = object[@"sessionId"];
+    NSString* method = object[@"method"];
+    if (session && method) {
+      HandleEvent(browser, method, object[@"params"]);
+      return true;
+    }
+    return false;
+  }
+
+  void HandleEvent(CefRefPtr<CefBrowser> browser, NSString* method, NSDictionary* params) {
+    if (![params isKindOfClass:NSDictionary.class]) {
+      return;
+    }
+    if ([method isEqualToString:@"Target.attachedToTarget"]) {
+      NSDictionary* info = params[@"targetInfo"];
+      NSString* session = params[@"sessionId"];
+      if (![info[@"type"] isEqualToString:@"iframe"] || !session) {
+        return;
+      }
+      [view_ engineFrameAttached:info[@"targetId"] session:session];
+      // Frames inside it too, and it mustn't wait for a debugger.
+      CallInSession(browser, "Target.setAutoAttach",
+                    "{\"autoAttach\":true,\"waitForDebuggerOnStart\":false,\"flatten\":true}",
+                    session.UTF8String, [](bool, const std::string&) {});
+      if ([params[@"waitingForDebugger"] boolValue]) {
+        CallInSession(browser, "Runtime.runIfWaitingForDebugger", "", session.UTF8String,
+                      [](bool, const std::string&) {});
+      }
+    } else if ([method isEqualToString:@"Target.detachedFromTarget"]) {
+      if (NSString* session = params[@"sessionId"]) {
+        [view_ engineFrameDetached:session];
+      }
+    } else if (recording_network_ && [method hasPrefix:@"Network."]) {
+      [view_ engineNetworkEvent:method params:params];
+    }
+  }
+
+  void FollowFrames(CefRefPtr<CefBrowser> browser) {
+    if (following_frames_) {
+      return;
+    }
+    following_frames_ = true;
+    CallRaw(browser, "Target.setAutoAttach",
+            "{\"autoAttach\":true,\"waitForDebuggerOnStart\":false,\"flatten\":true}",
+            [](bool, const std::string&) {});
+  }
+
+  // Sends a command to a frame's session as a raw message.
+  void CallInSession(CefRefPtr<CefBrowser> browser,
+                     const std::string& method,
+                     const std::string& params,
+                     const std::string& session,
+                     RawReply done) {
+    int message_id = next_session_message_++;
+    NSMutableDictionary* message = [@{
+      @"id" : @(message_id),
+      @"method" : @(method.c_str()),
+      @"sessionId" : @(session.c_str())
+    } mutableCopy];
+    if (!params.empty()) {
+      NSData* data = [NSData dataWithBytes:params.data() length:params.size()];
+      id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+      if (![object isKindOfClass:NSDictionary.class]) {
+        done(false, "{\"message\":\"params must be a JSON object\"}");
+        return;
+      }
+      message[@"params"] = object;
+    }
+    NSData* json = [NSJSONSerialization dataWithJSONObject:message options:0 error:nil];
+    session_replies_[message_id] = std::move(done);
+    if (!browser->GetHost()->SendDevToolsMessage(json.bytes, json.length)) {
+      RawReply failed = std::move(session_replies_[message_id]);
+      session_replies_.erase(message_id);
+      failed(false, "{\"message\":\"the command could not be sent\"}");
+    }
+  }
+
+  void SetRecordingNetwork(bool recording) { recording_network_ = recording; }
+
   void OnDevToolsEvent(CefRefPtr<CefBrowser> browser,
                        const CefString& method,
                        const void* params,
                        size_t params_size) override {
     std::string name = method.ToString();
+    if (name.rfind("Target.", 0) == 0 || (recording_network_ && name.rfind("Network.", 0) == 0)) {
+      NSData* data = [NSData dataWithBytesNoCopy:const_cast<void*>(params)
+                                          length:params_size
+                                    freeWhenDone:NO];
+      HandleEvent(browser, @(name.c_str()),
+                  [NSJSONSerialization JSONObjectWithData:data options:0 error:nil]);
+      return;
+    }
     if (name == "Overlay.inspectNodeRequested" && picking_) {
       CefRefPtr<CefValue> value =
           CefParseJSON(params, params_size, JSON_PARSER_RFC);
@@ -1162,8 +1283,6 @@ class WebClient : public BaseClient,
       replies_[id] = std::move(done);
     }
   }
-
-  using RawReply = std::function<void(bool, const std::string&)>;
 
   // Sends a command given as JSON; |done| gets the result or error JSON.
   void CallRaw(CefRefPtr<CefBrowser> browser,
@@ -1232,7 +1351,7 @@ class WebClient : public BaseClient,
                            bool cache_disabled,
                            double latency,
                            double throughput) {
-    bool needed = cache_disabled || latency != 0 || throughput != 0;
+    bool needed = cache_disabled || latency != 0 || throughput != 0 || recording_network_;
     if (needed && !network_enabled_) {
       Call(browser, "Network.enable", nullptr);
     }
@@ -1406,6 +1525,12 @@ class WebClient : public BaseClient,
   std::map<int, Reply> replies_;
   std::map<int, RawReply> raw_replies_;
   bool picking_ = false;
+  // Agents: cross-site frames followed, network recorded, and commands
+  // sent to frames' sessions (ids far above ExecuteDevToolsMethod's).
+  bool following_frames_ = false;
+  bool recording_network_ = false;
+  std::map<int, RawReply> session_replies_;
+  int next_session_message_ = 1000000000;
   bool network_enabled_ = false;
 
   IMPLEMENT_REFCOUNTING(WebClient);
@@ -1623,6 +1748,8 @@ class WebClient : public BaseClient,
   NSMutableArray<MBPermissionPrompt*>* _prompts;
   // Developer toolbar emulations.
   NSMutableDictionary<NSString*, NSString*>* _mediaFeatures;
+  NSMutableDictionary<NSString*, NSString*>* _frameSessions;
+  BOOL _followsFrames;
   NSString* _mobileUserAgent;
   BOOL _scriptsDisabled;
   BOOL _cacheDisabled;
@@ -1936,6 +2063,72 @@ class WebClient : public BaseClient,
                    });
 }
 
+- (void)sendDevToolsCommand:(NSString*)method
+                     params:(NSString*)params
+                    session:(NSString*)session
+                 completion:(void (^)(NSString*, NSString*))completion {
+  if (!session) {
+    [self sendDevToolsCommand:method params:params completion:completion];
+    return;
+  }
+  if (!_browser) {
+    completion(nil, @"the page isn't loaded");
+    return;
+  }
+  _client->CallInSession(_browser, method.UTF8String, params.UTF8String ?: "", session.UTF8String,
+                         [completion](bool success, const std::string& json) {
+                           NSString* text = @(json.c_str());
+                           if (success) {
+                             completion(text, nil);
+                             return;
+                           }
+                           NSDictionary* error = [NSJSONSerialization
+                               JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding]
+                                          options:0
+                                            error:nil];
+                           completion(nil, [error isKindOfClass:NSDictionary.class] && error[@"message"]
+                                               ? error[@"message"]
+                                               : text);
+                         });
+}
+
+- (void)attachToFrames {
+  _followsFrames = YES;
+  if (_browser) {
+    _client->FollowFrames(_browser);
+  }
+}
+
+- (NSDictionary<NSString*, NSString*>*)frameSessions {
+  return [_frameSessions copy] ?: @{};
+}
+
+- (void)setRecordsNetwork:(BOOL)records {
+  if (_recordsNetwork == records) {
+    return;
+  }
+  _recordsNetwork = records;
+  if (_browser) {
+    _client->SetRecordingNetwork(records);
+    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency, _throughput);
+  }
+}
+
+- (void)engineFrameAttached:(NSString*)frame session:(NSString*)session {
+  if (!_frameSessions) {
+    _frameSessions = [NSMutableDictionary dictionary];
+  }
+  _frameSessions[frame] = session;
+}
+
+- (void)engineFrameDetached:(NSString*)session {
+  [_frameSessions removeObjectsForKeys:[_frameSessions allKeysForObject:session]];
+}
+
+- (void)engineNetworkEvent:(NSString*)method params:(NSDictionary*)params {
+  [self.delegate webView:self didObserveNetworkEvent:method params:params];
+}
+
 - (void)focusContent {
   if (_browser) {
     _browser->GetHost()->SetFocus(true);
@@ -2024,8 +2217,15 @@ class WebClient : public BaseClient,
   }
 }
 
-// Emulations asked for before the browser existed.
+// Emulations (and agents' recording) asked for before the browser existed.
 - (void)applyEmulations {
+  if (_followsFrames) {
+    _client->FollowFrames(_browser);
+  }
+  if (_recordsNetwork) {
+    _client->SetRecordingNetwork(true);
+    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency, _throughput);
+  }
   if (_mediaFeatures.count > 0) {
     NSString* name = _mediaFeatures.allKeys.firstObject;
     [self emulateMediaFeature:name value:_mediaFeatures[name]];

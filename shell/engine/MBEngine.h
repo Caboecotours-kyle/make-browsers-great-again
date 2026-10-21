@@ -70,6 +70,10 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
                    level:(NSInteger)level
                   source:(NSString*)source
                     line:(int)line;
+/// A Network.* DevTools event while -recordsNetwork is on.
+- (void)webView:(MBWebView*)view
+    didObserveNetworkEvent:(NSString*)method
+                    params:(NSDictionary*)params;
 @end
 
 @interface MBEngine : NSObject
@@ -163,6 +167,20 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
                      params:(nullable NSString*)params
                  completion:(void (^)(NSString* _Nullable result,
                                       NSString* _Nullable error))completion;
+/// The same, sent to a DevTools |session| (a cross-site frame's, from
+/// -frameSessions), or the page's own when nil.
+- (void)sendDevToolsCommand:(NSString*)method
+                     params:(nullable NSString*)params
+                    session:(nullable NSString*)session
+                 completion:(void (^)(NSString* _Nullable result,
+                                      NSString* _Nullable error))completion;
+/// Starts following cross-site frames, which run in processes of their
+/// own: each gets a DevTools session in -frameSessions.
+- (void)attachToFrames;
+/// Cross-site frames DevTools can reach: frame id → session id.
+@property(nonatomic, readonly) NSDictionary<NSString*, NSString*>* frameSessions;
+/// Reports the page's network requests through the delegate.
+@property(nonatomic) BOOL recordsNetwork;
 /// Gives keyboard focus to the page.
 - (void)focusContent;
 /// Asks the page whether it is playing audible media. The answer arrives via

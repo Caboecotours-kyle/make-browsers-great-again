@@ -68,6 +68,21 @@ enum StoreChange {
     case agent
 }
 
+/// A network request, kept for agents (`mbga network`).
+struct NetworkEntry {
+    let number: Int
+    let requestID: String
+    let method: String
+    let url: String
+    var type: String
+    var status: Int?
+    var mime = ""
+    var size: Int?
+    let started: Double
+    var ended: Double?
+    var failure: String?
+}
+
 /// A console message, kept for agents (`mbga console`).
 struct ConsoleEntry {
     let level: Int
@@ -170,9 +185,11 @@ final class BrowserStore: NSObject {
     private var devToolbarOverrides: [UInt64: Bool] = [:]
     /// Opens Settings, at a pane if given.
     var openSettings: ((SettingsPane?) -> Void)?
-    /// The tab agents act on when they name none: the one they last opened
-    /// or chose.
-    var agentTab: UInt64?
+    /// Agents' preferences, kept in the data folder.
+    lazy var agentPreferences = AgentPreferences.load(from: dataDirectory)
+    /// Requests since agents started following each tab, oldest first.
+    private var networkLogs: [UInt64: [NetworkEntry]] = [:]
+    private var networkNumbers: [UInt64: Int] = [:]
     /// Console messages since each page loaded, newest last.
     private var consoleLogs: [UInt64: [ConsoleEntry]] = [:]
     /// Tabs an agent acted on in the last moments, which glow on screen.
@@ -358,6 +375,7 @@ final class BrowserStore: NSObject {
         blockedCounts[id] = nil
         devReports[id] = nil
         consoleLogs[id] = nil
+        networkLogs[id] = nil
         devStates[id]?.picking = false
         if pausedMediaTab == id { pausedMediaTab = nil }
         view.isHidden = true
@@ -1188,6 +1206,44 @@ extension BrowserStore {
 
     func consoleEntries(of id: UInt64) -> [ConsoleEntry] { consoleLogs[id] ?? [] }
 
+    func networkEntries(of id: UInt64) -> [NetworkEntry] { networkLogs[id] ?? [] }
+
+    func clearNetwork(of id: UInt64) { networkLogs[id] = nil }
+
+    fileprivate func recordNetwork(_ tab: UInt64, _ method: String, _ request: String, _ params: [AnyHashable: Any]) {
+        var log = networkLogs[tab] ?? []
+        let index = log.lastIndex { $0.requestID == request }
+        switch method {
+        case "Network.requestWillBeSent":
+            guard let info = params["request"] as? [String: Any], let url = info["url"] as? String,
+                  !url.hasPrefix("data:") else { return }
+            // A new page starts a new log.
+            if params["type"] as? String == "Document", params["frameId"] as? String == params["loaderId"] as? String ?? "" { log.removeAll() }
+            let number = (networkNumbers[tab] ?? 0) + 1
+            networkNumbers[tab] = number
+            log.append(NetworkEntry(number: number, requestID: request, method: info["method"] as? String ?? "GET", url: url,
+                                    type: (params["type"] as? String ?? "Other").lowercased(),
+                                    started: params["timestamp"] as? Double ?? 0))
+            if log.count > 300 { log.removeFirst(log.count - 300) }
+        case "Network.responseReceived":
+            guard let index, let response = params["response"] as? [String: Any] else { return }
+            log[index].status = response["status"] as? Int
+            log[index].mime = response["mimeType"] as? String ?? ""
+        case "Network.loadingFinished":
+            guard let index else { return }
+            log[index].size = params["encodedDataLength"] as? Int
+            log[index].ended = params["timestamp"] as? Double
+        case "Network.loadingFailed":
+            guard let index else { return }
+            log[index].failure = (params["canceled"] as? Bool == true) ? "canceled"
+                : params["blockedReason"] as? String ?? params["errorText"] as? String ?? "failed"
+            log[index].ended = params["timestamp"] as? Double
+        default:
+            return
+        }
+        networkLogs[tab] = log
+    }
+
     func clearConsole(of id: UInt64) { consoleLogs[id] = nil }
 
     func spaceID(of tabID: UInt64) -> UInt64? {
@@ -1196,13 +1252,69 @@ extension BrowserStore {
         }?.id
     }
 
-    /// Opens a tab for an agent: behind the one on screen unless `focus`,
-    /// so it doesn't take the page away from the person.
+    /// Opens a tab for an agent in its own space (or the person's, if so
+    /// set), never taking the screen unless `focus`.
     func openTabForAgent(_ url: String, focus: Bool) -> UInt64? {
-        guard !url.isEmpty, let id = core.openTab(spaceId: activeSpace.id, url: url, activate: focus) else { return nil }
-        refresh()
-        if !focus, let tab = core.tab(id: id) { createView(for: tab) }
+        let space = agentSpaceID()
+        let onScreen = focus && space == activeSpace.id
+        guard !url.isEmpty, let id = core.openTab(spaceId: space, url: url, activate: onScreen) else { return nil }
+        if focus, !onScreen {
+            select(id, in: space)
+        } else {
+            refresh()
+        }
+        if views[id] == nil, let tab = core.tab(id: id) { createView(for: tab) }
+        // From its first request, and its cross-site frames from the start.
+        views[id]?.recordsNetwork = true
+        views[id]?.attachToFrames()
         return id
+    }
+
+    /// The space agents work in: their own, made on first use with the
+    /// profile chosen in Settings, so their tabs never crowd the person's.
+    func agentSpaceID() -> UInt64 {
+        var preferences = agentPreferences
+        guard preferences.ownSpace else { return activeSpace.id }
+        let profile = agentProfileID()
+        if let id = preferences.spaceID, let space = snapshot.spaces.first(where: { $0.id == id }) {
+            if space.profileId != profile {
+                destroyViews(core.setSpaceProfile(id: id, profileId: profile))
+                refresh()
+            }
+            return id
+        }
+        let id = core.createSpace(name: "Agents", icon: "✨", color: 0x8B5CF6, profileId: profile)
+        preferences.spaceID = id
+        agentPreferences = preferences
+        agentPreferences.save(to: dataDirectory)
+        refresh()
+        return id
+    }
+
+    /// The profile agents browse as: one of the person's (their sign-ins),
+    /// or a separate one with its own cookies.
+    func agentProfileID() -> UInt64 {
+        var preferences = agentPreferences
+        let profiles = snapshot.profiles
+        if preferences.separateProfile {
+            if let id = preferences.separateProfileID, profiles.contains(where: { $0.id == id }) { return id }
+            let id = core.createProfile(name: "Agents")
+            preferences.separateProfileID = id
+            agentPreferences = preferences
+            agentPreferences.save(to: dataDirectory)
+            refresh()
+            return id
+        }
+        if let id = preferences.profileID, profiles.contains(where: { $0.id == id }) { return id }
+        return snapshot.spaces.first?.profileId ?? profiles.first?.id ?? 0
+    }
+
+    func setAgentPreferences(_ change: (inout AgentPreferences) -> Void) {
+        change(&agentPreferences)
+        agentPreferences.save(to: dataDirectory)
+        // A space already made follows the new profile.
+        if agentPreferences.ownSpace, agentPreferences.spaceID != nil { _ = agentSpaceID() }
+        changed(.agent)
     }
 
     /// Marks the tab as being worked by an agent for a moment: on screen,
@@ -1384,6 +1496,13 @@ extension BrowserStore: MBWebViewDelegate {
             log.append(ConsoleEntry(level: level, text: message, source: source, line: Int(line)))
             if log.count > 200 { log.removeFirst(log.count - 200) }
             consoleLogs[view.tabID] = log
+        }
+    }
+
+    nonisolated func webView(_ view: MBWebView, didObserveNetworkEvent method: String, params: [AnyHashable: Any]) {
+        MainActor.assumeIsolated {
+            guard isCurrent(view), let request = params["requestId"] as? String else { return }
+            recordNetwork(view.tabID, method, request, params)
         }
     }
 
