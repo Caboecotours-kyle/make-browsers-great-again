@@ -227,6 +227,9 @@ final class WebContainerView: NSView {
     /// DevTools' own background under its window, so the window's rounded
     /// corners and edge don't show the white page container.
     private let devToolsBacking = NSView()
+    /// The docked panel's own header: a title and a close button, as the
+    /// DevTools window has no title bar here.
+    private lazy var devToolsHeader = DevToolsHeaderView { [weak self] in self?.current?.closeDevTools() }
     /// The visible tab's DevTools window, docked over the panel.
     private weak var dockedWindow: NSWindow?
     private lazy var devToolsHandle = DevToolsResizeHandle { [weak self] x in self?.resizeDevTools(to: x) }
@@ -355,6 +358,7 @@ extension WebContainerView {
             undock()
             devToolsEdge.isHidden = true
             devToolsBacking.isHidden = true
+            devToolsHeader.isHidden = true
             devToolsHandle.isHidden = true
             return bounds
         }
@@ -365,10 +369,11 @@ extension WebContainerView {
             devToolsEdge.wantsLayer = true
             devToolsBacking.wantsLayer = true
             addSubview(devToolsBacking)
+            addSubview(devToolsHeader)
             addSubview(devToolsEdge)
             addSubview(devToolsHandle)
         }
-        for view in [devToolsBacking, devToolsEdge, devToolsHandle] {
+        for view in [devToolsBacking, devToolsHeader, devToolsEdge, devToolsHandle] {
             view.layer?.zPosition = 2
             view.isHidden = false
         }
@@ -383,7 +388,10 @@ extension WebContainerView {
             undock()
             dock(devTools, in: window)
         }
-        let panel = NSRect(x: edge + 1, y: 0, width: bounds.width - edge - 1, height: bounds.height)
+        let header = DevToolsHeaderView.height
+        devToolsHeader.frame = NSRect(x: edge + 1, y: 0, width: bounds.width - edge - 1, height: header)
+        devToolsHeader.dark = dark
+        let panel = NSRect(x: edge + 1, y: header, width: bounds.width - edge - 1, height: bounds.height - header)
         let frame = window.convertToScreen(convert(panel, to: nil))
         if devTools.frame != frame { devTools.setFrame(frame, display: true) }
         devTools.contentView?.layer?.cornerRadius = cornerRadius
@@ -402,7 +410,8 @@ extension WebContainerView {
         if let content = devTools.contentView {
             content.wantsLayer = true
             content.layer?.cornerCurve = .continuous
-            content.layer?.maskedCorners = [.layerMaxXMinYCorner, .layerMaxXMaxYCorner]
+            // The header takes the card's top corner.
+            content.layer?.maskedCorners = [.layerMaxXMinYCorner]
             content.layer?.masksToBounds = true
         }
         if ProcessInfo.processInfo.environment["MBGA_DEBUG_EVENTS"] != nil {
@@ -454,6 +463,48 @@ extension WebContainerView {
                 : NSColor.white.cgColor
         }
         CATransaction.commit()
+    }
+}
+
+/// The docked DevTools panel's header: what it is, and how to close it.
+final class DevToolsHeaderView: FlippedView {
+    static let height: CGFloat = 30
+    var dark = true {
+        didSet { if dark != oldValue { needsDisplay = true } }
+    }
+    private let title = Label.make("Developer Tools", size: 12, weight: .medium, color: .secondaryLabelColor)
+    private let close: SymbolButton
+    private let line = CALayer()
+
+    init(close: @escaping () -> Void) {
+        self.close = SymbolButton("xmark", size: 11, action: close)
+        super.init(frame: .zero)
+        wantsLayer = true
+        self.close.toolTip = "Close Developer Tools  ⌥⌘I"
+        addSubview(title)
+        addSubview(self.close)
+        layer?.addSublayer(line)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func layout() {
+        super.layout()
+        title.frame = NSRect(x: 12, y: (bounds.height - 16) / 2, width: max(bounds.width - 60, 0), height: 16)
+        close.frame = NSRect(x: bounds.width - 34, y: (bounds.height - 24) / 2, width: 28, height: 24)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        line.frame = NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1)
+        CATransaction.commit()
+    }
+
+    override func updateLayer() {
+        // DevTools' own colours, whatever the window's appearance.
+        appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        layer?.backgroundColor = (dark ? NSColor(srgbRed: 0.157, green: 0.157, blue: 0.157, alpha: 1) : .white).cgColor
+        line.backgroundColor = (dark ? NSColor.white.withAlphaComponent(0.08) : NSColor.black.withAlphaComponent(0.08)).cgColor
     }
 }
 
