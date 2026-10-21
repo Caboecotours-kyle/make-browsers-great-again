@@ -4,7 +4,7 @@
 //! The FFI layer in `lib.rs` wraps a `State` in a mutex and exposes it to Swift.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub type Id = u64;
 
@@ -36,6 +36,17 @@ pub struct Tab {
     pub audible: bool,
     #[serde(skip)]
     pub frozen: bool,
+    /// When its web view was last made. A tab loaded ahead of being shown
+    /// (warmed) isn't put back to sleep or frozen as idle right away.
+    #[serde(skip)]
+    pub woke_ms: u64,
+}
+
+impl Tab {
+    /// When it was last shown or loaded, whichever is later.
+    fn last_used_ms(&self) -> u64 {
+        self.last_active_ms.max(self.woke_ms)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -96,12 +107,29 @@ pub struct Policy {
 
 impl Default for Policy {
     fn default() -> Self {
+        // Tabs stay loaded for hours, as in Edge (2 h) and Chrome, rather
+        // than reloading whenever you come back after a short break; memory
+        // pressure still puts them to sleep sooner.
         Policy {
-            sleep_after_secs: 10 * 60,
-            max_live_tabs: 8,
-            freeze_after_secs: 60,
+            sleep_after_secs: 2 * 60 * 60,
+            max_live_tabs: 24,
+            freeze_after_secs: 5 * 60,
             strict_site_isolation: false,
             archive_after_hours: 0,
+        }
+    }
+}
+
+impl Policy {
+    /// States saved with the first defaults (10 minutes, 8 tabs, frozen
+    /// after a minute) get the current ones. Nothing let people choose
+    /// those values.
+    pub fn upgrade_first_defaults(&mut self) {
+        if (self.sleep_after_secs, self.max_live_tabs, self.freeze_after_secs) == (600, 8, 60) {
+            let current = Policy::default();
+            self.sleep_after_secs = current.sleep_after_secs;
+            self.max_live_tabs = current.max_live_tabs;
+            self.freeze_after_secs = current.freeze_after_secs;
         }
     }
 }
@@ -455,6 +483,7 @@ impl State {
                 live: false,
                 audible: false,
                 frozen: false,
+                woke_ms: 0,
             },
         );
         self.space_mut(space_id).unwrap().today.insert(0, id);
@@ -945,12 +974,14 @@ impl State {
 
     // -------------------------------------------------------------- lifecycle
 
-    pub fn set_live(&mut self, id: Id, live: bool) {
+    pub fn set_live(&mut self, id: Id, live: bool, now: u64) {
         if let Some(t) = self.tabs.get_mut(&id) {
             // A new or destroyed web view is never frozen.
             t.live = live;
             t.frozen = false;
-            if !live {
+            if live {
+                t.woke_ms = now;
+            } else {
                 t.audible = false;
             }
         }
@@ -974,7 +1005,7 @@ impl State {
                 && !keep_awake.contains(&site_of(&t.url))
                 && !elsewhere.contains(&id)
                 && Some(id) != visible
-                && now.saturating_sub(t.last_active_ms) >= after_ms
+                && now.saturating_sub(t.last_used_ms()) >= after_ms
             {
                 t.frozen = true;
                 frozen.push(id);
@@ -1047,12 +1078,20 @@ impl State {
             ),
             Pressure::Critical => (0, 0),
         };
+        // Each space's current tab stays loaded unless memory is critical,
+        // so switching spaces shows it at once.
+        let fronts: HashSet<Id> = match pressure {
+            Pressure::Critical => HashSet::new(),
+            _ => self.spaces.iter().filter_map(|s| s.active_tab).collect(),
+        };
         let mut live: Vec<&Tab> = self
             .tabs
             .values()
-            .filter(|t| t.live && Some(t.id) != visible && !self.shown_elsewhere.contains(&t.id))
+            .filter(|t| {
+                t.live && Some(t.id) != visible && !self.shown_elsewhere.contains(&t.id) && !fronts.contains(&t.id)
+            })
             .collect();
-        live.sort_by_key(|t| (t.last_active_ms, t.id));
+        live.sort_by_key(|t| (t.last_used_ms(), t.id));
 
         let mut sleepers = Vec::new();
         let mut remaining = live.len();
@@ -1060,7 +1099,7 @@ impl State {
             if t.audible || self.keeps_awake(&t.url) {
                 continue;
             }
-            let idle = now.saturating_sub(t.last_active_ms) >= timeout_ms;
+            let idle = now.saturating_sub(t.last_used_ms()) >= timeout_ms;
             if idle || remaining > max_live {
                 sleepers.push(t.id);
                 remaining -= 1;

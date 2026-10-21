@@ -12,6 +12,7 @@ final class SidebarView: FlippedView {
     private let pager: SpacePagerView
     private let player: MiniPlayerView
     private let bottom: SidebarBottomBar
+    private var shownSpace: UInt64
 
     init(store: BrowserStore) {
         self.store = store
@@ -21,6 +22,7 @@ final class SidebarView: FlippedView {
         pager = SpacePagerView(store: store)
         player = MiniPlayerView(store: store)
         bottom = SidebarBottomBar(store: store)
+        shownSpace = store.snapshot.activeSpace
         super.init(frame: .zero)
         for view in [toolbar, address, favorites, pager, player, bottom] as [NSView] { addSubview(view) }
         player.isHidden = store.mediaTab == nil
@@ -32,12 +34,25 @@ final class SidebarView: FlippedView {
     private func handle(_ change: StoreChange) {
         switch change {
         case .snapshot:
-            favorites.update()
+            let switched = store.snapshot.activeSpace != shownSpace
+            shownSpace = store.snapshot.activeSpace
+            favorites.update(crossfade: switched)
             pager.update(animation: store.snapshotAnimation)
             bottom.update()
             address.update()
             updatePlayer()
             needsLayout = true
+            // Another space may have more or fewer favorites: the list glides
+            // to its new place along with the pages rather than jumping.
+            // Rows the new space's list just made are settled first, so only
+            // the moving frames animate.
+            if switched {
+                Motion.instantly {
+                    pager.layoutSubtreeIfNeeded()
+                    favorites.layoutSubtreeIfNeeded()
+                }
+                Motion.animate(Motion.reflow) { layoutSubtreeIfNeeded() }
+            }
         case .nav:
             toolbar.update()
             address.update()
@@ -52,6 +67,7 @@ final class SidebarView: FlippedView {
             // Empty favorites open a drop target while something is dragged.
             favorites.update()
             pager.refreshDecorations()
+            pager.dragChanged()
             needsLayout = true
             Motion.animate(Motion.quick) { layoutSubtreeIfNeeded() }
         default:
@@ -283,28 +299,50 @@ private final class FavoritesGridView: FlippedView {
         return CGFloat(rowCount) * tileHeight + CGFloat(rowCount - 1) * spacing
     }
 
-    func update() {
+    private var shownTabs: [UInt64] = []
+
+    /// With `crossfade`, a space switch that brings other favorites fades
+    /// them in over the old ones.
+    func update(crossfade: Bool = false) {
         let favorites = space.favorites
+        let ids = favorites.map(\.id)
+        if crossfade, ids != shownTabs, !Motion.reduced {
+            let fade = CATransition()
+            fade.type = .fade
+            if ids.count < shownTabs.count {
+                // Gone before the list moves up into their place.
+                fade.duration = Motion.quick.duration * 0.7
+            } else {
+                // Coming in as the list moves down out of their way.
+                fade.duration = Motion.reflow.duration
+                fade.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            }
+            layer?.add(fade, forKey: "favorites")
+        }
+        shownTabs = ids
         while tiles.count > favorites.count { tiles.removeLast().removeFromSuperview() }
         while tiles.count < favorites.count {
             let tile = FavoriteTileView(store: store)
             tiles.append(tile)
             addSubview(tile)
+            Motion.instantly { tile.frame = tileFrame(tiles.count - 1) }
         }
         for (tile, tab) in zip(tiles, favorites) { tile.configure(tab, space: space) }
         hint.isHidden = !(favorites.isEmpty && store.isDragging)
         needsLayout = true
     }
 
+    private func tileFrame(_ index: Int) -> NSRect {
+        let width = (bounds.width - spacing * CGFloat(columns - 1)) / CGFloat(columns)
+        let row = index / columns, column = index % columns
+        return NSRect(x: CGFloat(column) * (width + spacing), y: CGFloat(row) * (tileHeight + spacing),
+                      width: width, height: tileHeight)
+    }
+
     override func layout() {
         super.layout()
         hint.frame = bounds
-        let width = (bounds.width - spacing * CGFloat(columns - 1)) / CGFloat(columns)
-        for (i, tile) in tiles.enumerated() {
-            let row = i / columns, column = i % columns
-            tile.frame = NSRect(x: CGFloat(column) * (width + spacing), y: CGFloat(row) * (tileHeight + spacing),
-                                width: width, height: tileHeight)
-        }
+        for (i, tile) in tiles.enumerated() { tile.frame = tileFrame(i) }
     }
 
     // Dropping a tab here adds it as a favorite at the caret.
@@ -473,13 +511,11 @@ private final class FavoriteTileView: HoverView, NSDraggingSource {
 
 /// The spaces' lists side by side, offset by the pager's position, so a
 /// two-finger swipe slides them with the fingers. Only the pages near the
-/// current position exist.
+/// current position (or along an animated move) exist.
 private final class SpacePagerView: FlippedView {
     private let store: BrowserStore
     private var pages: [UInt64: SpacePageView] = [:]
     private let gap: CGFloat = 24
-    /// Pages also kept while animating from this position.
-    private var animatingFrom: CGFloat?
 
     init(store: BrowserStore) {
         self.store = store
@@ -488,7 +524,8 @@ private final class SpacePagerView: FlippedView {
         // Neighbouring spaces wait just past the edge; never show them over
         // the page.
         layer?.masksToBounds = true
-        store.pager.observe(self) { [weak self] animated in self?.positionChanged(animated: animated) }
+        store.pager.view = self
+        store.pager.observe(self) { [weak self] in self?.positionChanged() }
         update(animation: nil)
     }
 
@@ -514,13 +551,8 @@ private final class SpacePagerView: FlippedView {
     }
 
     private func wanted(_ index: Int) -> Bool {
-        let position = store.pager.position
-        if abs(CGFloat(index) - position) < 1.2 { return true }
-        if let from = animatingFrom {
-            let low = min(from, position) - 1.2, high = max(from, position) + 1.2
-            return CGFloat(index) > low && CGFloat(index) < high
-        }
-        return false
+        let span = store.pager.travel ?? store.pager.position...store.pager.position
+        return CGFloat(index) > span.lowerBound - 1.2 && CGFloat(index) < span.upperBound + 1.2
     }
 
     private func ensurePages() {
@@ -531,49 +563,34 @@ private final class SpacePagerView: FlippedView {
                     pages[space.id] = page
                     addSubview(page)
                 }
-            } else if let page = pages.removeValue(forKey: space.id) {
+            } else if !store.isDragging, let page = pages.removeValue(forKey: space.id) {
+                // While dragging, the page the drag started from stays: a
+                // tab held over a space's icon switches spaces mid-drag.
                 page.removeFromSuperview()
             }
         }
     }
 
+    /// Drops pages kept for a drag once it ends.
+    func dragChanged() {
+        if !store.isDragging { ensurePages() }
+    }
+
+    /// Never animated: the pager steps its moves itself, and an animation
+    /// here would hold the pages back from following it.
     private func layoutPages() {
         let position = store.pager.position
-        for (index, space) in store.snapshot.spaces.enumerated() {
-            pages[space.id]?.frame = NSRect(x: (CGFloat(index) - position) * stride, y: 0,
-                                            width: bounds.width, height: bounds.height)
+        Motion.instantly {
+            for (index, space) in store.snapshot.spaces.enumerated() {
+                pages[space.id]?.frame = NSRect(x: (CGFloat(index) - position) * stride, y: 0,
+                                                width: bounds.width, height: bounds.height)
+            }
         }
     }
 
-    private func positionChanged(animated: Bool) {
-        if animated {
-            animatingFrom = currentVisualPosition()
-            ensurePages()
-            Motion.animate(Motion.glide) {
-                let position = store.pager.position
-                for (index, space) in store.snapshot.spaces.enumerated() {
-                    pages[space.id]?.animator().frame = NSRect(x: (CGFloat(index) - position) * stride, y: 0,
-                                                               width: bounds.width, height: bounds.height)
-                }
-            } completion: { [weak self] in
-                self?.animatingFrom = nil
-                self?.ensurePages()
-            }
-        } else {
-            ensurePages()
-            layoutPages()
-        }
-    }
-
-    /// Where the pages are drawn right now (mid-animation included).
-    private func currentVisualPosition() -> CGFloat {
-        for (index, space) in store.snapshot.spaces.enumerated() {
-            if let page = pages[space.id] {
-                let x = page.layer?.presentation()?.frame.minX ?? page.frame.minX
-                return CGFloat(index) - x / max(stride, 1)
-            }
-        }
-        return store.pager.position
+    private func positionChanged() {
+        ensurePages()
+        layoutPages()
     }
 
     override func layout() {
@@ -634,30 +651,38 @@ private final class SidebarBottomBar: FlippedView {
         downloads.frame = NSRect(x: 0, y: 2, width: 28, height: 24)
         add.frame = NSRect(x: bounds.width - 28, y: 2, width: 28, height: 24)
         guard !dots.isEmpty else { return }
-        // Icons shrink, then turn into dots, so many spaces never make the
-        // bar (and with it the sidebar) wider.
-        let available = bounds.width - 64
-        let size = min(24, (available - CGFloat(dots.count - 1) * 2) / CGFloat(dots.count))
-        let icons = size >= 16
-        let width = CGFloat(dots.count) * size + CGFloat(dots.count - 1) * 2
-        var x = (bounds.width - width) / 2
+        // A roomy, even pitch as in Arc. With many spaces the icons close
+        // up, then turn into dots, so the bar (and with it the sidebar) never
+        // gets wider. Each takes its whole pitch, so moving along the bar
+        // always hovers one.
+        let available = bounds.width - 2 * 34
+        let pitch = min(30, available / CGFloat(dots.count))
+        var x = (bounds.width - pitch * CGFloat(dots.count)) / 2
         for dot in dots {
-            dot.showsIcon = icons
-            dot.frame = NSRect(x: x, y: 2, width: max(size, 6), height: 24)
-            x += size + 2
+            dot.showsIcon = pitch >= 20
+            dot.frame = NSRect(x: x, y: 0, width: pitch, height: bounds.height)
+            x += pitch
         }
     }
 }
 
-/// A space's emoji (or a dot); click to switch, drop a tab to move it there.
+/// A space at the foot of the sidebar, as in Arc: its emoji in gray until
+/// hovered and in color while it's the active space, or a dot when there are
+/// too many to fit. Click to switch; drop a tab to move it there, or hold it
+/// over the icon to switch first and drop it anywhere in that space.
 private final class SpaceDotView: HoverView {
     private let store: BrowserStore
     private let fill = FillLayer()
-    private let label = Label.make(size: 13)
-    private let dot = CALayer()
+    private let colorIcon = FillLayer()
+    private let grayIcon = FillLayer()
+    private let dot = FillLayer()
     private var space: SpaceInfo?
+    private var iconText = ""
     private var active = false
     private var dropping = false
+    private var pressed = false
+    private var springLoad: Timer?
+    private var warmTimer: Timer?
     var showsIcon = true {
         didSet { if showsIcon != oldValue { needsLayout = true } }
     }
@@ -665,12 +690,14 @@ private final class SpaceDotView: HoverView {
     init(store: BrowserStore) {
         self.store = store
         super.init(frame: .zero)
-        fill.cornerRadius = 6
+        fill.cornerRadius = 7
         layer?.addSublayer(fill)
-        dot.cornerRadius = 3
+        for icon in [grayIcon, colorIcon] {
+            icon.contentsGravity = .resizeAspect
+            layer?.addSublayer(icon)
+        }
+        dot.cornerRadius = 2.5
         layer?.addSublayer(dot)
-        label.alignment = .center
-        addSubview(label)
         registerForDraggedTypes([.sidebarItem, .URL])
     }
 
@@ -678,39 +705,90 @@ private final class SpaceDotView: HoverView {
 
     func configure(_ space: SpaceInfo, active: Bool) {
         self.space = space
-        label.stringValue = space.icon
         toolTip = space.name
-        if active != self.active {
-            self.active = active
-            Motion.animate(Motion.quick) { animator().alphaValue = active ? 1 : 0.45 }
-        } else {
-            alphaValue = active ? 1 : 0.45
+        if space.icon != iconText {
+            iconText = space.icon
+            renderIcon()
         }
+        guard active != self.active else { return }
+        self.active = active
+        hoverChanged()
+    }
+
+    override func hoverChanged() {
+        super.hoverChanged()
+        // Resting on another space starts loading its page, so the click
+        // shows it loaded.
+        if hovering, !active, warmTimer == nil, let id = space?.id {
+            let timer = Timer(timeInterval: 0.12, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated { self?.store.warmSpace(id) }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            warmTimer = timer
+        } else if !hovering {
+            warmTimer?.invalidate()
+            warmTimer = nil
+        }
+    }
+
+    private func renderIcon() {
+        let images = SpaceIconImages.images(for: iconText, scale: window?.backingScaleFactor ?? 2,
+                                            appearance: effectiveAppearance)
+        colorIcon.contents = images?.color
+        grayIcon.contents = images?.gray
         needsLayout = true
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        renderIcon()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        renderIcon()
     }
 
     override func layout() {
         super.layout()
-        let icon = showsIcon && !(space?.icon.isEmpty ?? true)
-        label.isHidden = !icon
-        label.font = Theme.font(min(bounds.width, 24) * 0.54)
-        label.frame = NSRect(x: 0, y: bounds.midY - 9, width: bounds.width, height: 18)
+        let icon = showsIcon && colorIcon.contents != nil
+        let side = min(26, bounds.width - 2, bounds.height - 2)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        fill.frame = bounds
+        fill.frame = NSRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2, width: side, height: side)
+        for layer in [colorIcon, grayIcon] {
+            layer.bounds = NSRect(x: 0, y: 0, width: 16, height: 16)
+            layer.position = CGPoint(x: bounds.midX, y: bounds.midY)
+            layer.contentsScale = window?.backingScaleFactor ?? 2
+            layer.isHidden = !icon
+        }
+        dot.bounds = NSRect(x: 0, y: 0, width: 5, height: 5)
+        dot.position = CGPoint(x: bounds.midX, y: bounds.midY)
         dot.isHidden = icon
-        dot.frame = NSRect(x: bounds.midX - 3, y: bounds.midY - 3, width: 6, height: 6)
         CATransaction.commit()
+        updateLayer()
     }
 
     override func updateLayer() {
+        let lit = active || hovering || dropping
         fill.paint(fill: dropping ? Theme.controlHoverFill : hovering ? Theme.hoverFill : nil, in: effectiveAppearance)
-        effectiveAppearance.performAsCurrentDrawingAppearance { dot.backgroundColor = NSColor.labelColor.cgColor }
+        colorIcon.opacity = lit ? 1 : 0
+        grayIcon.opacity = lit ? 0 : 0.6
+        let scale = pressed ? CATransform3DMakeScale(0.84, 0.84, 1) : CATransform3DIdentity
+        for layer in [colorIcon, grayIcon, dot] { layer.transform = scale }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            dot.backgroundColor = NSColor.labelColor.withAlphaComponent(active ? 0.85 : hovering ? 0.6 : 0.3).cgColor
+        }
     }
 
-    override func mouseDown(with event: NSEvent) {}
+    override func mouseDown(with event: NSEvent) {
+        pressed = true
+        hoverChanged()
+    }
 
     override func mouseUp(with event: NSEvent) {
+        pressed = false
+        hoverChanged()
         if let space, bounds.contains(convert(event.locationInWindow, from: nil)) { store.activateSpace(space.id) }
     }
 
@@ -723,7 +801,17 @@ private final class SpaceDotView: HoverView {
 
     private func setDropping(_ value: Bool) {
         dropping = value
-        FillLayer.animated(Motion.quick) { updateLayer() }
+        hoverChanged()
+        springLoad?.invalidate()
+        springLoad = nil
+        guard value, !active, let id = space?.id else { return }
+        // A drag runs the run loop in its tracking mode, so the timer has to
+        // be in the common modes to fire.
+        let timer = Timer(timeInterval: 0.6, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.store.activateSpace(id) }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        springLoad = timer
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
@@ -745,5 +833,40 @@ private final class SpaceDotView: HoverView {
         guard let url = sender.draggingPasteboard.string(forType: .URL) else { return false }
         store.dropURL(url, on: target, index: 0)
         return true
+    }
+}
+
+/// A space's icon drawn once in color and once in gray, at the screen's
+/// scale, cached.
+@MainActor
+private enum SpaceIconImages {
+    private static var cache: [String: (color: CGImage, gray: CGImage)] = [:]
+    private static let context = CIContext()
+
+    static func images(for text: String, scale: CGFloat, appearance: NSAppearance) -> (color: CGImage, gray: CGImage)? {
+        guard !text.isEmpty else { return nil }
+        let key = "\(text) \(scale) \(appearance.isDark)"
+        if let cached = cache[key] { return cached }
+        let side = Int(16 * scale)
+        guard let bitmap = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+                                     space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: bitmap, flipped: false)
+        appearance.performAsCurrentDrawingAppearance {
+            // Letters and symbols take the text color; emoji keep their own.
+            let string = NSAttributedString(string: text, attributes: [
+                .font: NSFont.systemFont(ofSize: 13 * scale), .foregroundColor: NSColor.labelColor,
+            ])
+            let size = string.size()
+            string.draw(at: NSPoint(x: (CGFloat(side) - size.width) / 2, y: (CGFloat(side) - size.height) / 2))
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        guard let color = bitmap.makeImage() else { return nil }
+        let mono = CIImage(cgImage: color).applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0])
+        guard let gray = context.createCGImage(mono, from: CGRect(x: 0, y: 0, width: side, height: side)) else { return nil }
+        cache[key] = (color, gray)
+        return (color, gray)
     }
 }

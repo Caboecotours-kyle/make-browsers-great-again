@@ -251,7 +251,10 @@ fn load_state(dir: &Path) -> State {
         return State::new_default();
     };
     match serde_json::from_slice::<State>(&bytes) {
-        Ok(s) if !s.spaces.is_empty() && !s.profiles.is_empty() => s,
+        Ok(mut s) if !s.spaces.is_empty() && !s.profiles.is_empty() => {
+            s.policy.upgrade_first_defaults();
+            s
+        }
         _ => {
             // Keep the unreadable file for inspection instead of losing it.
             let backup = dir.join(format!("{STATE_FILE}.corrupt-{}", now_ms()));
@@ -727,7 +730,7 @@ impl BrowserCore {
     // ------------------------------------------------------------- lifecycle
 
     pub fn set_live(&self, id: u64, live: bool) {
-        self.mutate(|s, _| s.set_live(id, live))
+        self.mutate(|s, now| s.set_live(id, live, now))
     }
 
     pub fn set_audible(&self, id: u64, audible: bool) {
@@ -795,6 +798,12 @@ impl BrowserCore {
 
     /// The script to run in `page` as it starts loading: hiding rules,
     /// scriptlets and the class/id collector. "" when blocking is off.
+    /// Whether `page` gets scriptlets, which must run before its own
+    /// scripts: only then does a new tab wait for them before loading.
+    pub fn needs_early_script(&self, page: String) -> bool {
+        self.blocker.read().unwrap_or_else(|e| e.into_inner()).needs_early_script(&page)
+    }
+
     pub fn page_script(&self, page: String) -> String {
         self.blocker.read().unwrap_or_else(|e| e.into_inner()).page_script(&page)
     }
@@ -809,11 +818,13 @@ impl BrowserCore {
     /// `load_filters` (off the main thread) to load it again.
     pub fn set_block_ads(&self, enabled: bool) {
         self.mutate(|s, _| s.block_ads = enabled);
-        let mut blocker = self.blocker.write().unwrap_or_else(|e| e.into_inner());
-        blocker.enabled = enabled;
-        if !enabled {
-            blocker.unload();
-        }
+        let old = {
+            let mut blocker = self.blocker.write().unwrap_or_else(|e| e.into_inner());
+            blocker.enabled = enabled;
+            if enabled { None } else { blocker.unload() }
+        };
+        // Freed outside the lock, which requests wait on.
+        drop(old);
     }
 
     /// Turns blocking off for the site of `url`, or back on.
@@ -999,7 +1010,10 @@ impl BrowserCore {
         let mut blocker = self.blocker.write().unwrap_or_else(|e| e.into_inner());
         fresh.enabled = blocker.enabled;
         fresh.allowed = std::mem::take(&mut blocker.allowed);
-        *blocker = fresh;
+        let old = std::mem::replace(&mut *blocker, fresh);
+        // Requests wait on the lock: free the old engine after releasing it.
+        drop(blocker);
+        drop(old);
         true
     }
 

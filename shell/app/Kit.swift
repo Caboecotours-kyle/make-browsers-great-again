@@ -108,6 +108,11 @@ final class FillLayer: CALayer {
 }
 
 extension NSTextField {
+    /// Sets the text unless it is already that, which would redraw it.
+    func setIfChanged(_ text: String) {
+        if stringValue != text { stringValue = text }
+    }
+
     /// The width its text needs on one line. (A truncating label's intrinsic
     /// size doesn't report it reliably.)
     var textWidth: CGFloat { ceil(attributedStringValue.size().width) + 4 }

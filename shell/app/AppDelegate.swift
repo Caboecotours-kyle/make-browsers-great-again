@@ -33,11 +33,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         _ = core.selectDefaultTab(spaceId: store.activeSpace.id)
         store.refresh()
         store.updateCleanupOffer()
+        store.warmOtherSpaces()
         window.makeKeyAndOrderFront(nil)
         // MBGA_DEBUG_LITTLE_WINDOW pops the visible tab out at launch, for
         // screenshots of little windows.
         if ProcessInfo.processInfo.environment["MBGA_DEBUG_LITTLE_WINDOW"]?.isEmpty == false, let tab = store.visibleTabID {
             store.openInLittleWindow(tab)
+        }
+        // MBGA_DEBUG_LAYOUTS switches between Full and Focus every few
+        // seconds, for captures of the transition.
+        if ProcessInfo.processInfo.environment["MBGA_DEBUG_LAYOUTS"]?.isEmpty == false {
+            let timer = Timer(timeInterval: 3, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let store = self?.store else { return }
+                    store.setLayout(store.layout == .full ? .focus : .full)
+                }
+            }
+            RunLoop.main.add(timer, forMode: .common)
         }
         if core.needsOnboarding() {
             store.importSheet = ImportRequest(firstLaunch: true)

@@ -86,7 +86,8 @@ add noise to timings and Speedometer.
 
 Before the Chromium baseline, MBGA was measured against Google Chrome 155 on
 the same 50-tab workload (`results/20261021-final.json`): 2,122 MB against
-4,320 MB with every tab loaded, 900 MB with tab sleeping, and 0.4% against
+4,320 MB with every tab loaded, 900 MB with tab sleeping (the first defaults:
+asleep after 10 minutes, 8 tabs loaded; now 2 hours and 24), and 0.4% against
 18.4% idle CPU after 12 minutes.
 
 ### Memory options tried then

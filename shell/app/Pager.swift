@@ -3,28 +3,83 @@ import AppKit
 /// Horizontal paging between spaces, driven directly by trackpad scroll
 /// events so a two-finger swipe anywhere in the sidebar moves the spaces
 /// with the fingers and springs to the nearest one on release.
+///
+/// Animated moves are stepped on every display frame rather than handed to
+/// Core Animation: a view animated that way already sits at its destination,
+/// and AppKit doesn't keep drawing a page it thinks is off screen, so a
+/// space sliding away would go blank. Stepping also keeps the pages and the
+/// window's color in step with each other, as under the fingers.
 @MainActor
 final class PagerModel {
     /// Fractional index of the space on screen.
     private(set) var position: CGFloat = 0
+    /// Where an animated move is heading, while it runs.
+    private(set) var destination: CGFloat?
+    /// What an animated move covers, so the pages along the way are ready.
+    private(set) var travel: ClosedRange<CGFloat>?
+    /// The view whose display drives animated moves.
+    weak var view: NSView?
 
     private struct Observer {
         weak var owner: AnyObject?
-        let handle: @MainActor (_ animated: Bool) -> Void
+        let handle: @MainActor () -> Void
     }
     private var observers: [Observer] = []
 
-    /// Calls `handle` whenever the position changes, with whether to
-    /// animate to it (a settle) or follow it directly (fingers moving).
-    func observe(_ owner: AnyObject, _ handle: @escaping @MainActor (_ animated: Bool) -> Void) {
+    /// Calls `handle` whenever the position on screen changes.
+    func observe(_ owner: AnyObject, _ handle: @escaping @MainActor () -> Void) {
         observers.append(Observer(owner: owner, handle: handle))
     }
 
     func setPosition(_ value: CGFloat, animated: Bool) {
+        if animated, !Motion.reduced, view?.window != nil {
+            guard value != (destination ?? position) else { return }
+            move(to: value)
+            return
+        }
+        stopMoving()
         guard value != position else { return }
         position = value
+        notify()
+    }
+
+    private func notify() {
         observers.removeAll { $0.owner == nil }
-        for observer in observers { observer.handle(animated) }
+        for observer in observers { observer.handle() }
+    }
+
+    // MARK: Animated moves
+
+    private var link: CADisplayLink?
+    private var moveStart: CFTimeInterval = 0
+    private var moveFrom: CGFloat = 0
+
+    private func move(to value: CGFloat) {
+        moveFrom = position
+        moveStart = CACurrentMediaTime()
+        destination = value
+        travel = min(position, value)...max(position, value)
+        if link == nil, let view {
+            let link = view.displayLink(target: FrameTarget(self), selector: #selector(FrameTarget.step(_:)))
+            link.add(to: .main, forMode: .common)
+            self.link = link
+        }
+        step(at: moveStart)
+    }
+
+    fileprivate func step(at time: CFTimeInterval) {
+        guard let destination else { return }
+        let t = min(max((time - moveStart) / Motion.glide.duration, 0), 1)
+        position = t >= 1 ? destination : moveFrom + (destination - moveFrom) * CGFloat(Motion.glide.progress(at: t))
+        if t >= 1 { stopMoving() }
+        notify()
+    }
+
+    private func stopMoving() {
+        link?.invalidate()
+        link = nil
+        destination = nil
+        travel = nil
     }
 
     var pageCount = 1
@@ -33,6 +88,8 @@ final class PagerModel {
     var sidebarFrame: CGRect = .zero
     /// Called with the space index a swipe settled on.
     var onSettle: ((Int) -> Void)?
+    /// Called with the space a swipe heads for as it starts.
+    var onSwipeTowards: ((Int) -> Void)?
 
     private enum Tracking {
         case idle
@@ -54,7 +111,7 @@ final class PagerModel {
 
     /// Moves to `index` unless the user is swiping.
     func show(_ index: Int, animated: Bool) {
-        guard !isTracking, position != CGFloat(index) else { return }
+        guard !isTracking, (destination ?? position) != CGFloat(index) else { return }
         setPosition(CGFloat(index), animated: animated)
     }
 
@@ -84,6 +141,9 @@ final class PagerModel {
             dx += event.scrollingDeltaX
             dy += event.scrollingDeltaY
             if abs(dx) > 6, abs(dx) > abs(dy) * 1.2 {
+                // The fingers take over from a move still running.
+                stopMoving()
+                onSwipeTowards?(Int(position.rounded()) + (dx < 0 ? 1 : -1))
                 tracking = .horizontal(start: position, dx: dx, velocity: event.scrollingDeltaX)
                 setPosition(rubberBand(position - dx / pageWidth), animated: false)
                 return true
@@ -125,7 +185,7 @@ final class PagerModel {
         // One step per flick of the wheel, however many notches it reports.
         guard event.timestamp - lastWheelStep > 0.35 else { return true }
         lastWheelStep = event.timestamp
-        let current = Int(position.rounded())
+        let current = Int((destination ?? position).rounded())
         let target = min(max(current + (dx < 0 ? 1 : -1), 0), pageCount - 1)
         guard target != current else { return true }
         setPosition(CGFloat(target), animated: true)
@@ -149,6 +209,18 @@ final class PagerModel {
         let index = Int(min(max(target, 0), CGFloat(pageCount - 1)))
         setPosition(CGFloat(index), animated: true)
         onSettle?(index)
+    }
+}
+
+/// Receives display frames for the pager without the display link keeping
+/// the pager alive.
+private final class FrameTarget: NSObject {
+    weak var pager: PagerModel?
+
+    init(_ pager: PagerModel) { self.pager = pager }
+
+    @MainActor @objc func step(_ link: CADisplayLink) {
+        pager?.step(at: link.targetTimestamp)
     }
 }
 
@@ -189,14 +261,36 @@ final class WebContainerView: NSView {
         addSubview(view)
     }
 
-    func show(_ view: MBWebView?) {
+    /// Shows `view`, hiding the one shown before. With `crossfade` (a space
+    /// switch) the old page fades out over the new one instead.
+    func show(_ view: MBWebView?, crossfade: Bool = false) {
         guard view !== current else { return }
         // A view moved to a little window is no longer this container's.
-        if current?.superview === self { current?.isHidden = true }
+        let previous = current?.superview === self ? current : nil
         let view = view?.superview === self ? view : nil
-        view?.frame = bounds
-        view?.isHidden = false
+        if let view {
+            // It may still be fading out from an earlier switch.
+            view.layer?.removeAnimation(forKey: "opacity")
+            view.alphaValue = 1
+            view.layer?.zPosition = 0
+            if view.autoresizingMask.contains(.width) { view.frame = bounds }
+            view.isHidden = false
+        }
         current = view
+        guard let previous else { return }
+        guard crossfade, view != nil, !Motion.reduced else {
+            previous.isHidden = true
+            return
+        }
+        previous.layer?.zPosition = 1
+        Motion.animate(Motion.fade) {
+            previous.animator().alphaValue = 0
+        } completion: { [weak self, weak previous] in
+            guard let previous else { return }
+            previous.layer?.zPosition = 0
+            previous.alphaValue = 1
+            if previous !== self?.current { previous.isHidden = true }
+        }
     }
 }
 
@@ -243,6 +337,55 @@ final class PageCardView: NSView {
         shadowLayer.isHidden = !isCard
         CATransaction.commit()
         container.cornerRadius = isCard ? cornerRadius : 0
+    }
+
+    private var moves = 0
+
+    /// Moves to `target` along `curve` without the page laying out on every
+    /// frame. For the move the page takes the larger of its two sizes, pinned
+    /// to the card's trailing edge: a growing card uncovers it and a
+    /// shrinking one covers it, and its content stays put underneath. It
+    /// settles at the card's size once the move ends.
+    func move(to target: NSRect, curve: Motion.Curve) {
+        guard !Motion.reduced, frame.width > 0, target != frame else {
+            frame = target
+            return
+        }
+        let size = NSSize(width: max(frame.width, target.width), height: max(frame.height, target.height))
+        for page in container.subviews {
+            page.autoresizingMask = [.minXMargin, .maxYMargin]
+            page.frame = NSRect(x: container.bounds.width - size.width, y: 0, width: size.width, height: size.height)
+        }
+        moves += 1
+        let pages = container.subviews
+        let starts = pages.map { $0.layer?.position }
+        Motion.animate(curve) {
+            animator().frame = target
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(curve.duration)
+            CATransaction.setAnimationTimingFunction(curve.timing)
+            shadowLayer.frame = NSRect(origin: .zero, size: target.size)
+            CATransaction.commit()
+        } completion: { [weak self] in
+            guard let self else { return }
+            moves -= 1
+            guard moves == 0 else { return }
+            for page in container.subviews {
+                page.autoresizingMask = [.width, .height]
+                page.frame = container.bounds
+            }
+        }
+        // AppKit moves the pages to their new place at once instead of along
+        // with the card; slide them so they keep to its trailing edge.
+        for (page, start) in zip(pages, starts) {
+            guard let layer = page.layer, let start, start != layer.position else { continue }
+            let slide = CABasicAnimation(keyPath: "position")
+            slide.fromValue = NSValue(point: start)
+            slide.toValue = NSValue(point: layer.position)
+            slide.duration = curve.duration
+            slide.timingFunction = curve.timing
+            layer.add(slide, forKey: "cardMove")
+        }
     }
 
     override func updateLayer() {

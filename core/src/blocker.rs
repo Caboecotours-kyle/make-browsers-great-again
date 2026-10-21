@@ -136,8 +136,10 @@ impl Blocker {
     }
 
     /// Frees the engine's memory.
-    pub fn unload(&mut self) {
-        self.engine = None;
+    /// Drops the engine, handing it back so the caller can free it outside
+    /// any lock.
+    pub fn unload(&mut self) -> Option<Engine> {
+        self.engine.take()
     }
 
     /// Builds an engine straight from rules, for tests.
@@ -166,6 +168,12 @@ impl Blocker {
 
     /// The script to run as `page` starts loading, or "" when blocking is
     /// off for it.
+    /// Whether `page` gets scriptlets (which must run before the page's own
+    /// scripts). Hiding rules and the collector can come a moment later.
+    pub fn needs_early_script(&self, page: &str) -> bool {
+        self.active_for(page).is_some_and(|e| !e.url_cosmetic_resources(page).injected_script.trim().is_empty())
+    }
+
     pub fn page_script(&self, page: &str) -> String {
         let Some(engine) = self.active_for(page) else { return String::new() };
         let resources = engine.url_cosmetic_resources(page);

@@ -48,7 +48,7 @@ fn closing_pinned_tab_sleeps_and_resets_url() {
     let sp = home(&s);
     let t = s.open_tab(sp, "https://mail.com", true, 1).unwrap();
     s.move_item(t, Container::Pinned { space_id: sp, folder_id: None }, 0).unwrap();
-    s.set_live(t, true);
+    s.set_live(t, true, 0);
     s.update_tab(t, Some("https://mail.com/inbox/123"), None);
     assert!(!s.close_tab(t, 2).0);
     let tab = &s.tabs[&t];
@@ -78,7 +78,7 @@ fn moving_tab_to_other_profile_requires_reload() {
     let work = s.create_profile("Work");
     let sp2 = s.create_space("Work", "💼", 0, work);
     let t = s.open_tab(home(&s), "https://x.com", true, 1).unwrap();
-    s.set_live(t, true);
+    s.set_live(t, true, 0);
     let reload = s.move_item(t, Container::Today { space_id: sp2 }, 0).unwrap();
     assert_eq!(reload, vec![t]);
     assert!(!s.tabs[&t].live);
@@ -125,7 +125,7 @@ fn sleeps_idle_and_excess_tabs_but_never_visible_or_audible() {
     let mut ids = Vec::new();
     for i in 0..5 {
         let id = s.open_tab(sp, &format!("https://{i}.com"), true, 1_000 + i).unwrap();
-        s.set_live(id, true);
+        s.set_live(id, true, 0);
         ids.push(id);
     }
     // ids[4] is visible. Make ids[0] audible.
@@ -146,8 +146,8 @@ fn critical_pressure_sleeps_everything_hidden() {
     let sp = home(&s);
     let a = s.open_tab(sp, "a", true, 1).unwrap();
     let b = s.open_tab(sp, "b", true, 2).unwrap();
-    s.set_live(a, true);
-    s.set_live(b, true);
+    s.set_live(a, true, 0);
+    s.set_live(b, true, 0);
     assert_eq!(s.collect_sleepers(3, Pressure::Critical), vec![a]);
 }
 
@@ -157,7 +157,7 @@ fn switching_profile_of_space_sleeps_its_live_tabs() {
     let sp = home(&s);
     let work = s.create_profile("Work");
     let a = s.open_tab(sp, "a", true, 1).unwrap();
-    s.set_live(a, true);
+    s.set_live(a, true, 0);
     assert_eq!(s.set_space_profile(sp, work), vec![a]);
     assert_eq!(s.profile_of_tab(a), Some(work));
     assert!(s.delete_profile(work).is_none());
@@ -243,7 +243,7 @@ fn freezes_only_idle_hidden_today_tabs() {
     let audible = s.open_tab(sp, "https://music.example", true, 2_000).unwrap();
     let visible = s.open_tab(sp, "https://b.example", true, 3_000).unwrap();
     for id in [pinned, old, audible, visible] {
-        s.set_live(id, true);
+        s.set_live(id, true, 0);
     }
     s.set_audible(audible, true);
     // Nothing has been hidden for a minute yet.
@@ -254,8 +254,8 @@ fn freezes_only_idle_hidden_today_tabs() {
     assert!(!s.thaw(old));
     // A recreated web view starts unfrozen.
     s.collect_freezers(90_000);
-    s.set_live(old, false);
-    s.set_live(old, true);
+    s.set_live(old, false, 0);
+    s.set_live(old, true, 0);
     assert!(!s.tabs[&old].frozen);
     let _ = visible;
 }
@@ -265,8 +265,46 @@ fn old_state_files_get_default_policy_fields() {
     let json = r#"{"sleep_after_secs": 30, "max_live_tabs": 2}"#;
     let p: model::Policy = serde_json::from_str(json).unwrap();
     assert_eq!(p.sleep_after_secs, 30);
-    assert_eq!(p.freeze_after_secs, 60);
+    assert_eq!(p.freeze_after_secs, model::Policy::default().freeze_after_secs);
     assert!(!p.strict_site_isolation);
+}
+
+#[test]
+fn states_with_the_first_sleep_defaults_get_the_current_ones() {
+    let json = r#"{"sleep_after_secs": 600, "max_live_tabs": 8, "freeze_after_secs": 60, "archive_after_hours": 12}"#;
+    let mut p: model::Policy = serde_json::from_str(json).unwrap();
+    p.upgrade_first_defaults();
+    let current = model::Policy::default();
+    assert_eq!((p.sleep_after_secs, p.max_live_tabs, p.freeze_after_secs),
+               (current.sleep_after_secs, current.max_live_tabs, current.freeze_after_secs));
+    assert_eq!(p.archive_after_hours, 12, "other choices are kept");
+    // Values someone chose stay.
+    let mut chosen: model::Policy = serde_json::from_str(r#"{"sleep_after_secs": 900, "max_live_tabs": 8}"#).unwrap();
+    chosen.upgrade_first_defaults();
+    assert_eq!(chosen.sleep_after_secs, 900);
+}
+
+#[test]
+fn each_spaces_current_tab_and_freshly_loaded_tabs_stay_awake() {
+    let mut s = State::new_default();
+    let home = home(&s);
+    let front = s.open_tab(home, "https://front.com", true, 0).unwrap();
+    s.set_live(front, true, 0);
+    let other = s.create_space("Other", "", 0, s.spaces[0].profile_id);
+    let shown = s.open_tab(other, "https://shown.com", true, 0).unwrap();
+    s.set_live(shown, true, 0);
+    s.set_active_space(other, 0);
+    let hour = 3_600_000;
+    let later = 10 * hour;
+    // Home's current tab isn't visible but stays loaded.
+    assert!(s.collect_sleepers(later, model::Pressure::Normal).is_empty());
+    // A tab loaded ahead of being shown counts as used when it was loaded.
+    let warmed = s.open_tab(home, "https://warmed.com", false, 0).unwrap();
+    s.set_live(warmed, true, later);
+    assert!(s.collect_sleepers(later + hour, model::Pressure::Normal).is_empty());
+    assert_eq!(s.collect_sleepers(later + 3 * hour, model::Pressure::Normal), vec![warmed]);
+    // Critical pressure frees everything but the visible tab.
+    assert_eq!(s.collect_sleepers(later + 3 * hour, model::Pressure::Critical), vec![front]);
 }
 
 #[test]
@@ -301,7 +339,7 @@ fn kept_awake_sites_never_sleep_or_freeze() {
     let news = s.open_tab(sp, "https://news.example.com", false, 1).unwrap();
     let visible = s.open_tab(sp, "https://other.example.com", true, 1).unwrap();
     for id in [mail, news, visible] {
-        s.set_live(id, true);
+        s.set_live(id, true, 0);
     }
     s.set_keep_awake("https://www.mail.example.com/settings", true);
     assert!(s.keeps_awake("https://mail.example.com:443/x"));
@@ -503,7 +541,7 @@ fn tabs_in_little_windows_stay_awake_and_the_main_window_moves_on() {
     let b = s.open_tab(sp, "https://b.com", true, 2).unwrap();
     // today = [b, a], b visible
     for id in [a, b] {
-        s.set_live(id, true);
+        s.set_live(id, true, 0);
     }
     assert_eq!(s.step_away(b, 3), Some(a));
     assert_eq!(s.visible_tab(), Some(a));

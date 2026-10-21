@@ -20,6 +20,9 @@ typedef NSString* _Nonnull (^MBPageScript)(NSString* page);
 /// JavaScript to run in |page| in reply to a report its page script sent,
 /// or an empty string.
 typedef NSString* _Nonnull (^MBPageReply)(NSString* page, NSString* report);
+/// Whether |page| has scripts that must run before its own (scriptlets). A
+/// new tab only waits for its page script before loading such pages.
+typedef BOOL (^MBEarlyScript)(NSString* page);
 
 /// Engine events for one tab. Always delivered on the main thread.
 @protocol MBWebViewDelegate <NSObject>
@@ -74,7 +77,8 @@ typedef NSString* _Nonnull (^MBPageReply)(NSString* page, NSString* report);
 /// Turns on ad blocking. Call before the first web view is created.
 + (void)setRequestFilter:(MBRequestFilter)filter
                pageScript:(MBPageScript)script
-                pageReply:(MBPageReply)reply;
+                pageReply:(MBPageReply)reply
+              earlyScript:(MBEarlyScript)early;
 
 @end
 

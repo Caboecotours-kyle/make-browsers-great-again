@@ -171,13 +171,22 @@ enum Motion {
         let timing: CAMediaTimingFunction
     }
 
+    /// MBGA_DEBUG_SLOW_MOTION=8 plays every animation 8 times slower, for
+    /// captures of transitions mid-way.
+    private static let slow = Double(ProcessInfo.processInfo.environment["MBGA_DEBUG_SLOW_MOTION"] ?? "") ?? 1
+
     // Springs approximated by an ease-out with a soft landing, so AppKit's
     // animator and Core Animation can both use them.
-    static let quick = Curve(duration: 0.14, timing: CAMediaTimingFunction(name: .easeOut))
-    static let glide = Curve(duration: 0.34, timing: CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1))
-    static let settle = Curve(duration: 0.3, timing: CAMediaTimingFunction(controlPoints: 0.25, 0.85, 0.3, 1))
-    static let foldOut = Curve(duration: 0.16, timing: CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1))
-    static let foldIn = Curve(duration: 0.13, timing: CAMediaTimingFunction(name: .easeIn))
+    static let quick = Curve(duration: 0.14 * slow, timing: CAMediaTimingFunction(name: .easeOut))
+    static let glide = Curve(duration: 0.34 * slow, timing: CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1))
+    static let settle = Curve(duration: 0.3 * slow, timing: CAMediaTimingFunction(controlPoints: 0.25, 0.85, 0.3, 1))
+    static let foldOut = Curve(duration: 0.16 * slow, timing: CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1))
+    static let foldIn = Curve(duration: 0.13 * slow, timing: CAMediaTimingFunction(name: .easeIn))
+    /// The sidebar's list moving to make room or close a gap: a gentle
+    /// start, so what it moves over can fade first.
+    static let reflow = Curve(duration: 0.3 * slow, timing: CAMediaTimingFunction(name: .easeInEaseOut))
+    /// A page giving way to another space's.
+    static let fade = Curve(duration: 0.22 * slow, timing: CAMediaTimingFunction(name: .easeInEaseOut))
 
     static var reduced: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
@@ -198,6 +207,47 @@ enum Motion {
         } completionHandler: {
             MainActor.assumeIsolated { completion?() }
         }
+    }
+
+    /// Runs `changes` with no animation, even inside an animated change: a
+    /// view that just appeared takes its place instead of flying in from
+    /// the corner.
+    @MainActor
+    static func instantly(_ changes: () -> Void) {
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.current.duration = 0
+        NSAnimationContext.current.allowsImplicitAnimation = false
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        changes()
+        CATransaction.commit()
+        NSAnimationContext.endGrouping()
+    }
+}
+
+extension Motion.Curve {
+    /// How far along the curve is at time fraction `t` (0...1), for moves
+    /// stepped frame by frame.
+    func progress(at t: Double) -> Double {
+        var a = [Float](repeating: 0, count: 2), b = [Float](repeating: 0, count: 2)
+        timing.getControlPoint(at: 1, values: &a)
+        timing.getControlPoint(at: 2, values: &b)
+        func bezier(_ s: Double, _ p1: Float, _ p2: Float) -> Double {
+            let p1 = Double(p1), p2 = Double(p2)
+            return 3 * p1 * s * (1 - s) * (1 - s) + 3 * p2 * s * s * (1 - s) + s * s * s
+        }
+        func slope(_ s: Double, _ p1: Float, _ p2: Float) -> Double {
+            let p1 = Double(p1), p2 = Double(p2)
+            return 3 * p1 * (1 - s) * (1 - s) + 6 * (p2 - p1) * s * (1 - s) + 3 * (1 - p2) * s * s
+        }
+        // The curve's x is time: find where it reaches t, then read y there.
+        var s = t
+        for _ in 0..<8 {
+            let d = slope(s, a[0], b[0])
+            guard abs(d) > 1e-6 else { break }
+            s = min(max(s - (bezier(s, a[0], b[0]) - t) / d, 0), 1)
+        }
+        return bezier(s, a[1], b[1])
     }
 }
 

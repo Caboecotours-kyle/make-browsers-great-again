@@ -422,6 +422,15 @@ final class SidebarTableView: NSTableView {
     /// never sees a horizontal swipe to switch spaces.
     override class var isCompatibleWithResponsiveScrolling: Bool { false }
 
+    /// The part its scroll view shows, ignoring the sidebar's clip. A page
+    /// sliding away already sits at its destination outside the sidebar
+    /// while it is drawn moving, and the table would drop the rows of what
+    /// it then thinks is off screen: the page would slide past empty.
+    override var visibleRect: NSRect {
+        guard let clip = enclosingScrollView?.contentView, window != nil else { return super.visibleRect }
+        return clip.documentVisibleRect.intersection(bounds)
+    }
+
     func centerDragImage(_ session: NSDraggingSession, image: NSImage, at screenPoint: NSPoint) {
         guard let window else { return }
         let point = convert(window.convertPoint(fromScreen: screenPoint), from: nil)
@@ -592,9 +601,21 @@ final class TabCellView: NSTableCellView, HoverAware {
         needsLayout = true
     }
 
+    private var warmTimer: Timer?
+
     func setHovering(_ hovering: Bool) {
         self.hovering = hovering
         updateAccessory()
+        // Resting on a sleeping tab starts loading it, so the click shows it
+        // (mostly) loaded.
+        warmTimer?.invalidate()
+        warmTimer = nil
+        guard hovering, let tab = data?.tab, !tab.live else { return }
+        let timer = Timer(timeInterval: 0.25, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.store.warmTab(tab.id) }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        warmTimer = timer
     }
 
     private func updateAccessory() {
@@ -878,9 +899,10 @@ final class SpaceHeaderView: FlippedView {
 
     func update(_ space: SpaceInfo) {
         self.space = space
-        icon.stringValue = space.icon.isEmpty ? "•" : space.icon
-        name.stringValue = space.name
-        profile.stringValue = store.profileName(space.profileId)
+        // Only what changed: redrawing a page while it slides away blanks it.
+        icon.setIfChanged(space.icon.isEmpty ? "•" : space.icon)
+        name.setIfChanged(space.name)
+        profile.setIfChanged(store.profileName(space.profileId))
         profile.isHidden = store.snapshot.profiles.count < 2
         effectiveAppearance.performAsCurrentDrawingAppearance {
             profile.layer?.backgroundColor = Theme.faint(0.08).cgColor

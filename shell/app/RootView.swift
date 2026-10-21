@@ -31,6 +31,8 @@ final class RootView: NSView {
         addSubview(card)
         card.addSubview(emptyHint)
         card.addSubview(dropPreview)
+        emptyHint.autoresizingMask = [.width, .height]
+        dropPreview.autoresizingMask = [.width, .height]
         dropPreview.isHidden = true
         addSubview(handle)
         addSubview(peek)
@@ -45,9 +47,8 @@ final class RootView: NSView {
         handle.onResize = { [weak self] in self?.needsLayout = true }
 
         store.observe(self) { [weak self] change in self?.handle(change) }
-        store.pager.observe(self) { [weak self] animated in
-            self?.updateBackdrop(animated ? Motion.glide : nil)
-        }
+        // The color follows the pages frame by frame.
+        store.pager.observe(self) { [weak self] in self?.updateBackdrop(nil) }
         NotificationCenter.default.addObserver(self, selector: #selector(defaultsChanged),
                                                name: UserDefaults.didChangeNotification, object: nil)
         updateEmptyHint()
@@ -174,16 +175,15 @@ final class RootView: NSView {
         commandBar?.frame = bounds
     }
 
-    /// Switches layouts: the page takes its new size at once (no engine
-    /// relayout on every frame) while the sidebar or rail slides over it.
+    /// Switches layouts: the sidebar or rail slides while the page's card
+    /// follows its edge. The page itself lays out once, not on every frame.
     private func transitionLayout() {
         let old = shownLayout, new = store.layout
         guard old != new else { return }
         shownLayout = new
-        card.frame = cardFrame(for: new)
+        // The page's edge travels with the sidebar's.
         card.cornerRadius = max(store.windowRadius - inset, 6)
-        emptyHint.frame = card.bounds
-        dropPreview.frame = card.bounds
+        card.move(to: cardFrame(for: new), curve: Motion.glide)
         handle.isHidden = new != .full
 
         func slideOut(_ view: NSView) {

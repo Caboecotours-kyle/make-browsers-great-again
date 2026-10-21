@@ -60,6 +60,7 @@ std::string g_isolated_origins;
 // filter is called on the network thread.
 MBRequestFilter g_request_filter = nil;
 MBPageScript g_page_script = nil;
+MBEarlyScript g_early_script = nil;
 MBPageReply g_page_reply = nil;
 // While a tab is dragged out of the sidebar, pages refuse drops so the drag
 // can end over a page (and pop the tab out) instead of navigating it.
@@ -630,7 +631,8 @@ class WebClient : public BaseClient,
                   public CefDragHandler,
                   public CefDevToolsMessageObserver {
  public:
-  explicit WebClient(MBWebView* view) : view_(view) {}
+  explicit WebClient(MBWebView* view)
+      : view_(view), created_(CFAbsoluteTimeGetCurrent()) {}
 
   // A new tab's first page waits until its page script is registered, so
   // scriptlets run before the page's own scripts even on a fast load. The
@@ -818,6 +820,10 @@ class WebClient : public BaseClient,
     blocked_ = 0;
     [view_ engineSetBlockedCount:0];
     std::string url = frame->GetURL().ToString();
+    if (DebugEvents()) {
+      NSLog(@"load start %s after %.0f ms", url.c_str(),
+            (CFAbsoluteTimeGetCurrent() - created_) * 1000);
+    }
     bool web = url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0;
     NSString* script = g_page_script && web ? g_page_script(@(url.c_str())) : nil;
     if (script.length > 0) {
@@ -830,6 +836,10 @@ class WebClient : public BaseClient,
                  int httpStatusCode) override {
     if (frame->IsMain()) {
       frame->ExecuteJavaScript(kThemeColorScript, "", 0);
+      if (DebugEvents()) {
+        NSLog(@"load end %s (%d) after %.0f ms", frame->GetURL().ToString().c_str(),
+              httpStatusCode, (CFAbsoluteTimeGetCurrent() - created_) * 1000);
+      }
     }
   }
 
@@ -1055,6 +1065,8 @@ class WebClient : public BaseClient,
   // The page script registered for new documents, and requests in flight.
   std::string document_script_;
   std::string deferred_url_;
+  // When the tab's engine view was made, for load timings in debug logs.
+  CFAbsoluteTime created_;
   std::string prepared_url_;
   int pending_add_ = 0;
   std::set<int> stale_adds_;
@@ -1184,10 +1196,12 @@ class WebClient : public BaseClient,
 
 + (void)setRequestFilter:(MBRequestFilter)filter
                pageScript:(MBPageScript)script
-                pageReply:(MBPageReply)reply {
+                pageReply:(MBPageReply)reply
+              earlyScript:(MBEarlyScript)early {
   g_request_filter = filter;
   g_page_script = script;
   g_page_reply = reply;
+  g_early_script = early;
 }
 
 + (BOOL)startWithArgc:(int)argc
@@ -1295,7 +1309,11 @@ class WebClient : public BaseClient,
   [g_views addObject:self];
   g_browser_count++;
   std::string start = url.UTF8String;
-  if (g_page_script && ([url hasPrefix:@"https://"] || [url hasPrefix:@"http://"])) {
+  // Waiting for the page script costs the time it takes a renderer to start
+  // (the request can't go out meanwhile), so only pages with scriptlets do;
+  // hiding rules arrive as the page starts loading.
+  bool web = [url hasPrefix:@"https://"] || [url hasPrefix:@"http://"];
+  if (g_page_script && web && (!g_early_script || g_early_script(url))) {
     _client->DeferFirstLoad(start);
     start = "about:blank";
   }

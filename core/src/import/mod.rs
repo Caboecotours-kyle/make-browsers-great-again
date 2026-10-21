@@ -373,6 +373,7 @@ fn new_tab(state: &mut State, item: &Item, pinned: bool, now: u64) -> Id {
             live: false,
             audible: false,
             frozen: false,
+            woke_ms: 0,
         },
     );
     id

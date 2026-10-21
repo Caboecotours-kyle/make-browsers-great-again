@@ -189,6 +189,8 @@ final class BrowserStore: NSObject {
     private var littleWindows: [UInt64: LittleWindow] = [:]
     private var enteredFullscreenForContent = false
     private var lastVisibleTab: UInt64?
+    /// The space whose page is on screen, to crossfade on a switch.
+    private var shownSpace: UInt64?
 
     init(core: BrowserCore) {
         self.core = core
@@ -199,6 +201,10 @@ final class BrowserStore: NSObject {
         pager.onSettle = { [weak self] index in
             guard let self, snapshot.spaces.indices.contains(index) else { return }
             activateSpace(snapshot.spaces[index].id)
+        }
+        pager.onSwipeTowards = { [weak self] index in
+            guard let self, snapshot.spaces.indices.contains(index) else { return }
+            warmSpace(snapshot.spaces[index].id)
         }
     }
 
@@ -272,7 +278,9 @@ final class BrowserStore: NSObject {
         if let id = visible, core.thaw(id: id) {
             views[id]?.setFrozen(false)
         }
-        webContainer.show(visible.flatMap { views[$0] })
+        let switchedSpace = shownSpace != nil && shownSpace != snapshot.activeSpace
+        shownSpace = snapshot.activeSpace
+        webContainer.show(visible.flatMap { views[$0] }, crossfade: switchedSpace)
         nav = visible.flatMap { navStates[$0] } ?? NavState()
         publishBlockedCount()
         // A tab left playing should show the mini player right away rather
@@ -589,6 +597,37 @@ final class BrowserStore: NSObject {
         _ = core.selectDefaultTab(spaceId: id)
         refresh()
         updateCleanupOffer()
+    }
+
+    // MARK: - Warming
+
+    /// Loads a tab's page ahead of it being shown (the pointer resting on it
+    /// or on its space, a swipe towards its space), so selecting it shows a
+    /// loaded page instead of starting the load.
+    func warmTab(_ id: UInt64) {
+        guard views[id] == nil, let tab = core.tab(id: id), !tab.url.isEmpty else { return }
+        createView(for: tab)
+    }
+
+    /// Loads the tab another space shows when switched to.
+    func warmSpace(_ id: UInt64) {
+        guard id != snapshot.activeSpace else { return }
+        if let tab = core.selectDefaultTab(spaceId: id) ?? snapshot.spaces.first(where: { $0.id == id })?.activeTab {
+            warmTab(tab)
+        }
+    }
+
+    /// After launch, loads the other spaces' current tabs one at a time,
+    /// nearest first, so the first switch to each is instant too.
+    func warmOtherSpaces() {
+        let current = activeSpaceIndex
+        let others = snapshot.spaces.indices.filter { $0 != current }.sorted { abs($0 - current) < abs($1 - current) }
+        for (n, index) in others.prefix(4).enumerated() {
+            let id = snapshot.spaces[index].id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5 + Double(n) * 0.8) { [weak self] in
+                self?.warmSpace(id)
+            }
+        }
     }
 
     /// A space with tabs always shows one: its most recently used, as Arc

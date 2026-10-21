@@ -16,6 +16,8 @@ enum AdBlocking {
             core.pageScript(page: page)
         }, pageReply: { page, report in
             core.cosmeticReply(page: page, report: report)
+        }, earlyScript: { page in
+            core.needsEarlyScript(page: page)
         })
     }
 
