@@ -87,25 +87,20 @@ final class BrowserStore: NSObject {
             }
             if oldValue != .focus { layoutBeforeFocus = oldValue }
             sidebarPeek = false
-            trafficLightsRevealed = false
             updateTrafficLights()
             changed(.layout)
         }
     }
     /// What Focus mode returns to.
     private var layoutBeforeFocus = SidebarLayout.full
-    /// Floating sidebar shown while hovering the left edge with the sidebar hidden.
+    /// Floating sidebar shown while hovering the left edge with the sidebar
+    /// hidden. In Focus mode the traffic lights show only with it.
     var sidebarPeek = false {
         didSet {
             guard sidebarPeek != oldValue else { return }
             updateTrafficLights()
             changed(.peek)
         }
-    }
-    /// In Focus mode the traffic lights appear only while the pointer is in
-    /// the window's top-left corner.
-    var trafficLightsRevealed = false {
-        didSet { if trafficLightsRevealed != oldValue { updateTrafficLights() } }
     }
     var spaceEditor: SpaceEditorRequest? {
         didSet { changed(.spaceEditor) }
@@ -906,7 +901,15 @@ final class BrowserStore: NSObject {
                 button.postsFrameChangedNotifications = true
                 lightsObservers.append(NotificationCenter.default.addObserver(
                     forName: NSView.frameDidChangeNotification, object: button, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.placeTrafficLights() }
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        // Moved while the others were being placed: after.
+                        if self.placingLights {
+                            DispatchQueue.main.async { [weak self] in self?.placeTrafficLights() }
+                        } else {
+                            self.placeTrafficLights()
+                        }
+                    }
                 })
             }
         }
@@ -927,7 +930,8 @@ final class BrowserStore: NSObject {
     }
 
     func updateTrafficLights() {
-        let hidden = (layout == .focus && !sidebarPeek && !trafficLightsRevealed) || contentFullscreen
+        // In Focus mode they show only with the sidebar.
+        let hidden = (layout == .focus && !sidebarPeek) || contentFullscreen
         let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
             .compactMap { window?.standardWindowButton($0) }
         let animate = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && !contentFullscreen
@@ -936,6 +940,7 @@ final class BrowserStore: NSObject {
                 button.alphaValue = animate ? 0 : 1
                 button.isHidden = false
             }
+            placeTrafficLights()
         }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = animate ? 0.14 : 0
@@ -943,7 +948,7 @@ final class BrowserStore: NSObject {
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated {
                 // Still meant to be hidden once the fade is over?
-                guard let self, hidden, (self.layout == .focus && !self.sidebarPeek && !self.trafficLightsRevealed)
+                guard let self, hidden, (self.layout == .focus && !self.sidebarPeek)
                     || self.contentFullscreen else { return }
                 for button in buttons { button.isHidden = true }
             }

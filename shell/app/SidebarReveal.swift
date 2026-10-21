@@ -14,7 +14,6 @@ final class SidebarReveal {
     private var observers: [NSObjectProtocol] = []
     private var openTimer: Timer?
     private var closeTimer: Timer?
-    private var lightsTimer: Timer?
     private var menuOpen = false
 
     /// How long the pointer rests at the edge before the sidebar opens.
@@ -25,8 +24,6 @@ final class SidebarReveal {
     private let reach: CGFloat = 24
     /// Width of the edge that opens the sidebar.
     private let edge: CGFloat = 6
-    /// Top-left corner that reveals the traffic lights in Focus mode.
-    private let lightsCorner = CGSize(width: 90, height: 40)
 
     init(store: BrowserStore) {
         self.store = store
@@ -51,7 +48,7 @@ final class SidebarReveal {
         UserDefaults.standard.object(forKey: "sidebarWidth") as? CGFloat ?? 260
     }
 
-    private enum Zone { case edge, reach, corner, away }
+    private enum Zone { case edge, reach, away }
 
     private func zone() -> Zone {
         guard let window = store?.window, window.isVisible, NSApp.isActive else { return .away }
@@ -63,7 +60,6 @@ final class SidebarReveal {
         // Anything left of the window counts: the screen edge, or past the
         // window when it doesn't touch the edge.
         if x <= edge && fromTop >= 0 && point.y >= frame.minY { return .edge }
-        if x >= 0, x <= lightsCorner.width, fromTop >= 0, fromTop <= lightsCorner.height { return .corner }
         if x <= sidebarWidth + reach { return .reach }
         return .away
     }
@@ -94,15 +90,6 @@ final class SidebarReveal {
         } else {
             stop(&openTimer)
         }
-        if zone == .corner && store.layout == .focus {
-            stop(&lightsTimer)
-            if !store.trafficLightsRevealed { store.trafficLightsRevealed = true }
-        } else if store.trafficLightsRevealed {
-            startOnce(&lightsTimer, after: graceDelay) { [weak self] in
-                guard let self, self.zone() != .corner else { return }
-                self.store?.trafficLightsRevealed = false
-            }
-        }
     }
 
     /// Starts a one-shot timer unless one is already pending, so steady
@@ -122,6 +109,5 @@ final class SidebarReveal {
     private func cancelTimers() {
         stop(&openTimer)
         stop(&closeTimer)
-        stop(&lightsTimer)
     }
 }
