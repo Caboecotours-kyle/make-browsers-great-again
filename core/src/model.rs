@@ -159,6 +159,10 @@ pub struct State {
     /// from before onboarding existed count as onboarded.
     #[serde(default = "default_onboarded")]
     pub onboarded: bool,
+    /// Sites (see `site_of`) whose tabs are never put to sleep or frozen,
+    /// such as mail or chat that must keep delivering notifications.
+    #[serde(default)]
+    pub keep_awake: Vec<String>,
 }
 
 fn default_search_template() -> String {
@@ -187,6 +191,7 @@ impl State {
             search_template: default_search_template(),
             doomed_profiles: Vec::new(),
             onboarded: false,
+            keep_awake: Vec::new(),
         };
         let profile = s.create_profile("Personal");
         let space = s.create_space("Home", "🏠", SPACE_COLORS[0], profile);
@@ -730,12 +735,14 @@ impl State {
         let visible = self.visible_tab();
         let after_ms = self.policy.freeze_after_secs * 1000;
         let today: Vec<Id> = self.spaces.iter().flat_map(|s| s.today.iter().copied()).collect();
+        let keep_awake = &self.keep_awake;
         let mut frozen = Vec::new();
         for id in today {
             let Some(t) = self.tabs.get_mut(&id) else { continue };
             if t.live
                 && !t.frozen
                 && !t.audible
+                && !keep_awake.contains(&site_of(&t.url))
                 && Some(id) != visible
                 && now.saturating_sub(t.last_active_ms) >= after_ms
             {
@@ -760,6 +767,22 @@ impl State {
     pub fn set_audible(&mut self, id: Id, audible: bool) {
         if let Some(t) = self.tabs.get_mut(&id) {
             t.audible = audible;
+        }
+    }
+
+    pub fn keeps_awake(&self, url: &str) -> bool {
+        self.keep_awake.contains(&site_of(url))
+    }
+
+    /// Exempts the site of `url` from sleeping and freezing, or stops doing so.
+    pub fn set_keep_awake(&mut self, url: &str, keep: bool) {
+        let site = site_of(url);
+        if site.is_empty() {
+            return;
+        }
+        self.keep_awake.retain(|s| *s != site);
+        if keep {
+            self.keep_awake.push(site);
         }
     }
 
@@ -788,7 +811,7 @@ impl State {
         let mut sleepers = Vec::new();
         let mut remaining = live.len();
         for t in live {
-            if t.audible {
+            if t.audible || self.keeps_awake(&t.url) {
                 continue;
             }
             let idle = now.saturating_sub(t.last_active_ms) >= timeout_ms;
@@ -891,6 +914,19 @@ pub fn collect_tabs(nodes: &[Node], out: &mut Vec<Id>) {
 
 /// Turns omnibox text into a URL: URLs and hostnames load directly,
 /// everything else is searched.
+/// The site a URL belongs to, as shown to people: the lowercase host
+/// without "www.", user info or port ("mail.google.com"). Empty for URLs
+/// without a host, such as about:blank.
+pub fn site_of(url: &str) -> String {
+    let Some((_, rest)) = url.split_once("://") else {
+        return String::new();
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = host.split(':').next().unwrap_or(host).to_ascii_lowercase();
+    host.strip_prefix("www.").map(str::to_string).unwrap_or(host)
+}
+
 pub fn resolve_input(text: &str, search_template: &str) -> String {
     let text = text.trim();
     if text.is_empty() {

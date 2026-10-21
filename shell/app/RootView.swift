@@ -3,12 +3,21 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var store: BrowserStore
     @AppStorage("sidebarWidth") private var sidebarWidth: Double = 260
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Space between the page and the window edge. Focus mode (sidebar
+    /// hidden) keeps only a thin frame to drag the window by.
+    private var inset: CGFloat { store.sidebarVisible ? 8 : 5 }
 
     var body: some View {
         let chrome = !store.contentFullscreen
         let colors = store.snapshot.spaces.map(\.color)
+        // The page's corners are concentric with the window's.
+        let radius = chrome ? max(store.windowRadius - inset, 6) : 0
         ZStack(alignment: .topLeading) {
+            // The frame around the page (and empty sidebar space) drags the window.
             SpaceBackdrop(pager: store.pager, colors: colors)
+                .overlay(WindowDragArea())
 
             HStack(spacing: 0) {
                 if chrome && store.sidebarVisible {
@@ -17,12 +26,14 @@ struct RootView: View {
                         .transition(.move(edge: .leading).combined(with: .opacity))
                     SidebarResizeHandle(width: $sidebarWidth)
                 }
-                WebArea(container: store.webContainer, cornerRadius: chrome ? 9 : 0)
+                WebArea(container: store.webContainer, cornerRadius: radius,
+                        border: chrome ? (colorScheme == .dark ? .white.withAlphaComponent(0.1)
+                                                               : .black.withAlphaComponent(0.08)) : nil)
                     .background {
                         if chrome {
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            RoundedRectangle(cornerRadius: radius, style: .continuous)
                                 .fill(.white)
-                                .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
+                                .shadow(color: .black.opacity(colorScheme == .dark ? 0.3 : 0.07), radius: 6, y: 1)
                         }
                     }
                     .overlay {
@@ -30,9 +41,9 @@ struct RootView: View {
                             EmptySpaceHint()
                         }
                     }
-                    .padding(.vertical, chrome ? 8 : 0)
-                    .padding(.trailing, chrome ? 8 : 0)
-                    .padding(.leading, chrome && !store.sidebarVisible ? 8 : 0)
+                    .padding(.vertical, chrome ? inset : 0)
+                    .padding(.trailing, chrome ? inset : 0)
+                    .padding(.leading, chrome && !store.sidebarVisible ? inset : 0)
             }
 
             if chrome && !store.sidebarVisible {
@@ -76,6 +87,14 @@ private struct SidebarResizeHandle: View {
     @Binding var width: Double
     @State private var startWidth: Double?
 
+    static let range = 200.0...420.0
+
+    private static func rubberBand(_ raw: Double) -> Double {
+        if raw < range.lowerBound { return range.lowerBound - (range.lowerBound - raw) / 4 }
+        if raw > range.upperBound { return range.upperBound + (raw - range.upperBound) / 4 }
+        return raw
+    }
+
     var body: some View {
         Color.clear
             .frame(width: 8)
@@ -88,14 +107,19 @@ private struct SidebarResizeHandle: View {
                     .onChanged { value in
                         let start = startWidth ?? width
                         startWidth = start
-                        width = min(max(start + value.translation.width, 200), 420)
+                        width = Self.rubberBand(start + value.translation.width)
                     }
-                    .onEnded { _ in startWidth = nil }
+                    .onEnded { _ in
+                        startWidth = nil
+                        // Past a limit the sidebar stretches a little, then springs back.
+                        withAnimation(Motion.settle) { width = min(max(width, Self.range.lowerBound), Self.range.upperBound) }
+                    }
             )
     }
 }
 
-/// With the sidebar hidden, hovering the left edge slides it in over the page.
+/// With the sidebar hidden, the sidebar slides in over the page as a floating
+/// card when SidebarReveal says so.
 private struct SidebarPeek: View {
     @EnvironmentObject private var store: BrowserStore
     let width: Double
@@ -103,24 +127,20 @@ private struct SidebarPeek: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            Color.clear
-                .frame(width: 12)
-                .frame(maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .onHover { if $0 { store.sidebarPeek = true } }
-
             if store.sidebarPeek {
                 Sidebar()
                     .frame(width: width)
                     .frame(maxHeight: .infinity)
                     .background(SpaceBackdrop(pager: store.pager, colors: colors))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .shadow(color: .black.opacity(0.3), radius: 18, x: 4)
+                    .clipShape(RoundedRectangle(cornerRadius: max(store.windowRadius - 6, 8), style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: max(store.windowRadius - 6, 8), style: .continuous)
+                        .strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
+                    .shadow(color: .black.opacity(0.28), radius: 18, x: 4)
                     .padding(6)
-                    .onHover { if !$0 { store.sidebarPeek = false } }
-                    .transition(.move(edge: .leading).combined(with: .opacity))
+                    // Slides rather than resizes, so the sidebar's layout never reflows.
+                    .transition(.move(edge: .leading))
             }
         }
-        .animation(.spring(response: 0.28, dampingFraction: 0.9), value: store.sidebarPeek)
+        .animation(store.sidebarPeek ? Motion.foldOut : Motion.foldIn, value: store.sidebarPeek)
     }
 }

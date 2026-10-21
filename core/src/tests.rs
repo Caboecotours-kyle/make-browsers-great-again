@@ -292,3 +292,27 @@ fn only_new_state_needs_onboarding() {
     let old: State = serde_json::from_value(v).unwrap();
     assert!(old.onboarded);
 }
+
+#[test]
+fn kept_awake_sites_never_sleep_or_freeze() {
+    let mut s = State::new_default();
+    let sp = home(&s);
+    let mail = s.open_tab(sp, "https://Mail.example.com/inbox", false, 1).unwrap();
+    let news = s.open_tab(sp, "https://news.example.com", false, 1).unwrap();
+    let visible = s.open_tab(sp, "https://other.example.com", true, 1).unwrap();
+    for id in [mail, news, visible] {
+        s.set_live(id, true);
+    }
+    s.set_keep_awake("https://www.mail.example.com/settings", true);
+    assert!(s.keeps_awake("https://mail.example.com:443/x"));
+    assert_eq!(s.collect_freezers(10_000_000), vec![news]);
+    assert_eq!(s.collect_sleepers(10_000_000, Pressure::Critical), vec![news]);
+    s.set_keep_awake("https://mail.example.com", false);
+    assert!(s.keep_awake.is_empty());
+}
+
+#[test]
+fn site_of_strips_www_port_and_user() {
+    assert_eq!(model::site_of("https://user:pw@WWW.Example.com:8080/a?b"), "example.com");
+    assert_eq!(model::site_of("about:blank"), "");
+}

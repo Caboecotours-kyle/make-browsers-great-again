@@ -47,11 +47,17 @@ final class BrowserStore: NSObject, ObservableObject {
         didSet {
             UserDefaults.standard.set(sidebarVisible, forKey: "sidebarVisible")
             sidebarPeek = false
+            trafficLightsRevealed = false
             updateTrafficLights()
         }
     }
     /// Floating sidebar shown while hovering the left edge with the sidebar hidden.
     @Published var sidebarPeek = false {
+        didSet { updateTrafficLights() }
+    }
+    /// In Focus mode the traffic lights appear only while the pointer is in
+    /// the window's top-left corner.
+    @Published var trafficLightsRevealed = false {
         didSet { updateTrafficLights() }
     }
     @Published var spaceEditor: SpaceEditorRequest?
@@ -63,6 +69,8 @@ final class BrowserStore: NSObject, ObservableObject {
     }
     @Published var dropIndicator: DropIndicator?
     @Published private(set) var contentFullscreen = false
+    /// The window's corner radius, which the page's corners follow.
+    @Published var windowRadius: CGFloat = 10
 
     let pager = PagerModel()
     let webContainer = WebContainerView()
@@ -259,6 +267,11 @@ final class BrowserStore: NSObject, ObservableObject {
         if let id = visibleTabID { togglePin(id) }
     }
 
+    func setKeepAwake(_ keep: Bool, for tab: TabInfo) {
+        core.setKeepAwake(url: tab.url, keep: keep)
+        refresh()
+    }
+
     func addFavorite(_ tabID: UInt64) {
         destroyViews(core.addFavorite(id: tabID))
         refresh()
@@ -381,7 +394,7 @@ final class BrowserStore: NSObject, ObservableObject {
 
     func setFolder(_ id: UInt64, expanded: Bool) {
         core.setFolderExpanded(id: id, expanded: expanded)
-        withAnimation(.easeOut(duration: 0.15)) { refresh() }
+        withAnimation(Motion.quick) { refresh() }
     }
 
     func deleteFolder(_ id: UInt64) {
@@ -448,11 +461,11 @@ final class BrowserStore: NSObject, ObservableObject {
     // MARK: - Window chrome
 
     func toggleSidebar() {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { sidebarVisible.toggle() }
+        withAnimation(Motion.glide) { sidebarVisible.toggle() }
     }
 
     func updateTrafficLights() {
-        let hidden = (!sidebarVisible && !sidebarPeek) || contentFullscreen
+        let hidden = (!sidebarVisible && !sidebarPeek && !trafficLightsRevealed) || contentFullscreen
         for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             window?.standardWindowButton(kind)?.isHidden = hidden
         }

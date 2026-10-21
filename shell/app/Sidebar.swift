@@ -24,6 +24,7 @@ struct SidebarIconButton: View {
     var disabled = false
     let action: () -> Void
     @State private var hovering = false
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Button(action: action) {
@@ -32,7 +33,7 @@ struct SidebarIconButton: View {
                 .frame(width: 28, height: 24)
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(.white.opacity(hovering && !disabled ? 0.3 : 0))
+                        .fill(hovering && !disabled ? Theme.hoverFill(dark: colorScheme == .dark) : .clear)
                 )
                 .contentShape(Rectangle())
         }
@@ -66,6 +67,7 @@ private struct SidebarToolbar: View {
 private struct AddressPill: View {
     @EnvironmentObject private var store: BrowserStore
     @State private var hovering = false
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let tab = store.visibleTab
@@ -88,7 +90,7 @@ private struct AddressPill: View {
             .frame(height: 34)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(.white.opacity(hovering ? 0.38 : 0.26))
+                    .fill(Theme.controlFill(dark: colorScheme == .dark, hovering: hovering))
             )
             .contentShape(Rectangle())
         }
@@ -126,9 +128,11 @@ private struct FavoriteTile: View {
     let index: Int
     @State private var hovering = false
     @State private var width: CGFloat = 50
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let active = space.activeTab == tab.id
+        let dark = colorScheme == .dark
         let key = "fav-\(tab.id)"
         let indicator = store.dropIndicator?.key == key ? store.dropIndicator?.edge : nil
         FaviconImage(tab: tab, size: 18)
@@ -137,8 +141,8 @@ private struct FavoriteTile: View {
             .frame(height: 42)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(.white.opacity(active ? 0.85 : hovering ? 0.38 : 0.24))
-                    .shadow(color: .black.opacity(active ? 0.12 : 0), radius: 2, y: 1)
+                    .fill(active ? Theme.selectedFill(dark: dark) : Theme.controlFill(dark: dark, hovering: hovering))
+                    .shadow(color: .black.opacity(active ? (dark ? 0.3 : 0.09) : 0), radius: 1.5, y: 0.5)
             )
             .overlay(alignment: indicator == .before ? .leading : .trailing) {
                 if indicator != nil {
@@ -239,7 +243,7 @@ private struct SpaceHeader: View {
                     .font(.system(size: 10, weight: .medium))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Capsule().fill(.white.opacity(0.3)))
+                    .background(Capsule().fill(.primary.opacity(0.08)))
                     .opacity(0.8)
             }
         }
@@ -296,6 +300,7 @@ private struct NewTabRow: View {
     @EnvironmentObject private var store: BrowserStore
     let space: SpaceInfo
     @State private var hovering = false
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         HStack(spacing: 8) {
@@ -305,8 +310,9 @@ private struct NewTabRow: View {
         }
         .opacity(0.6)
         .padding(.horizontal, 10)
-        .frame(height: 32)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white.opacity(hovering ? 0.25 : 0)))
+        .frame(height: 30)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(hovering ? Theme.hoverFill(dark: colorScheme == .dark) : .clear))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture {
@@ -328,14 +334,18 @@ private struct SidebarBottomBar: View {
             }
             .help("Downloads")
             Spacer(minLength: 4)
-            // Icons shrink, then turn into dots, then scroll, so many spaces
-            // never make the bar (and with it the sidebar) wider.
-            ViewThatFits(in: .horizontal) {
-                spaceDots(size: 24, icons: true)
-                spaceDots(size: 18, icons: true)
-                ScrollView(.horizontal, showsIndicators: false) { spaceDots(size: 14, icons: false) }
+            // Most people use one space (5.5% of Arc's daily users used
+            // several), so the switcher only appears once there is a second.
+            if store.snapshot.spaces.count > 1 {
+                // Icons shrink, then turn into dots, then scroll, so many spaces
+                // never make the bar (and with it the sidebar) wider.
+                ViewThatFits(in: .horizontal) {
+                    spaceDots(size: 24, icons: true)
+                    spaceDots(size: 18, icons: true)
+                    ScrollView(.horizontal, showsIndicators: false) { spaceDots(size: 14, icons: false) }
+                }
+                Spacer(minLength: 4)
             }
-            Spacer(minLength: 4)
             Menu {
                 Button("New Space…") { store.spaceEditor = SpaceEditorRequest(spaceID: nil) }
                 Button("New Folder") { store.newFolder() }
@@ -368,6 +378,7 @@ private struct SpaceDot: View {
     /// False shows a dot even for spaces with an icon.
     var icon = true
     @State private var hovering = false
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let key = "space-\(space.id)"
@@ -381,7 +392,8 @@ private struct SpaceDot: View {
         .frame(width: size, height: 24)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(.white.opacity(store.dropIndicator?.key == key ? 0.5 : hovering ? 0.3 : 0))
+                .fill(store.dropIndicator?.key == key ? Theme.controlFill(dark: colorScheme == .dark, hovering: true)
+                      : hovering ? Theme.hoverFill(dark: colorScheme == .dark) : .clear)
         )
         .opacity(active ? 1 : 0.45)
         .contentShape(Rectangle())

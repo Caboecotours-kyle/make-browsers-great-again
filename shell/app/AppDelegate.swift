@@ -9,16 +9,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var sleepTimer: Timer?
     private var pressureSource: DispatchSourceMemoryPressure?
     private var scrollMonitor: Any?
+    private var sidebarReveal: SidebarReveal?
 
     init(core: BrowserCore) {
         self.core = core
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // MBGA_APPEARANCE=light|dark overrides the system appearance, for
+        // screenshots of either look.
+        switch ProcessInfo.processInfo.environment["MBGA_APPEARANCE"] {
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        default: break
+        }
         NSApp.mainMenu = buildMainMenu()
         let window = makeWindow()
         self.window = window
         store.window = window
+        store.windowRadius = window.systemCornerRadius
         store.updateTrafficLights()
         store.refresh()
         window.makeKeyAndOrderFront(nil)
@@ -27,6 +36,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else if store.visibleTabID == nil {
             store.commandBar = .newTab
         }
+
+        sidebarReveal = SidebarReveal(store: store)
 
         // Two-finger swipes in the sidebar switch spaces.
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
@@ -88,6 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.titleVisibility = .hidden
         window.title = "MBGA"
         window.minSize = NSSize(width: 640, height: 420)
+        // The hidden sidebar and Focus mode's traffic lights follow the pointer.
+        window.acceptsMouseMovedEvents = true
         window.isReleasedWhenClosed = false
         window.delegate = self
         let host = NSHostingView(rootView: RootView().environmentObject(store))
@@ -183,7 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         main.addSubmenu("View") { m in
-            m.item("Toggle Sidebar", #selector(toggleSidebar(_:)), "s", target: self)
+            m.item("Focus Mode", #selector(toggleSidebar(_:)), "s", target: self)
             m.addItem(.separator())
             m.item("Reload Page", #selector(reload(_:)), "r", target: self)
             m.item("Zoom In", #selector(zoomIn(_:)), "=", target: self)

@@ -24,6 +24,8 @@ pub struct TabInfo {
     pub live: bool,
     pub audible: bool,
     pub frozen: bool,
+    /// The tab's site is exempt from sleeping and freezing.
+    pub keep_awake: bool,
 }
 
 /// One visible row of a space's pinned tree. Folders and tabs are flattened
@@ -211,7 +213,7 @@ fn profile_dir_in(data_dir: &Path, profile_id: Id) -> PathBuf {
     data_dir.join("engine").join(format!("Profile {profile_id}"))
 }
 
-fn tab_info(t: &Tab) -> TabInfo {
+fn tab_info(s: &State, t: &Tab) -> TabInfo {
     TabInfo {
         id: t.id,
         url: t.url.clone(),
@@ -221,6 +223,7 @@ fn tab_info(t: &Tab) -> TabInfo {
         live: t.live,
         audible: t.audible,
         frozen: t.frozen,
+        keep_awake: s.keeps_awake(&t.url),
     }
 }
 
@@ -234,7 +237,7 @@ fn flatten(state: &State, nodes: &[Node], depth: u32, parent: Option<Id>, out: &
                         depth,
                         parent_id: parent,
                         index: index as u32,
-                        tab: Some(tab_info(t)),
+                        tab: Some(tab_info(state, t)),
                         folder_name: None,
                         expanded: false,
                         child_count: 0,
@@ -345,13 +348,13 @@ impl BrowserCore {
                         .get(&space.profile_id)
                         .into_iter()
                         .flatten()
-                        .filter_map(|id| s.tabs.get(id).map(tab_info))
+                        .filter_map(|id| s.tabs.get(id).map(|t| tab_info(s, t)))
                         .collect(),
                     pinned,
                     today: space
                         .today
                         .iter()
-                        .filter_map(|id| s.tabs.get(id).map(tab_info))
+                        .filter_map(|id| s.tabs.get(id).map(|t| tab_info(s, t)))
                         .collect(),
                     active_tab: space.active_tab,
                 }
@@ -378,7 +381,8 @@ impl BrowserCore {
     }
 
     pub fn tab(&self, id: u64) -> Option<TabInfo> {
-        self.lock().state.tabs.get(&id).map(tab_info)
+        let inner = self.lock();
+        inner.state.tabs.get(&id).map(|t| tab_info(&inner.state, t))
     }
 
     pub fn visible_tab(&self) -> Option<u64> {
@@ -553,6 +557,11 @@ impl BrowserCore {
 
     pub fn set_audible(&self, id: u64, audible: bool) {
         self.mutate(|s, _| s.set_audible(id, audible))
+    }
+
+    /// Exempts the site of `url` from sleeping and freezing, or stops doing so.
+    pub fn set_keep_awake(&self, url: String, keep: bool) {
+        self.mutate(|s, _| s.set_keep_awake(&url, keep))
     }
 
     pub fn set_policy(&self, sleep_after_secs: u64, max_live_tabs: u32) {

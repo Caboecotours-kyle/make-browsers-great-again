@@ -40,10 +40,88 @@ enum Theme {
         return RGB(colors[lower]).mixed(with: RGB(colors[upper]), Double(clamped - CGFloat(lower)))
     }
 
-    static func gradient(for base: RGB, dark: Bool) -> [Color] {
-        dark
-            ? [base.mixed(with: .black, 0.55).color, base.mixed(with: .black, 0.72).color]
-            : [base.mixed(with: .white, 0.62).color, base.mixed(with: .white, 0.42).color]
+    /// The window's own background, which space colors are washed toward.
+    static func neutral(dark: Bool) -> RGB {
+        dark ? RGB(0x1E1E20) : RGB(0xEFEEEC)
+    }
+
+    /// A vertical wash: the space color at the top fading toward the neutral
+    /// window background, and further still while the window is inactive,
+    /// as system materials do.
+    static func gradient(for base: RGB, dark: Bool, active: Bool, style: TintStyle) -> [Color] {
+        // Share of the neutral background mixed in at the top and bottom.
+        var (top, bottom): (Double, Double) = switch style {
+        case .vivid: dark ? (0.42, 0.6) : (0.4, 0.58)
+        case .calm: dark ? (0.62, 0.8) : (0.6, 0.8)
+        case .neutral: (0.94, 0.97)
+        }
+        if !active {
+            top += (1 - top) * 0.5
+            bottom += (1 - bottom) * 0.5
+        }
+        let neutral = neutral(dark: dark)
+        return [base.mixed(with: neutral, top).color, base.mixed(with: neutral, bottom).color]
+    }
+
+    /// Fills for controls drawn on the tinted window background. Hover is
+    /// always weaker than selection, in both appearances.
+    static func hoverFill(dark: Bool) -> Color {
+        dark ? .white.opacity(0.07) : .white.opacity(0.3)
+    }
+
+    static func controlFill(dark: Bool, hovering: Bool = false) -> Color {
+        dark ? .white.opacity(hovering ? 0.1 : 0.06) : .white.opacity(hovering ? 0.55 : 0.4)
+    }
+
+    /// The selected tab: an opaque pill that stands out in both appearances.
+    static func selectedFill(dark: Bool) -> Color {
+        dark ? Color(red: 0.3, green: 0.3, blue: 0.32) : .white
+    }
+}
+
+/// How strongly a space's color tints the window.
+enum TintStyle: String, CaseIterable, Identifiable {
+    case vivid, calm, neutral
+
+    static let defaultsKey = "tintStyle"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .vivid: "Vivid"
+        case .calm: "Calm"
+        case .neutral: "Neutral"
+        }
+    }
+}
+
+/// The app's few animations. Moves between two places glide, things that
+/// appear settle, hover feedback is quick, and the hidden sidebar folds out
+/// and back in at the speed Arc and Dia use (about 95 ms out, 70 ms back).
+/// Actions done hundreds of times a day (new tab, close tab, switching)
+/// are not animated at all. With Reduce Motion everything is instant.
+enum Motion {
+    static var quick: Animation? { reduced ? nil : .easeOut(duration: 0.14) }
+    static var glide: Animation? { reduced ? nil : .spring(response: 0.34, dampingFraction: 0.82) }
+    static var settle: Animation? { reduced ? nil : .spring(response: 0.3, dampingFraction: 0.86) }
+    static var foldOut: Animation? { reduced ? nil : .spring(response: 0.14, dampingFraction: 0.86) }
+    static var foldIn: Animation? { reduced ? nil : .spring(response: 0.13, dampingFraction: 1) }
+
+    private static var reduced: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+}
+
+extension NSWindow {
+    /// The window's corner radius: 16 pt for titlebar windows on macOS 26
+    /// (26 pt with a toolbar) and 10 pt before. AppKit has no public API for
+    /// it, so read the private value when it exists.
+    var systemCornerRadius: CGFloat {
+        let selector = Selector(("_cornerRadius"))
+        if responds(to: selector), let radius = value(forKey: "_cornerRadius") as? CGFloat, radius > 0 {
+            return radius
+        }
+        if #available(macOS 26, *) { return 16 }
+        return 10
     }
 }
 
@@ -62,6 +140,8 @@ private struct BackdropGradient: View, Animatable {
     var position: CGFloat
     let colors: [UInt32]
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.controlActiveState) private var activeState
+    @AppStorage(TintStyle.defaultsKey) private var style = TintStyle.calm
 
     var animatableData: CGFloat {
         get { position }
@@ -70,16 +150,24 @@ private struct BackdropGradient: View, Animatable {
 
     var body: some View {
         LinearGradient(
-            colors: Theme.gradient(for: Theme.blend(colors, at: position), dark: colorScheme == .dark),
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
+            colors: Theme.gradient(for: Theme.blend(colors, at: position), dark: colorScheme == .dark,
+                                   active: activeState != .inactive, style: style),
+            startPoint: .top,
+            endPoint: .bottom
         )
+        .animation(Motion.quick, value: activeState)
     }
 }
 
 extension TabInfo {
     var host: String {
         guard let host = URL(string: url)?.host() else { return url }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    /// The site for "Keep … Awake", nil for pages without a host.
+    var site: String? {
+        guard let host = URL(string: url)?.host(), !host.isEmpty else { return nil }
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 

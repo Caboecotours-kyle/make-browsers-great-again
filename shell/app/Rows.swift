@@ -1,6 +1,7 @@
 import SwiftUI
 
-private let rowHeight: CGFloat = 32
+/// macOS sidebar scale, as in Dia, rather than Arc's larger rows.
+private let rowHeight: CGFloat = 30
 
 /// Row background shared by tabs and folders.
 private struct RowBackground: View {
@@ -10,11 +11,12 @@ private struct RowBackground: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        let activeOpacity = colorScheme == .dark ? 0.2 : 0.8
+        let dark = colorScheme == .dark
         RoundedRectangle(cornerRadius: 8, style: .continuous)
             .fill(highlighted ? Color.accentColor.opacity(0.2)
-                  : .white.opacity(active ? activeOpacity : hovering ? 0.25 : 0))
-            .shadow(color: .black.opacity(active ? 0.1 : 0), radius: 2, y: 1)
+                  : active ? Theme.selectedFill(dark: dark)
+                  : hovering ? Theme.hoverFill(dark: dark) : .clear)
+            .shadow(color: .black.opacity(active ? (dark ? 0.3 : 0.09) : 0), radius: active ? 1.5 : 0, y: 0.5)
     }
 }
 
@@ -46,12 +48,14 @@ struct TabRow: View {
         let edge = store.dropIndicator?.key == key ? store.dropIndicator?.edge : nil
         HStack(spacing: 8) {
             // Sleeping tabs are dimmed: they hold no memory until selected.
-            FaviconImage(tab: tab)
-                .opacity(tab.live || active ? 1 : 0.5)
-            Text(tab.displayTitle)
-                .font(.system(size: 13))
-                .lineLimit(1)
-                .opacity(active ? 0.95 : 0.8)
+            HStack(spacing: 8) {
+                FaviconImage(tab: tab)
+                Text(tab.displayTitle)
+                    .font(.system(size: 13, weight: active ? .medium : .regular))
+                    .lineLimit(1)
+                    .opacity(active ? 1 : 0.85)
+            }
+            .opacity(tab.live || active ? 1 : 0.55)
             Spacer(minLength: 0)
             if hovering && (!pinned || tab.live) {
                 Button { store.close(tab.id) } label: {
@@ -130,7 +134,12 @@ struct FolderRow: View {
             }
             Spacer(minLength: 0)
             if !row.expanded && row.childCount > 0 {
-                Text("\(row.childCount)").font(.system(size: 11)).opacity(0.4)
+                Text("\(row.childCount)")
+                    .font(.system(size: 10.5, weight: .medium).monospacedDigit())
+                    .padding(.horizontal, 6)
+                    .frame(height: 17)
+                    .background(Capsule().fill(.primary.opacity(0.08)))
+                    .opacity(0.6)
             }
         }
         .padding(.leading, 8 + CGFloat(row.depth) * 14)
@@ -183,6 +192,11 @@ struct TabMenu: View {
             }
         }
         Divider()
+        if let site = tab.site {
+            Toggle("Keep \(site) Awake", isOn: Binding(
+                get: { tab.keepAwake },
+                set: { store.setKeepAwake($0, for: tab) }))
+        }
         Button("Copy Link") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(tab.url, forType: .string)
@@ -214,7 +228,7 @@ struct DropZone: View {
                     .opacity(active ? 0.35 : 0)
             )
             .contentShape(Rectangle())
-            .animation(.easeOut(duration: 0.15), value: active)
+            .animation(Motion.quick, value: active)
             .onDrop(of: [.sidebarItem, .url], delegate: ItemDropDelegate(
                 store: store, key: key, target: target, index: index, folderID: nil, fixedEdge: .before))
     }

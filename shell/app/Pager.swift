@@ -38,7 +38,7 @@ final class PagerModel: ObservableObject {
     func show(_ index: Int, animated: Bool) {
         guard !isTracking, position != CGFloat(index) else { return }
         if animated {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) { position = CGFloat(index) }
+            withAnimation(Motion.glide) { position = CGFloat(index) }
         } else {
             position = CGFloat(index)
         }
@@ -109,7 +109,7 @@ final class PagerModel: ObservableObject {
             target = velocity > 0 ? raw.rounded(.down) : raw.rounded(.up)
         }
         let index = Int(min(max(target, 0), CGFloat(pageCount - 1)))
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) { position = CGFloat(index) }
+        withAnimation(Motion.glide) { position = CGFloat(index) }
         onSettle?(index)
     }
 }
@@ -138,6 +138,12 @@ final class WebContainerView: NSView {
         }
     }
 
+    /// A one-pixel edge drawn above the page, or none.
+    func setBorder(_ color: NSColor?) {
+        layer?.borderWidth = color == nil ? 0 : 1 / (window?.backingScaleFactor ?? 2)
+        layer?.borderColor = color?.cgColor
+    }
+
     func add(_ view: MBWebView) {
         view.isHidden = true
         view.frame = bounds
@@ -159,6 +165,7 @@ final class WebContainerView: NSView {
 struct WebArea: NSViewRepresentable {
     let container: WebContainerView
     let cornerRadius: CGFloat
+    var border: NSColor?
 
     func makeNSView(context: Context) -> NSView {
         let host = NSView()
@@ -174,5 +181,6 @@ struct WebArea: NSViewRepresentable {
             host.addSubview(container)
         }
         container.cornerRadius = cornerRadius
+        container.setBorder(border)
     }
 }
