@@ -86,6 +86,8 @@ final class BrowserStore: NSObject, ObservableObject {
     /// Number of old Today tabs in the active space, when MBGA should offer
     /// to tidy them up.
     @Published private(set) var cleanupOffer: Int?
+    /// Ads and trackers blocked on each loaded tab's current page.
+    @Published private(set) var blockedCounts: [UInt64: Int] = [:]
 
     let pager = PagerModel()
     let webContainer = WebContainerView()
@@ -204,6 +206,7 @@ final class BrowserStore: NSObject, ObservableObject {
     private func destroyView(_ id: UInt64) {
         guard let view = views.removeValue(forKey: id) else { return }
         navStates[id] = nil
+        blockedCounts[id] = nil
         if pausedMediaTab == id { pausedMediaTab = nil }
         view.isHidden = true
         view.close()
@@ -607,6 +610,32 @@ final class BrowserStore: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - Ad blocking
+
+    var blockAds: Bool { snapshot.blockAds }
+
+    func setBlockAds(_ enabled: Bool) {
+        core.setBlockAds(enabled: enabled)
+        refresh()
+        guard enabled else {
+            reload()
+            return
+        }
+        // The engine was freed while blocking was off; load it, then reload.
+        let core = core
+        Task {
+            _ = await Task.detached(priority: .userInitiated) { core.loadFilters() }.value
+            reload()
+        }
+    }
+
+    /// Turns blocking off or on for a tab's site and reloads it to apply.
+    func setAdsAllowed(_ allowed: Bool, for tab: TabInfo) {
+        core.setAdsAllowed(url: tab.url, allowed: allowed)
+        refresh()
+        views[tab.id]?.reload()
+    }
+
     // MARK: - Process model
 
     var strictSiteIsolation: Bool { snapshot.strictSiteIsolation }
@@ -735,6 +764,13 @@ extension BrowserStore: MBWebViewDelegate {
                 core.setLive(id: view.tabID, live: false)
                 setNeedsRefresh()
             }
+        }
+    }
+
+    nonisolated func webView(_ view: MBWebView, didChangeBlockedCount count: UInt) {
+        MainActor.assumeIsolated {
+            guard isCurrent(view), blockedCounts[view.tabID] != Int(count) else { return }
+            blockedCounts[view.tabID] = Int(count)
         }
     }
 

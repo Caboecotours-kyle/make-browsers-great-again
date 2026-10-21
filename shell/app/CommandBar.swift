@@ -364,6 +364,12 @@ struct CommandAction {
                     store.showDevTools()
                 },
             ]
+            if let site = tab.site, store.blockAds {
+                list.append(CommandAction(id: "ads", title: tab.adsAllowed ? "Block Ads on \(site)" : "Allow Ads on \(site)",
+                                          symbol: "shield.lefthalf.filled", keywords: ["adblock", "trackers", "blocker"]) {
+                    store.setAdsAllowed(!tab.adsAllowed, for: tab)
+                })
+            }
             if let site = tab.site {
                 list.append(CommandAction(id: "awake", title: tab.keepAwake ? "Let \(site) Sleep" : "Keep \(site) Awake",
                                           symbol: tab.keepAwake ? "moon.zzz" : "sun.max", keywords: ["sleep", "awake"]) {
@@ -390,6 +396,10 @@ struct CommandAction {
             },
             CommandAction(id: "import", title: "Import from Another Browser…", symbol: "square.and.arrow.down", keywords: ["chrome", "arc", "safari"]) {
                 store.importSheet = ImportRequest(firstLaunch: false)
+            },
+            CommandAction(id: "block-ads", title: store.blockAds ? "Turn Off Ad Blocking" : "Block Ads and Trackers",
+                          symbol: "shield", keywords: ["adblock", "trackers", "privacy"]) {
+                store.setBlockAds(!store.blockAds)
             },
             CommandAction(id: "clear-history", title: "Clear History", symbol: "clock.arrow.circlepath", keywords: ["forget", "privacy"]) {
                 store.core.clearHistory()

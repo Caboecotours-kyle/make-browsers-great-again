@@ -89,6 +89,15 @@ private struct AddressPill: View {
                 if store.nav.isLoading {
                     ProgressView().controlSize(.mini)
                 }
+                if let tab, let blocked = store.blockedCounts[tab.id], blocked > 0 {
+                    // What the blocker kept off this page, quietly.
+                    HStack(spacing: 3) {
+                        Image(systemName: "shield.lefthalf.filled").font(.system(size: 10))
+                        Text("\(blocked)").font(.system(size: 11, weight: .medium).monospacedDigit())
+                    }
+                    .opacity(0.5)
+                    .help("\(blocked) ads and trackers blocked on this page")
+                }
             }
             .padding(.horizontal, 10)
             .frame(height: 34)

@@ -196,6 +196,11 @@ struct TabMenu: View {
             Toggle("Keep \(site) Awake", isOn: Binding(
                 get: { tab.keepAwake },
                 set: { store.setKeepAwake($0, for: tab) }))
+            if store.blockAds {
+                Toggle("Allow Ads on \(site)", isOn: Binding(
+                    get: { tab.adsAllowed },
+                    set: { store.setAdsAllowed($0, for: tab) }))
+            }
         }
         Button("Copy Link") { store.copyLink(tab.url) }
         Button("Duplicate") { store.duplicate(tab, in: space) }

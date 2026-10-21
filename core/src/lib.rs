@@ -3,6 +3,7 @@
 
 uniffi::setup_scaffolding!();
 
+pub mod blocker;
 pub mod history;
 pub mod import;
 pub mod model;
@@ -10,7 +11,7 @@ pub mod model;
 use model::{Container, Id, Node, Pressure, State, Tab};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // ------------------------------------------------------------------ records
@@ -27,6 +28,8 @@ pub struct TabInfo {
     pub frozen: bool,
     /// The tab's site is exempt from sleeping and freezing.
     pub keep_awake: bool,
+    /// Ads and trackers are allowed on the tab's site.
+    pub ads_allowed: bool,
 }
 
 /// One visible row of a space's pinned tree. Folders and tabs are flattened
@@ -75,6 +78,7 @@ pub struct Snapshot {
     pub strict_site_isolation: bool,
     /// Something closed this session can be reopened.
     pub can_reopen: bool,
+    pub block_ads: bool,
     /// Today tabs untouched this long are archived; 0 is off.
     pub archive_after_hours: u32,
     pub cleanup_answered: bool,
@@ -94,6 +98,13 @@ pub struct HistoryItem {
 pub struct ReopenOutcome {
     pub space_id: u64,
     pub tabs: Vec<u64>,
+}
+
+/// A filter list for the shell to download into `filter_dir`.
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct FilterList {
+    pub file_name: String,
+    pub url: String,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
@@ -204,6 +215,8 @@ struct Inner {
 #[derive(uniffi::Object)]
 pub struct BrowserCore {
     inner: Mutex<Inner>,
+    /// Consulted for every network request, on the engine's network thread.
+    blocker: RwLock<blocker::Blocker>,
 }
 
 fn now_ms() -> u64 {
@@ -265,6 +278,7 @@ fn tab_info(s: &State, t: &Tab) -> TabInfo {
         audible: t.audible,
         frozen: t.frozen,
         keep_awake: s.keeps_awake(&t.url),
+        ads_allowed: s.allows_ads(&t.url),
     }
 }
 
@@ -351,6 +365,7 @@ impl BrowserCore {
         let data_dir = fs::canonicalize(&data_dir).unwrap_or(data_dir);
         let mut state = load_state(&data_dir);
         let history = load_history(&data_dir);
+        let blocker = blocker::Blocker::new(state.block_ads, state.ads_allowed.iter().cloned());
         // The engine is not running yet, so deleted profiles' storage is free.
         for id in std::mem::take(&mut state.doomed_profiles) {
             let _ = fs::remove_dir_all(profile_dir_in(&data_dir, id));
@@ -365,6 +380,7 @@ impl BrowserCore {
                 data_dir,
                 detected: Vec::new(),
             }),
+            blocker: RwLock::new(blocker),
         })
     }
 
@@ -422,6 +438,7 @@ impl BrowserCore {
             max_live_tabs: s.policy.max_live_tabs,
             strict_site_isolation: s.policy.strict_site_isolation,
             can_reopen: !s.closed.is_empty(),
+            block_ads: s.block_ads,
             archive_after_hours: s.policy.archive_after_hours,
             cleanup_answered: s.cleanup_answered,
         }
@@ -693,6 +710,71 @@ impl BrowserCore {
     /// Exempts the site of `url` from sleeping and freezing, or stops doing so.
     pub fn set_keep_awake(&self, url: String, keep: bool) {
         self.mutate(|s, _| s.set_keep_awake(&url, keep))
+    }
+
+    // ------------------------------------------------------------ blocking
+
+    /// Where the shell downloads filter lists.
+    pub fn filter_dir(&self) -> String {
+        self.lock().data_dir.join("filters").to_string_lossy().into_owned()
+    }
+
+    pub fn filter_lists(&self) -> Vec<FilterList> {
+        blocker::LISTS
+            .iter()
+            .map(|(file_name, url)| FilterList { file_name: file_name.to_string(), url: url.to_string() })
+            .collect()
+    }
+
+    /// Loads the blocking engine from the downloaded lists (compiling and
+    /// caching it if they changed). Slow the first time; call it off the
+    /// main thread. False if blocking is off or no list has been downloaded
+    /// yet; with blocking off the engine stays out of memory.
+    pub fn load_filters(&self) -> bool {
+        if !self.blocker.read().unwrap_or_else(|e| e.into_inner()).enabled {
+            return false;
+        }
+        let dir = PathBuf::from(self.filter_dir());
+        let mut fresh = blocker::Blocker::default();
+        if !fresh.load(&dir) {
+            return false;
+        }
+        let mut blocker = self.blocker.write().unwrap_or_else(|e| e.into_inner());
+        fresh.enabled = blocker.enabled;
+        fresh.allowed = std::mem::take(&mut blocker.allowed);
+        *blocker = fresh;
+        true
+    }
+
+    /// Whether the engine should cancel a request for `url` made by the
+    /// page at `page`. `kind` is "script", "image", "subdocument" and so on.
+    pub fn should_block(&self, url: String, page: String, kind: String) -> bool {
+        self.blocker.read().unwrap_or_else(|e| e.into_inner()).should_block(&url, &page, &kind)
+    }
+
+    /// CSS that hides the ad slots of the page at `page`, or "".
+    pub fn hiding_css(&self, page: String) -> String {
+        self.blocker.read().unwrap_or_else(|e| e.into_inner()).hiding_css(&page)
+    }
+
+    /// Turning blocking off frees the engine; after turning it on, call
+    /// `load_filters` (off the main thread) to load it again.
+    pub fn set_block_ads(&self, enabled: bool) {
+        self.mutate(|s, _| s.block_ads = enabled);
+        let mut blocker = self.blocker.write().unwrap_or_else(|e| e.into_inner());
+        blocker.enabled = enabled;
+        if !enabled {
+            blocker.unload();
+        }
+    }
+
+    /// Turns blocking off for the site of `url`, or back on.
+    pub fn set_ads_allowed(&self, url: String, allowed: bool) {
+        let sites = self.mutate(|s, _| {
+            s.set_ads_allowed(&url, allowed);
+            s.ads_allowed.clone()
+        });
+        self.blocker.write().unwrap_or_else(|e| e.into_inner()).allowed = sites.into_iter().collect();
     }
 
     pub fn set_policy(&self, sleep_after_secs: u64, max_live_tabs: u32) {

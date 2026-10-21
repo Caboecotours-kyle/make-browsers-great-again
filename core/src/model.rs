@@ -192,6 +192,12 @@ pub struct State {
     /// The person has answered the offer to tidy up old Today tabs.
     #[serde(default)]
     pub cleanup_answered: bool,
+    /// Block ads and trackers.
+    #[serde(default = "default_block_ads")]
+    pub block_ads: bool,
+    /// Sites (see `site_of`) where ads and trackers are allowed.
+    #[serde(default)]
+    pub ads_allowed: Vec<String>,
     /// Closed tabs and folders that can be reopened, newest last.
     #[serde(skip)]
     pub closed: Vec<Closed>,
@@ -202,6 +208,10 @@ fn default_search_template() -> String {
 }
 
 fn default_onboarded() -> bool {
+    true
+}
+
+fn default_block_ads() -> bool {
     true
 }
 
@@ -225,6 +235,8 @@ impl State {
             onboarded: false,
             keep_awake: Vec::new(),
             cleanup_answered: false,
+            block_ads: true,
+            ads_allowed: Vec::new(),
             closed: Vec::new(),
         };
         let profile = s.create_profile("Personal");
@@ -940,6 +952,22 @@ impl State {
     pub fn set_audible(&mut self, id: Id, audible: bool) {
         if let Some(t) = self.tabs.get_mut(&id) {
             t.audible = audible;
+        }
+    }
+
+    pub fn allows_ads(&self, url: &str) -> bool {
+        self.ads_allowed.contains(&site_of(url))
+    }
+
+    /// Turns ad blocking off for the site of `url`, or back on.
+    pub fn set_ads_allowed(&mut self, url: &str, allowed: bool) {
+        let site = site_of(url);
+        if site.is_empty() {
+            return;
+        }
+        self.ads_allowed.retain(|s| *s != site);
+        if allowed {
+            self.ads_allowed.push(site);
         }
     }
 

@@ -438,3 +438,58 @@ fn idle_today_tabs_are_archived_by_policy_and_restorable() {
     assert_eq!(s.reopen_last(), Some((sp, vec![old])));
     assert_eq!(s.spaces[0].today, vec![fresh, kept, old]);
 }
+
+#[test]
+fn blocker_cancels_matching_requests_except_on_allowed_sites() {
+    let mut b = blocker::Blocker::from_rules(
+        "||ads.example.net^\n||tracker.example.org^$third-party\nnews.example.com##.ad-slot\n",
+    );
+    let page = "https://news.example.com/story";
+    assert!(b.should_block("https://ads.example.net/banner.js", page, "script"));
+    assert!(b.should_block("https://tracker.example.org/p.gif", page, "image"));
+    assert!(!b.should_block("https://cdn.example.com/app.js", page, "script"));
+    assert!(b.hiding_css(page).contains(".ad-slot{display:none!important}"));
+    b.allowed.insert("news.example.com".into());
+    assert!(!b.should_block("https://ads.example.net/banner.js", page, "script"));
+    assert!(b.hiding_css(page).is_empty());
+    b.allowed.clear();
+    b.enabled = false;
+    assert!(!b.should_block("https://ads.example.net/banner.js", page, "script"));
+}
+
+#[test]
+fn blocker_compiles_lists_once_and_loads_the_cache() {
+    let dir = std::path::PathBuf::from(temp_dir("filters"));
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(blocker::LISTS[0].0), "||ads.example.net^\n").unwrap();
+    let mut first = blocker::Blocker::new(true, []);
+    assert!(first.load(&dir));
+    assert!(dir.join("engine.dat").exists());
+    let mut cached = blocker::Blocker::new(true, []);
+    assert!(cached.load(&dir));
+    assert!(cached.should_block("https://ads.example.net/x.js", "https://a.com/", "script"));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn ad_settings_survive_a_restart() {
+    let dir = temp_dir("ads");
+    let core = BrowserCore::new(dir.clone());
+    assert!(core.snapshot().block_ads);
+    core.set_ads_allowed("https://www.example.com/a".into(), true);
+    core.set_block_ads(false);
+    assert!(core.persist());
+    let reopened = BrowserCore::new(dir.clone());
+    assert!(!reopened.snapshot().block_ads);
+    // Off means the engine is never loaded, even with lists on disk.
+    fs::create_dir_all(reopened.filter_dir()).unwrap();
+    fs::write(std::path::Path::new(&reopened.filter_dir()).join(blocker::LISTS[0].0), "||ads.example.net^\n").unwrap();
+    assert!(!reopened.load_filters());
+    reopened.set_block_ads(true);
+    assert!(reopened.load_filters());
+    assert!(reopened.should_block("https://ads.example.net/a.js".into(), "https://b.com/".into(), "script".into()));
+    let space = reopened.snapshot().spaces[0].id;
+    let tab = reopened.open_tab(space, "https://example.com/b".into(), false).unwrap();
+    assert!(reopened.tab(tab).unwrap().ads_allowed);
+    let _ = fs::remove_dir_all(dir);
+}

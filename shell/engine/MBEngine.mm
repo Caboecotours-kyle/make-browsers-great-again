@@ -1,10 +1,12 @@
 // CEF integration: application class, engine lifecycle, per-profile storage
 // and one CefClient per tab. Every CEF callback used here runs on the browser
-// UI thread, which on macOS is the main thread.
+// UI thread, which on macOS is the main thread, except the request filter
+// (OnBeforeResourceLoad), which runs on the network thread.
 
 #import "MBEngine.h"
 
 #include <algorithm>
+#include <atomic>
 #include <map>
 #include <set>
 #include <string>
@@ -36,6 +38,7 @@
 - (void)engineDidCloseBrowser;
 - (void)engineSetMediaPlaying:(BOOL)playing;
 - (void)engineSetCapturing:(BOOL)capturing;
+- (void)engineSetBlockedCount:(NSUInteger)count;
 @end
 
 namespace {
@@ -50,6 +53,57 @@ int g_browser_count = 0;
 bool g_quitting = false;
 bool g_strict_site_isolation = true;
 std::string g_isolated_origins;
+// Ad blocking, set once before the first browser is created. The request
+// filter is called on the network thread.
+MBRequestFilter g_request_filter = nil;
+MBHidingCSS g_hiding_css = nil;
+
+// Adds |css| to the page as early as possible: the document element may
+// not exist yet when a load starts.
+constexpr char kInjectStyleScript[] =
+    "(function(c){function add(){var r=document.documentElement;if(!r)return "
+    "false;var s=document.createElement('style');s.textContent=c;"
+    "r.appendChild(s);return true;}if(!add()){new MutationObserver("
+    "function(_,o){if(add())o.disconnect();}).observe(document,"
+    "{childList:true});}})(%@);";
+
+// The request type names filter lists use, or nullptr for top-level pages,
+// which are never blocked.
+const char* RequestKind(cef_resource_type_t type) {
+  switch (type) {
+    case RT_MAIN_FRAME:
+    case RT_NAVIGATION_PRELOAD_MAIN_FRAME:
+      return nullptr;
+    case RT_SUB_FRAME:
+    case RT_NAVIGATION_PRELOAD_SUB_FRAME:
+      return "subdocument";
+    case RT_STYLESHEET:
+      return "stylesheet";
+    case RT_SCRIPT:
+    case RT_WORKER:
+    case RT_SHARED_WORKER:
+    case RT_SERVICE_WORKER:
+      return "script";
+    case RT_IMAGE:
+    case RT_FAVICON:
+      return "image";
+    case RT_FONT_RESOURCE:
+      return "font";
+    case RT_OBJECT:
+    case RT_PLUGIN_RESOURCE:
+      return "object";
+    case RT_MEDIA:
+      return "media";
+    case RT_XHR:
+      return "xmlhttprequest";
+    case RT_PING:
+      return "ping";
+    case RT_CSP_REPORT:
+      return "csp_report";
+    default:
+      return "other";
+  }
+}
 
 constexpr char kMediaProbePrefix[] = "__mbga_media:";
 constexpr char kMediaProbeScript[] =
@@ -553,6 +607,7 @@ class WebClient : public BaseClient,
                   public CefDisplayHandler,
                   public CefLoadHandler,
                   public CefRequestHandler,
+                  public CefResourceRequestHandler,
                   public CefContextMenuHandler {
  public:
   explicit WebClient(MBWebView* view) : view_(view) {}
@@ -664,6 +719,30 @@ class WebClient : public BaseClient,
 
   // CefLoadHandler
 
+  void OnLoadStart(CefRefPtr<CefBrowser> browser,
+                   CefRefPtr<CefFrame> frame,
+                   TransitionType transition_type) override {
+    if (!frame->IsMain()) {
+      return;
+    }
+    blocked_ = 0;
+    [view_ engineSetBlockedCount:0];
+    NSString* css = g_hiding_css ? g_hiding_css(ToNS(frame->GetURL())) : nil;
+    if (css.length == 0) {
+      return;
+    }
+    NSData* json = [NSJSONSerialization dataWithJSONObject:@[ css ]
+                                                   options:0
+                                                     error:nil];
+    NSString* array = [[NSString alloc] initWithData:json
+                                            encoding:NSUTF8StringEncoding];
+    NSString* literal =
+        [array substringWithRange:NSMakeRange(1, array.length - 2)];
+    NSString* script =
+        [NSString stringWithFormat:@(kInjectStyleScript), literal];
+    frame->ExecuteJavaScript(script.UTF8String, "", 0);
+  }
+
   void OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
                             bool isLoading,
                             bool canGoBack,
@@ -676,6 +755,45 @@ class WebClient : public BaseClient,
   }
 
   // CefRequestHandler
+
+  CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
+      CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefFrame> frame,
+      CefRefPtr<CefRequest> request,
+      bool is_navigation,
+      bool is_download,
+      const CefString& request_initiator,
+      bool& disable_default_handling) override {
+    return g_request_filter && !is_download ? this : nullptr;
+  }
+
+  // CefResourceRequestHandler (network thread)
+
+  ReturnValue OnBeforeResourceLoad(CefRefPtr<CefBrowser> browser,
+                                   CefRefPtr<CefFrame> frame,
+                                   CefRefPtr<CefRequest> request,
+                                   CefRefPtr<CefCallback> callback) override {
+    const char* kind = RequestKind(request->GetResourceType());
+    if (!kind || !browser) {
+      return RV_CONTINUE;
+    }
+    // Filter rules are about the site the person is on: the top-level page.
+    NSString* page = ToNS(browser->GetMainFrame()->GetURL());
+    if (!g_request_filter(ToNS(request->GetURL()), page, @(kind))) {
+      return RV_CONTINUE;
+    }
+    // Report the count to the main thread at most once per run-loop turn.
+    blocked_++;
+    if (!report_pending_.exchange(true)) {
+      __weak MBWebView* view = view_;
+      CefRefPtr<WebClient> client(this);
+      dispatch_async(dispatch_get_main_queue(), ^{
+        client->report_pending_ = false;
+        [view engineSetBlockedCount:client->blocked_];
+      });
+    }
+    return RV_CANCEL;
+  }
 
   void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
                                  TerminationStatus status,
@@ -731,6 +849,10 @@ class WebClient : public BaseClient,
 
  private:
   __weak MBWebView* view_;
+  // Requests blocked since the page started loading.
+  std::atomic<NSUInteger> blocked_{0};
+  std::atomic<bool> report_pending_{false};
+
   IMPLEMENT_REFCOUNTING(WebClient);
 };
 
@@ -846,6 +968,11 @@ class WebClient : public BaseClient,
 // --------------------------------------------------------------------- MBEngine
 
 @implementation MBEngine
+
++ (void)setRequestFilter:(MBRequestFilter)filter hidingCSS:(MBHidingCSS)css {
+  g_request_filter = filter;
+  g_hiding_css = css;
+}
 
 + (BOOL)startWithArgc:(int)argc
                     argv:(char**)argv
@@ -1166,6 +1293,10 @@ class WebClient : public BaseClient,
   if (wasBusy != (_mediaPlaying || _capturing)) {
     [self.delegate webView:self didChangeBusy:!wasBusy];
   }
+}
+
+- (void)engineSetBlockedCount:(NSUInteger)count {
+  [self.delegate webView:self didChangeBlockedCount:count];
 }
 
 - (void)engineSetCapturing:(BOOL)capturing {

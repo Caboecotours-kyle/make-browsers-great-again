@@ -11,6 +11,13 @@ NS_ASSUME_NONNULL_BEGIN
 
 @class MBWebView;
 
+/// Decides whether to cancel a request for |url| made while |page| is the
+/// tab's top-level page; |kind| is the filter-list request type ("script",
+/// "image", "subdocument", ...). Called on the network thread.
+typedef BOOL (^MBRequestFilter)(NSString* url, NSString* page, NSString* kind);
+/// CSS to inject into |page| when it starts loading, or an empty string.
+typedef NSString* _Nonnull (^MBHidingCSS)(NSString* page);
+
 /// Engine events for one tab. Always delivered on the main thread.
 @protocol MBWebViewDelegate <NSObject>
 - (void)webView:(MBWebView*)view didChangeURL:(NSString*)url;
@@ -28,6 +35,8 @@ NS_ASSUME_NONNULL_BEGIN
                foreground:(BOOL)foreground;
 - (void)webView:(MBWebView*)view didChangeFullscreen:(BOOL)fullscreen;
 - (void)webViewRendererDidTerminate:(MBWebView*)view;
+/// Requests blocked since the page started loading.
+- (void)webView:(MBWebView*)view didChangeBlockedCount:(NSUInteger)count;
 /// The engine finished destroying the browser after -close.
 - (void)webViewDidClose:(MBWebView*)view;
 @end
@@ -52,6 +61,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// Tears the engine down after the message loop returned.
 + (void)shutdown;
+
+/// Turns on ad blocking. Call before the first web view is created.
++ (void)setRequestFilter:(MBRequestFilter)filter hidingCSS:(MBHidingCSS)css;
 
 @end
 

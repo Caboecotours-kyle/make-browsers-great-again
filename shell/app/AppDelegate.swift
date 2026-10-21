@@ -24,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         default: break
         }
         NSApp.mainMenu = buildMainMenu()
+        AdBlocking.install(core: core)
+        AdBlocking.updateLists(core: core)
         let window = makeWindow()
         self.window = window
         store.window = window
@@ -140,6 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func previousSpace(_ sender: Any?) { store.activateAdjacentSpace(-1) }
     @objc func selectTab(_ sender: NSMenuItem) { store.selectTab(at: sender.tag) }
     @objc func reopenClosedTab(_ sender: Any?) { store.undoClose() }
+    @objc func toggleBlockAds(_ sender: Any?) { store.setBlockAds(!store.blockAds) }
     /// Edit ▸ Undo reaches the app only when no page or text field took it;
     /// then it undoes the last closed tab, cleared list or deleted folder.
     @objc func undo(_ sender: Any?) { store.undoClose() }
@@ -160,6 +163,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             item.state = current == item.representedObject as? String ? .on : .off
         case #selector(toggleSidebar(_:)):
             item.state = store.sidebarVisible ? .off : .on
+        case #selector(toggleBlockAds(_:)):
+            item.state = store.blockAds ? .on : .off
         default:
             break
         }
@@ -188,6 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         main.addSubmenu("MBGA") { m in
             m.addItem(withTitle: "About MBGA", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
             m.addItem(.separator())
+            m.item("Block Ads and Trackers", #selector(toggleBlockAds(_:)), "", [], target: self)
             let isolation = m.item("Strict Site Isolation", #selector(toggleStrictSiteIsolation(_:)), "", [], target: self)
             isolation.state = store.strictSiteIsolation ? .on : .off
             m.addItem(.separator())

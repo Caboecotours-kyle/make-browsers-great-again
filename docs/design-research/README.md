@@ -98,6 +98,20 @@ today.
 Items 1–8 are a polish pass of a few hundred lines in `Theme.swift`,
 `Rows.swift` and `RootView.swift`, with no core changes.
 
+### Status (2026-10-21)
+
+Built: items 1–13 and 15, plus ad and tracker blocking (dealbreaker 1)
+and the Vivid / Calm / Neutral color setting.
+
+Not yet built:
+- **Item 14:** a dragged row staying centred under the cursor and turning
+  into a window preview. Only the haptic tick is in.
+- **Page-derived tint:** the window and toolbar taking the page's
+  `theme-color`. Favorites sample their icon's color instead.
+- **Equaliser:** the mini player has no animated equaliser, to save power.
+- **Compact mode:** hiding the sidebar is Focus mode; there is no separate
+  compact layout.
+
 ## Avoid
 
 - Glass or transparency behind web content
