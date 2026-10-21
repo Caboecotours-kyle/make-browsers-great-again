@@ -172,28 +172,45 @@ final class SpacePageView: FlippedView, NSTableViewDataSource, NSTableViewDelega
             table.reloadData()
             return
         }
-        let animated = animation != nil && !Motion.reduced
+        // A few rows coming, going or moving (closing, pinning, opening or
+        // dragging a tab) slide into place; a tidy-up uses its own curve.
+        // Not while spaces slide past, where the list should just be there.
+        let pagerMoving = store.pager.travel != nil || store.pager.isTracking
+        let curve = animation ?? (removed.count + inserted.count <= 6 && !pagerMoving ? Motion.quick : nil)
+        let animated = curve != nil && !Motion.reduced && window != nil
+        // One row moving (a drag within the list) slides to its new place
+        // rather than vanishing and reappearing.
+        let moved: (from: Int, to: Int)? = {
+            guard removed.count == 1, inserted.count == 1, let from = removed.first, let to = inserted.first,
+                  oldIDs[from] == nextIDs[to] else { return nil }
+            return (from, to)
+        }()
         NSAnimationContext.runAnimationGroup { context in
-            // Removals and insertions slide and fade when tidying up.
-            context.duration = animated ? animation!.duration : 0
-            context.timingFunction = animation?.timing
+            context.duration = animated ? curve!.duration : 0
+            context.timingFunction = curve?.timing
             table.beginUpdates()
-            table.removeRows(at: removed, withAnimation: animated ? [.effectFade, .slideUp] : [])
-            table.insertRows(at: inserted, withAnimation: animated ? .effectFade : [])
+            if let moved {
+                table.moveRow(at: moved.from, to: moved.to)
+            } else {
+                table.removeRows(at: removed, withAnimation: animated ? [.effectFade, .slideUp] : [])
+                table.insertRows(at: inserted, withAnimation: animated ? [.effectFade, .slideDown] : [])
+            }
             rows = next
             table.endUpdates()
         }
         // Then the kept rows whose content changed refresh.
         let before = Dictionary(old.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let changed = IndexSet(next.indices.filter { !inserted.contains($0) && before[next[$0].id] != next[$0] })
+        let changed = IndexSet(next.indices.filter {
+            (moved != nil || !inserted.contains($0)) && before[next[$0].id] != next[$0]
+        })
         table.reloadData(forRowIndexes: changed, columnIndexes: [0])
         for i in changed { (table.rowView(atRow: i, makeIfNecessary: false) as? SidebarRowView)?.configure(rows[i]) }
     }
 
     /// Redraws rows whose look depends on store state outside the snapshot
     /// (media paused, little windows, dragging, folder renaming).
-    func refreshDecorations() {
-        update(space, animation: nil)
+    func refreshDecorations(animation: Motion.Curve? = nil) {
+        update(space, animation: animation)
     }
 
     private func makeRows() -> [SidebarRow] {
@@ -628,13 +645,22 @@ final class TabCellView: NSTableCellView, HoverAware {
         warmTimer = timer
     }
 
+    /// The tab the accessories were last set for: a change for the same tab
+    /// fades, a cell reused for another tab just takes its state.
+    private var accessoryTab: UInt64?
+
     private func updateAccessory() {
         guard let data else { return }
+        let animated = accessoryTab == data.tab.id
+        accessoryTab = data.tab.id
         let showClose = hovering && (!data.pinned || data.tab.live)
-        close.isHidden = !showClose
-        badge.isHidden = showClose || !data.inLittleWindow
-        equalizer.isHidden = showClose || data.inLittleWindow || !data.tab.audible
-        equalizer.playing = !equalizer.isHidden && !data.mediaPaused
+        close.setVisible(showClose, animated: animated)
+        badge.setVisible(!showClose && data.inLittleWindow, animated: animated)
+        let audible = !showClose && !data.inLittleWindow && data.tab.audible
+        equalizer.setVisible(audible, animated: animated)
+        equalizer.playing = audible && !data.mediaPaused
+        // The title makes room for them.
+        needsLayout = true
         effectiveAppearance.performAsCurrentDrawingAppearance {
             close.layer?.backgroundColor = Theme.faint(0.08).cgColor
         }
@@ -649,7 +675,10 @@ final class TabCellView: NSTableCellView, HoverAware {
         badge.frame = NSRect(x: bounds.width - 24, y: midY - 7, width: 16, height: 14)
         equalizer.frame = NSRect(x: bounds.width - 22, y: midY - 5.5, width: 12, height: 11)
         let titleX = leading + 24
-        let trailing = close.isHidden && badge.isHidden && equalizer.isHidden ? 8.0 : 30.0
+        let showsAccessory = data.map { d in
+            (hovering && (!d.pinned || d.tab.live)) || d.inLittleWindow || d.tab.audible
+        } ?? false
+        let trailing = showsAccessory ? 30.0 : 8.0
         title.frame = NSRect(x: titleX, y: midY - 8, width: max(bounds.width - titleX - trailing, 0), height: 16)
     }
 }
@@ -702,6 +731,7 @@ final class FolderCellView: NSTableCellView, NSTextFieldDelegate {
 
     func configure(_ row: PinnedRow, renaming: Bool) {
         let wasRenaming = !editor.isHidden && self.row?.id == row.id
+        let sameFolder = self.row?.id == row.id
         self.row = row
         icon.image = .symbol(row.expanded ? "folder" : "folder.fill", size: 12, weight: .regular)
         name.stringValue = row.folderName ?? "Folder"
@@ -716,7 +746,7 @@ final class FolderCellView: NSTableCellView, NSTextFieldDelegate {
             }
         }
         let collapsedCount = !row.expanded && row.childCount > 0
-        count.isHidden = !collapsedCount
+        count.setVisible(collapsedCount, animated: sameFolder)
         count.stringValue = "\(row.childCount)"
         effectiveAppearance.performAsCurrentDrawingAppearance {
             count.layer?.backgroundColor = Theme.faint(0.08).cgColor
@@ -799,8 +829,13 @@ final class DividerCellView: NSTableCellView {
 
     override var wantsUpdateLayer: Bool { true }
 
+    private var showsClear = false
+    private var lineAnimates = false
+
     func configure(showsClear: Bool, clearAction: @escaping () -> Void) {
-        clear.isHidden = !showsClear
+        lineAnimates = showsClear != self.showsClear && window != nil && !Motion.reduced
+        self.showsClear = showsClear
+        clear.setVisible(showsClear, animated: lineAnimates)
         clear.onAction(clearAction)
         needsLayout = true
     }
@@ -811,12 +846,18 @@ final class DividerCellView: NSTableCellView {
 
     override func layout() {
         super.layout()
-        let clearWidth: CGFloat = clear.isHidden ? 0 : clear.intrinsicContentSize.width + 4
+        let clearWidth = clear.intrinsicContentSize.width + 4
         clear.frame = NSRect(x: bounds.width - 6 - clearWidth, y: 0, width: clearWidth, height: bounds.height)
         CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        line.frame = NSRect(x: 6, y: bounds.midY, width: max(bounds.width - 12 - clearWidth - (clear.isHidden ? 0 : 8), 0),
-                            height: 1)
+        if lineAnimates {
+            CATransaction.setAnimationDuration(Motion.quick.duration)
+            CATransaction.setAnimationTimingFunction(Motion.quick.timing)
+        } else {
+            CATransaction.setDisableActions(true)
+        }
+        lineAnimates = false
+        let room = showsClear ? clearWidth + 8 : 0
+        line.frame = NSRect(x: 6, y: bounds.midY, width: max(bounds.width - 12 - room, 0), height: 1)
         CATransaction.commit()
     }
 }
@@ -866,8 +907,16 @@ final class DropHintCellView: NSTableCellView {
 
     func configure(_ text: String, visible: Bool) {
         label.stringValue = text
-        label.isHidden = !visible
-        dash.isHidden = !visible
+        let animated = window != nil && !Motion.reduced
+        label.setVisible(visible, animated: animated)
+        CATransaction.begin()
+        if animated {
+            CATransaction.setAnimationDuration(Motion.quick.duration)
+        } else {
+            CATransaction.setDisableActions(true)
+        }
+        dash.opacity = visible ? 1 : 0
+        CATransaction.commit()
         needsLayout = true
     }
 

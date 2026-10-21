@@ -390,6 +390,21 @@ extension NSMenu {
 }
 
 extension NSView {
+    /// Shows or hides a view, fading if `animated` (a change to what this
+    /// view shows) and at once otherwise (a reused cell taking new content).
+    /// Nothing happens if it is already so.
+    func setVisible(_ visible: Bool, animated: Bool, curve: Motion.Curve = Motion.quick) {
+        guard animated, window != nil, !Motion.reduced else {
+            layer?.removeAnimation(forKey: "alphaValue")
+            isHidden = !visible
+            alphaValue = 1
+            return
+        }
+        if visible, !isHidden, alphaValue == 1 { return }
+        if !visible, isHidden { return }
+        fade(visible: visible, curve: curve)
+    }
+
     /// Fades a view in or out, hiding it once it is gone.
     func fade(visible: Bool, curve: Motion.Curve = Motion.quick) {
         if visible && isHidden {

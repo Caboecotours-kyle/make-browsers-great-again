@@ -122,20 +122,49 @@ final class MiniPlayerView: HoverView {
 
     func update(_ media: (tab: TabInfo, space: SpaceInfo)?) {
         guard let media else { return }
+        let sameTab = self.media?.tab.id == media.tab.id
+        let wasPaused = paused
         self.media = media
+        // Another tab taking over the player fades in its title and icon.
+        if !sameTab, window != nil, !Motion.reduced {
+            for view in [icon, title, subtitle] as [NSView] {
+                view.alphaValue = 0
+            }
+            Motion.animate(Motion.fade) {
+                for view in [icon, title, subtitle] as [NSView] { view.animator().alphaValue = 1 }
+            }
+        }
         icon.image = FaviconCache.shared.image(for: media.tab)
         title.stringValue = media.tab.displayTitle
         subtitle.stringValue = media.space.id == store.activeSpace.id ? media.tab.host : "\(media.space.icon) \(media.space.name)"
+        // Play and pause swap with a quick cross-fade.
+        if sameTab, wasPaused != paused, let layer = playPause.layer, !Motion.reduced {
+            let swap = CATransition()
+            swap.type = .fade
+            swap.duration = Motion.quick.duration
+            layer.add(swap, forKey: "swap")
+        }
         playPause.image = .symbol(paused ? "play.fill" : "pause.fill", size: 12, weight: .regular)
         playPause.toolTip = paused ? "Play" : "Pause"
         equalizer.playing = !paused
-        hide.isHidden = !(paused && hovering)
-        needsLayout = true
+        updateHide(animated: sameTab)
     }
 
     override func hoverChanged() {
         super.hoverChanged()
-        hide.isHidden = !(paused && hovering)
+        updateHide(animated: true)
+    }
+
+    /// The close button shows on hover while paused, and play/pause makes
+    /// room for it (it used to stay put and overlap).
+    private func updateHide(animated: Bool) {
+        let show = paused && hovering
+        guard show == hide.isHidden || hide.alphaValue < 1 else { return }
+        hide.setVisible(show, animated: animated)
+        needsLayout = true
+        if animated, window != nil, !Motion.reduced {
+            Motion.animate(Motion.quick) { layoutSubtreeIfNeeded() }
+        }
     }
 
     override func layout() {
@@ -145,7 +174,7 @@ final class MiniPlayerView: HoverView {
         fill.frame = bounds
         CATransaction.commit()
         icon.frame = NSRect(x: 10, y: bounds.midY - 10, width: 20, height: 20)
-        let trailing: CGFloat = hide.isHidden ? 6 : 24
+        let trailing: CGFloat = paused && hovering ? 24 : 6
         hide.frame = NSRect(x: bounds.width - 24, y: bounds.midY - 13, width: 18, height: 26)
         playPause.frame = NSRect(x: bounds.width - trailing - 26, y: bounds.midY - 13, width: 26, height: 26)
         let textX: CGFloat = 40

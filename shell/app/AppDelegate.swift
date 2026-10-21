@@ -51,6 +51,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
             RunLoop.main.add(timer, forMode: .common)
         }
+        // MBGA_DEBUG_COMMAND_CLOSE=<seconds> closes the command bar that
+        // long after launch, for captures of it closing.
+        if let after = ProcessInfo.processInfo.environment["MBGA_DEBUG_COMMAND_CLOSE"].flatMap(Double.init) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + after) { [weak self] in self?.store.commandBar = nil }
+        }
         // MBGA_DEBUG_PEEK=<seconds> shows the sidebar peeking over the page
         // in Focus mode, then not, that often, for captures of the slide.
         if let every = ProcessInfo.processInfo.environment["MBGA_DEBUG_PEEK"], !every.isEmpty {

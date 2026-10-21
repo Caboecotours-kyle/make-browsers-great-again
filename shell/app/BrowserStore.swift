@@ -22,11 +22,16 @@ enum SidebarLayout: String, CaseIterable {
     static let defaultsKey = "sidebarLayout"
     /// MBGA_DEBUG_LAYOUTS cycles layouts for captures; that must not change
     /// the layout saved for real use (the preferences are shared).
-    static let debugCycling = ["MBGA_DEBUG_LAYOUTS", "MBGA_DEBUG_PEEK"].contains {
+    static let debugCycling = ["MBGA_DEBUG_LAYOUTS", "MBGA_DEBUG_PEEK", "MBGA_DEBUG_LAYOUT"].contains {
         ProcessInfo.processInfo.environment[$0]?.isEmpty == false
     }
 
     static var saved: SidebarLayout {
+        // MBGA_DEBUG_LAYOUT=full|compact|focus starts a test copy in that
+        // layout, whatever the shared preferences say.
+        if let raw = ProcessInfo.processInfo.environment["MBGA_DEBUG_LAYOUT"], let layout = SidebarLayout(rawValue: raw) {
+            return layout
+        }
         let defaults = UserDefaults.standard
         if let raw = defaults.string(forKey: defaultsKey), let layout = SidebarLayout(rawValue: raw) { return layout }
         // Before layouts, a hidden sidebar was Focus mode.

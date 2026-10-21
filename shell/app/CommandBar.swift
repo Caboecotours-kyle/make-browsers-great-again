@@ -128,6 +128,45 @@ final class CommandBarView: NSView, NSTextFieldDelegate, NSTableViewDataSource, 
         dim.add(dimFade, forKey: "fade")
     }
 
+    private var dismissing = false
+
+    /// The reverse of `present`, a little quicker: the card shrinks back and
+    /// fades with the dimming, then `completion` removes it.
+    func dismiss(_ completion: @escaping @MainActor () -> Void) {
+        dismissing = true
+        guard !Motion.reduced, let layer = card.layer else {
+            completion()
+            return
+        }
+        let bounds = layer.bounds
+        var end = CATransform3DMakeTranslation(bounds.width * 0.015, bounds.height * 0.015, 0)
+        end = CATransform3DScale(end, 0.97, 0.97, 1)
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(Motion.foldIn.duration)
+        CATransaction.setAnimationTimingFunction(Motion.foldIn.timing)
+        CATransaction.setCompletionBlock { MainActor.assumeIsolated { completion() } }
+        for (target, key) in [(layer, "opacity"), (dim, "opacity")] {
+            let fade = CABasicAnimation(keyPath: key)
+            fade.fromValue = target.presentation()?.opacity ?? 1
+            fade.toValue = 0
+            target.add(fade, forKey: "fadeOut")
+            target.opacity = 0
+        }
+        let shrink = CABasicAnimation(keyPath: "transform")
+        shrink.fromValue = layer.presentation()?.transform ?? CATransform3DIdentity
+        shrink.toValue = end
+        layer.add(shrink, forKey: "shrink")
+        layer.transform = end
+        CATransaction.commit()
+    }
+
+    // Clicks pass through to the page while it fades away.
+    override func hitTest(_ point: NSPoint) -> NSView? { dismissing ? nil : super.hitTest(point) }
+
+    /// Set when results change, so the card grows or shrinks to fit them
+    /// instead of jumping.
+    private var resizeAnimated = false
+
     override func layout() {
         super.layout()
         CATransaction.begin()
@@ -137,13 +176,22 @@ final class CommandBarView: NSView, NSTextFieldDelegate, NSTableViewDataSource, 
         let listHeight = min(table.intrinsicListHeight + 12, 420)
         let hasResults = !items.isEmpty
         let height: CGFloat = 54 + (hasResults ? 1 + listHeight + 1 + 30 : 0)
-        card.frame = NSRect(x: (bounds.width - width) / 2, y: 110, width: width, height: height)
+        let cardFrame = NSRect(x: (bounds.width - width) / 2, y: 110, width: width, height: height)
+        let animated = resizeAnimated && card.frame.height > 0 && card.frame != cardFrame && !Motion.reduced
+        resizeAnimated = false
+        if animated {
+            Motion.animate(Motion.quick) { card.animator().frame = cardFrame }
+        } else {
+            card.frame = cardFrame
+        }
         searchIcon.frame = NSRect(x: 16, y: 17, width: 20, height: 20)
         field.frame = NSRect(x: 46, y: 14, width: width - 62, height: 26)
+        // The hairlines follow the card; the list and footer fade.
         topRule.isHidden = !hasResults
         bottomRule.isHidden = !hasResults
-        scroll.isHidden = !hasResults
-        footer.isHidden = !hasResults
+        for part in [scroll, footer] as [NSView] {
+            part.setVisible(hasResults, animated: animated)
+        }
         topRule.frame = NSRect(x: 0, y: 54, width: width, height: 1)
         scroll.frame = NSRect(x: 6, y: 55, width: width - 12, height: listHeight)
         table.tableColumns.first?.width = width - 12
@@ -170,6 +218,7 @@ final class CommandBarView: NSView, NSTextFieldDelegate, NSTableViewDataSource, 
         }
         selection = 0
         table.reloadData()
+        resizeAnimated = true
         needsLayout = true
     }
 
@@ -299,7 +348,10 @@ final class CommandBarView: NSView, NSTextFieldDelegate, NSTableViewDataSource, 
         guard old != selection else { return }
         for (row, entry) in rows.enumerated() {
             guard case .item(_, let index) = entry, index == old || index == selection else { continue }
-            (table.rowView(atRow: row, makeIfNecessary: false) as? CommandRowView)?.highlighted = index == selection
+            // The highlight moves with a quick fade rather than a jump.
+            FillLayer.animated(Motion.quick) {
+                (table.rowView(atRow: row, makeIfNecessary: false) as? CommandRowView)?.highlighted = index == selection
+            }
             if index == selection { table.scrollRowToVisible(row) }
         }
     }

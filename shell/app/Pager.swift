@@ -264,8 +264,16 @@ final class WebContainerView: NSView {
             view.isHidden = false
         }
         current = view
-        guard let previous else { return }
-        guard crossfade, view != nil, !Motion.reduced else {
+        guard let previous else {
+            // From an empty space: the page fades in over the empty field.
+            if crossfade, let view, !Motion.reduced {
+                view.alphaValue = 0
+                Motion.animate(Motion.fade) { view.animator().alphaValue = 1 }
+            }
+            return
+        }
+        // To an empty space too: the page fades out over the empty field.
+        guard crossfade, !Motion.reduced else {
             previous.isHidden = true
             return
         }

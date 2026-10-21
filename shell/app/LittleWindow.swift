@@ -56,23 +56,37 @@ final class LittleWindow: NSObject, NSWindowDelegate {
         fadeOutAndClose()
     }
 
+    private var closing = false
+
+    /// The reverse of `show`: it shrinks back a little as it fades.
     private func fadeOutAndClose() {
-        guard !Motion.reduced else {
+        guard !closing else { return }
+        closing = true
+        guard !Motion.reduced, window.isVisible else {
             window.close()
             return
         }
+        let frame = window.frame
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.12
+            context.duration = Motion.foldIn.duration
+            context.timingFunction = Motion.foldIn.timing
+            window.animator().setFrame(frame.insetBy(dx: frame.width * 0.04, dy: frame.height * 0.04), display: true)
             window.animator().alphaValue = 0
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated { self?.window.close() }
         }
     }
 
+    /// The close button fades the window out too.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        fadeOutAndClose()
+        return false
+    }
+
     /// Closes the window when its tab goes away; the store has the view.
     func dismiss() {
         window.delegate = nil
-        window.close()
+        fadeOutAndClose()
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -156,7 +170,8 @@ private final class LittleWindowView: FlippedView {
         }
         let stops = Theme.gradient(for: RGB(space?.color ?? Theme.spaceColors[0]), dark: effectiveAppearance.isDark,
                                    active: true, style: TintStyle.saved)
-        backdrop.setColors(stops.map(\.cgColor), curve: nil)
+        // A colour change washes in; the first one is just there.
+        backdrop.setColors(stops.map(\.cgColor), curve: window?.isVisible == true ? Motion.fade : nil)
         needsLayout = true
     }
 

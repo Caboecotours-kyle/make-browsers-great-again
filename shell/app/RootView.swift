@@ -64,7 +64,12 @@ final class RootView: NSView {
     private func handle(_ change: StoreChange) {
         switch change {
         case .snapshot:
-            updateBackdrop(store.snapshotAnimation)
+            // A space's colour edited, or the page colour of another tab
+            // (with Match Page Colour) washes in; on a space switch the
+            // pager moves the colour with the pages.
+            let sameSpace = store.snapshot.activeSpace == backdropSpace
+            backdropSpace = store.snapshot.activeSpace
+            updateBackdrop(store.snapshotAnimation ?? (sameSpace ? Motion.quick : nil))
             updateEmptyHint()
         case .pageColors:
             updateBackdrop(Motion.quick)
@@ -80,7 +85,12 @@ final class RootView: NSView {
         case .dragOverPage:
             updateDropPreview()
         case .chrome:
-            needsLayout = true
+            // Into and out of page full screen (a video), the card grows to
+            // the window's edges and back.
+            Motion.animate(Motion.settle) {
+                needsLayout = true
+                layoutSubtreeIfNeeded()
+            }
         case .spaceEditor:
             if let window { sheets.showSpaceEditor(store.spaceEditor, store: store, in: window) }
         case .importSheet:
@@ -126,9 +136,12 @@ final class RootView: NSView {
         smear.colors = stops
     }
 
+    private var backdropSpace: UInt64?
+
     private func updateEmptyHint() {
-        emptyHint.isHidden = !(store.visibleTabID == nil && store.commandBar == nil)
-        if !emptyHint.isHidden { emptyHint.update() }
+        let visible = store.visibleTabID == nil && store.commandBar == nil
+        if visible { emptyHint.update() }
+        emptyHint.setVisible(visible, animated: true, curve: Motion.fade)
     }
 
     // MARK: - Layout
@@ -156,7 +169,9 @@ final class RootView: NSView {
         backdrop.frame = bounds
         card.frame = currentCardFrame
         card.isCard = chrome
-        card.cornerRadius = max(store.windowRadius - inset, 6)
+        // The corners follow the frame's inset as the layout changes.
+        let panels = min(sidebarSpring.value + railSpring.value, 1)
+        card.cornerRadius = max(store.windowRadius - (5 + 3 * panels), 6)
         emptyHint.frame = card.bounds
         dropPreview.frame = card.bounds
         // Out of sight, the sidebar and rail stay attached but hidden:
@@ -179,7 +194,10 @@ final class RootView: NSView {
         peek.isHidden = !chrome || peeking == 0 || shownLayout == .full
         if !peek.isHidden { peek.frame = peekFrame(at: peeking) }
         // The traffic lights ride on the peek card, in line with its toolbar.
-        store.offsetTrafficLights(peek.isHidden ? .zero : CGSize(width: peek.frame.minX, height: peek.frame.minY))
+        // They never leave the window's corner to come in with it: in Compact
+        // they stay visible, and sliding out and back would be a jump.
+        store.offsetTrafficLights(peek.isHidden ? .zero
+            : CGSize(width: max(peek.frame.minX, 0), height: peek.frame.minY * min(max(peeking, 0), 1)))
         if rail.superview === self {
             let shown = railShown
             rail.frame = NSRect(x: -SidebarRail.width * (1 - shown), y: 0, width: SidebarRail.width, height: bounds.height)
@@ -311,7 +329,7 @@ final class RootView: NSView {
             bar.present()
         } else if let bar = commandBar {
             commandBar = nil
-            bar.removeFromSuperview()
+            bar.dismiss { bar.removeFromSuperview() }
         }
     }
 
@@ -331,12 +349,16 @@ final class RootView: NSView {
             } else {
                 addSubview(toast, positioned: .above, relativeTo: nil)
             }
+            let shown = toast.frame
             layoutToast()
             let final = toast.frame
             if toast.isHidden {
                 toast.frame = final.offsetBy(dx: 0, dy: 16)
                 toast.alphaValue = 0
                 toast.isHidden = false
+            } else {
+                // Replacing a toast: it resizes to the new message.
+                toast.frame = shown
             }
             Motion.animate(Motion.settle) {
                 toast.animator().frame = final
@@ -355,9 +377,19 @@ final class RootView: NSView {
 
     private func updateDropPreview() {
         if let id = store.dragOverPage, let tab = store.core.tab(id: id) {
+            let appearing = dropPreview.isHidden
             dropPreview.configure(tab)
             dropPreview.layer?.anchorPoint = CGPoint(x: 0.5, y: 0.5)
             dropPreview.fade(visible: true, curve: Motion.settle)
+            // The little-window preview grows into place as it appears.
+            if appearing, !Motion.reduced, let layer = dropPreview.layer {
+                let grow = CABasicAnimation(keyPath: "transform.scale")
+                grow.fromValue = 0.96
+                grow.toValue = 1
+                grow.duration = Motion.settle.duration
+                grow.timingFunction = Motion.settle.timing
+                layer.add(grow, forKey: "grow")
+            }
         } else {
             dropPreview.fade(visible: false)
         }

@@ -58,9 +58,21 @@ final class EqualizerView: NSView {
 
     private func updateAnimations() {
         for (i, bar) in bars.enumerated() {
+            // Pausing settles the bars from wherever they are.
+            let current = bar.presentation()?.transform
             bar.removeAllAnimations()
             bar.transform = CATransform3DMakeScale(1, rest[i], 1)
-            guard animating else { continue }
+            guard animating else {
+                if let current, !Motion.reduced, window != nil {
+                    let settle = CABasicAnimation(keyPath: "transform")
+                    settle.fromValue = current
+                    settle.toValue = bar.transform
+                    settle.duration = Motion.quick.duration
+                    settle.timingFunction = Motion.quick.timing
+                    bar.add(settle, forKey: "settle")
+                }
+                continue
+            }
             let bounce = CABasicAnimation(keyPath: "transform.scale.y")
             bounce.fromValue = 0.25
             bounce.toValue = 1.0

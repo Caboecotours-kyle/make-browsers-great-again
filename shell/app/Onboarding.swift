@@ -198,6 +198,14 @@ final class ImportSheet: NSObject {
             addButtons(cancel: nil, primary: ("Start Browsing", finish))
         }
         resize()
+        // The new step fades in as the sheet takes its size, rather than
+        // being there all at once.
+        if window.isVisible, !Motion.reduced {
+            for view in [body, buttons] as [NSView] { view.alphaValue = 0 }
+            Motion.animate(Motion.fade) {
+                for view in [body, buttons] as [NSView] { view.animator().alphaValue = 1 }
+            }
+        }
     }
 
     /// Fits the sheet to its content.

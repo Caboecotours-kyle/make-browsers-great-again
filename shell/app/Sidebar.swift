@@ -36,7 +36,7 @@ final class SidebarView: FlippedView {
         case .snapshot:
             let switched = store.snapshot.activeSpace != shownSpace
             shownSpace = store.snapshot.activeSpace
-            favorites.update(crossfade: switched)
+            let favoritesChanged = favorites.update(crossfade: switched)
             pager.update(animation: store.snapshotAnimation)
             bottom.update()
             address.update()
@@ -52,6 +52,10 @@ final class SidebarView: FlippedView {
                     favorites.layoutSubtreeIfNeeded()
                 }
                 Motion.animate(Motion.reflow) { layoutSubtreeIfNeeded() }
+            } else if favoritesChanged {
+                // A favorite added or removed: the tiles and the list below
+                // move to their new places.
+                Motion.animate(Motion.reflow) { layoutSubtreeIfNeeded() }
             }
         case .nav:
             toolbar.update()
@@ -61,7 +65,10 @@ final class SidebarView: FlippedView {
         case .media:
             updatePlayer()
             pager.refreshDecorations()
-        case .cleanup, .renaming:
+        case .cleanup:
+            // The tidy-up offer opens and closes rather than popping.
+            pager.refreshDecorations(animation: Motion.settle)
+        case .renaming:
             pager.refreshDecorations()
         case .drag:
             // Empty favorites open a drop target while something is dragged.
@@ -165,6 +172,7 @@ private final class SidebarToolbarView: WindowDragView {
 /// The visible page's site; click to edit the address or search. Also shows
 /// loading and how many ads and trackers were blocked.
 private final class AddressPillView: HoverView {
+    private var shownTab: UInt64?
     private let store: BrowserStore
     private let fill = FillLayer()
     private let lock = NSImageView()
@@ -204,8 +212,10 @@ private final class AddressPillView: HoverView {
         host.alphaValue = tab == nil ? 0.5 : 0.85
         if store.nav.isLoading { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
         let count = tab == nil ? 0 : store.visibleBlockedCount
-        shield.isHidden = count == 0
-        blocked.isHidden = count == 0
+        let sameTab = tab?.id == shownTab
+        shownTab = tab?.id
+        shield.setVisible(count > 0, animated: sameTab)
+        blocked.setVisible(count > 0, animated: sameTab)
         if count != shownCount {
             // The count rolls up as more is blocked.
             if count > shownCount, !Motion.reduced, let layer = blocked.layer {
@@ -235,7 +245,7 @@ private final class AddressPillView: HoverView {
             x += 16
         }
         var trailing = bounds.width - 10
-        if !blocked.isHidden {
+        if shownCount > 0 {
             let width = blocked.textWidth
             blocked.frame = NSRect(x: trailing - width, y: bounds.midY - 7, width: width, height: 14)
             shield.frame = NSRect(x: trailing - width - 14, y: bounds.midY - 6, width: 11, height: 12)
@@ -302,8 +312,9 @@ private final class FavoritesGridView: FlippedView {
     private var shownTabs: [UInt64] = []
 
     /// With `crossfade`, a space switch that brings other favorites fades
-    /// them in over the old ones.
-    func update(crossfade: Bool = false) {
+    /// them in over the old ones. Returns whether the favorites changed.
+    @discardableResult
+    func update(crossfade: Bool = false) -> Bool {
         let favorites = space.favorites
         let ids = favorites.map(\.id)
         if crossfade, ids != shownTabs, !Motion.reduced {
@@ -319,6 +330,8 @@ private final class FavoritesGridView: FlippedView {
             }
             layer?.add(fade, forKey: "favorites")
         }
+        let changed = ids != shownTabs
+        let fadeIn = changed && !crossfade && !shownTabs.isEmpty
         shownTabs = ids
         while tiles.count > favorites.count { tiles.removeLast().removeFromSuperview() }
         while tiles.count < favorites.count {
@@ -326,10 +339,16 @@ private final class FavoritesGridView: FlippedView {
             tiles.append(tile)
             addSubview(tile)
             Motion.instantly { tile.frame = tileFrame(tiles.count - 1) }
+            // A new favorite appears in its place as the others make room.
+            if fadeIn {
+                tile.isHidden = true
+                tile.setVisible(true, animated: true, curve: Motion.reflow)
+            }
         }
         for (tile, tab) in zip(tiles, favorites) { tile.configure(tab, space: space) }
-        hint.isHidden = !(favorites.isEmpty && store.isDragging)
+        hint.setVisible(favorites.isEmpty && store.isDragging, animated: true)
         needsLayout = true
+        return changed
     }
 
     private func tileFrame(_ index: Int) -> NSRect {
@@ -358,19 +377,32 @@ private final class FavoritesGridView: FlippedView {
 
     private func showCaret(at index: Int?) {
         guard index != dropIndex else { return }
+        let wasShown = dropIndex != nil
         dropIndex = index
         CATransaction.begin()
-        CATransaction.setDisableActions(true)
+        CATransaction.setAnimationDuration(Motion.quick.duration)
+        CATransaction.setAnimationTimingFunction(Motion.quick.timing)
         defer { CATransaction.commit() }
         guard let index, !tiles.isEmpty else {
-            caret.isHidden = true
+            caret.opacity = 0
             return
         }
         let anchor = index < tiles.count ? tiles[index].frame : tiles[index - 1].frame
         let x = index < tiles.count ? anchor.minX - spacing / 2 : anchor.maxX + spacing / 2
         caret.backgroundColor = NSColor.controlAccentColor.cgColor
-        caret.frame = NSRect(x: x - 1.5, y: anchor.minY + 6, width: 3, height: anchor.height - 12)
-        caret.isHidden = false
+        let frame = NSRect(x: x - 1.5, y: anchor.minY + 6, width: 3, height: anchor.height - 12)
+        if wasShown {
+            // Glides from slot to slot.
+            caret.frame = frame
+        } else {
+            // Appears where it is.
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            caret.frame = frame
+            caret.isHidden = false
+            CATransaction.commit()
+        }
+        caret.opacity = 1
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
     }
 
@@ -547,8 +579,8 @@ private final class SpacePagerView: FlippedView {
         preparePages()
     }
 
-    func refreshDecorations() {
-        for page in pages.values { page.refreshDecorations() }
+    func refreshDecorations(animation: Motion.Curve? = nil) {
+        for page in pages.values { page.refreshDecorations(animation: animation) }
     }
 
     /// Up to this many spaces every page is kept once made: making one
@@ -675,14 +707,25 @@ private final class SidebarBottomBar: FlippedView {
         // Most people use one space (5.5% of Arc's daily users used several),
         // so the switcher only appears once there is a second.
         let shown = spaces.count > 1 ? spaces : []
+        let changed = dots.count != shown.count
+        let animated = changed && window != nil && !Motion.reduced
         while dots.count > shown.count { dots.removeLast().removeFromSuperview() }
         while dots.count < shown.count {
             let dot = SpaceDotView(store: store)
             dots.append(dot)
             addSubview(dot)
+            if animated {
+                // Starts where it will end up, then fades in.
+                dot.isHidden = true
+                needsLayout = true
+                Motion.instantly { layoutSubtreeIfNeeded() }
+                dot.setVisible(true, animated: true, curve: Motion.reflow)
+            }
         }
         for (dot, space) in zip(dots, shown) { dot.configure(space, active: space.id == store.snapshot.activeSpace) }
         needsLayout = true
+        // The others make room or close the gap.
+        if animated { Motion.animate(Motion.reflow) { layoutSubtreeIfNeeded() } }
     }
 
     override func layout() {

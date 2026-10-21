@@ -57,6 +57,7 @@ final class SidebarRail: FlippedView {
         stale = false
         let space = store.activeSpace
         let all = space.favorites + space.pinned.compactMap(\.tab) + space.today
+        let reflow = tabs.count != all.count && !tabs.isEmpty && !Motion.reduced
         while tabs.count > all.count { tabs.removeLast().removeFromSuperview() }
         while tabs.count < all.count {
             let view = RailTabView(store: store)
@@ -66,6 +67,8 @@ final class SidebarRail: FlippedView {
         for (view, tab) in zip(tabs, all) { view.configure(tab, space: space) }
         switcher.update()
         needsLayout = true
+        // A tab coming or going: the others move up or down to their places.
+        if reflow { Motion.animate(Motion.reflow) { layoutSubtreeIfNeeded() } }
     }
 
     override func layout() {
