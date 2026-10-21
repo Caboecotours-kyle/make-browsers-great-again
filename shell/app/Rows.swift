@@ -197,12 +197,12 @@ struct TabMenu: View {
                 get: { tab.keepAwake },
                 set: { store.setKeepAwake($0, for: tab) }))
         }
-        Button("Copy Link") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(tab.url, forType: .string)
-        }
+        Button("Copy Link") { store.copyLink(tab.url) }
         Button("Duplicate") { store.duplicate(tab, in: space) }
         Divider()
+        if tab.live && !(favorite || pinned) {
+            Button("Sleep Tab") { store.sleep(tab.id) }
+        }
         Button(favorite || pinned ? "Unload Tab" : "Close Tab") { store.close(tab.id) }
     }
 }
@@ -262,7 +262,11 @@ struct ItemDropDelegate: DropDelegate {
         // update; ignore it once the button is up.
         guard NSEvent.pressedMouseButtons & 1 != 0 else { return nil }
         let indicator = DropIndicator(key: key, edge: edge(info))
-        if store.dropIndicator != indicator { store.dropIndicator = indicator }
+        if store.dropIndicator != indicator {
+            store.dropIndicator = indicator
+            // A light tick on Force Touch trackpads as the drop spot moves.
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
+        }
         return DropProposal(operation: info.hasItemsConforming(to: [.sidebarItem]) ? .move : .copy)
     }
 

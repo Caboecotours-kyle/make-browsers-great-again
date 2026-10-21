@@ -9,8 +9,12 @@ struct Sidebar: View {
             AddressPill()
             FavoritesGrid(space: store.activeSpace)
             SpacePager(pager: store.pager)
+            if let media = store.mediaTab {
+                MiniPlayer(tab: media.tab, space: media.space)
+            }
             SidebarBottomBar()
         }
+        .animation(Motion.settle, value: store.mediaTab?.tab.id)
         .padding(.horizontal, 10)
         .padding(.bottom, 8)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
@@ -133,6 +137,8 @@ private struct FavoriteTile: View {
     var body: some View {
         let active = space.activeTab == tab.id
         let dark = colorScheme == .dark
+        // The selected favorite lights up in its site's color, as in Dia.
+        let brand = active ? tab.faviconPath.flatMap { FaviconCache.shared.brandColor(atPath: $0) } : nil
         let key = "fav-\(tab.id)"
         let indicator = store.dropIndicator?.key == key ? store.dropIndicator?.edge : nil
         FaviconImage(tab: tab, size: 18)
@@ -142,6 +148,14 @@ private struct FavoriteTile: View {
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(active ? Theme.selectedFill(dark: dark) : Theme.controlFill(dark: dark, hovering: hovering))
+                    .overlay {
+                        if let brand {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(brand.color.opacity(dark ? 0.32 : 0.2))
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(brand.color.opacity(dark ? 0.6 : 0.45), lineWidth: 1)
+                        }
+                    }
                     .shadow(color: .black.opacity(active ? (dark ? 0.3 : 0.09) : 0), radius: 1.5, y: 0.5)
             )
             .overlay(alignment: indicator == .before ? .leading : .trailing) {
@@ -212,11 +226,15 @@ private struct SpacePage: View {
                                  target: .pinned(spaceId: space.id, folderId: nil), index: 0)
                     }
                     TodayDivider(space: space)
+                    if space.id == store.activeSpace.id, let count = store.cleanupOffer {
+                        CleanupCard(count: count)
+                    }
                     NewTabRow(space: space)
                     LazyVStack(alignment: .leading, spacing: 2) {
                         ForEach(Array(space.today.enumerated()), id: \.element.id) { index, tab in
                             TabRow(tab: tab, space: space, depth: 0, pinned: false,
                                    target: .today(spaceId: space.id), index: index)
+                                .transition(.archive)
                         }
                     }
                 }

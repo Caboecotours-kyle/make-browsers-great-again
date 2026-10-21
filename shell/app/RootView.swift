@@ -50,6 +50,14 @@ struct RootView: View {
                 SidebarPeek(width: sidebarWidth, colors: colors)
             }
 
+            if let toast = store.toast {
+                ToastView(toast: toast)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(.bottom, 22)
+                    .padding(.leading, chrome && store.sidebarVisible ? sidebarWidth : 0)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             if let mode = store.commandBar {
                 CommandBar(mode: mode)
             }

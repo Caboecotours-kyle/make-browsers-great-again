@@ -183,6 +183,8 @@ extension TabInfo {
 final class FaviconCache {
     static let shared = FaviconCache()
     private let cache = NSCache<NSString, NSImage>()
+    /// Brand colors sampled from favicons; a stored nil means the icon has none.
+    private var colors: [String: RGB?] = [:]
 
     func image(atPath path: String) -> NSImage? {
         if let image = cache.object(forKey: path as NSString) { return image }
@@ -193,6 +195,48 @@ final class FaviconCache {
 
     func invalidate(_ path: String) {
         cache.removeObject(forKey: path as NSString)
+        colors[path] = nil
+    }
+
+    /// The icon's most prominent saturated color (Spotify's green, YouTube's
+    /// red), or nil for monochrome icons such as GitHub's.
+    func brandColor(atPath path: String) -> RGB? {
+        if let known = colors[path] { return known }
+        let color = image(atPath: path).flatMap(Self.dominantColor)
+        colors[path] = color
+        return color
+    }
+
+    private static func dominantColor(_ image: NSImage) -> RGB? {
+        let size = 16
+        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size,
+                                            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                            colorSpaceName: .deviceRGB, bytesPerRow: size * 4, bitsPerPixel: 32),
+              let context = NSGraphicsContext(bitmapImageRep: bitmap)
+        else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        image.draw(in: NSRect(x: 0, y: 0, width: size, height: size))
+        NSGraphicsContext.restoreGraphicsState()
+        guard let data = bitmap.bitmapData else { return nil }
+        // Average the opaque, saturated pixels, weighted by saturation.
+        var r = 0.0, g = 0.0, b = 0.0, weight = 0.0
+        for i in 0..<(size * size) {
+            let p = data.advanced(by: i * 4)
+            let alpha = Double(p[3]) / 255
+            guard alpha > 0.5 else { continue }
+            let (pr, pg, pb) = (Double(p[0]) / 255 / alpha, Double(p[1]) / 255 / alpha, Double(p[2]) / 255 / alpha)
+            let maxC = max(pr, pg, pb), minC = min(pr, pg, pb)
+            let saturation = maxC > 0 ? (maxC - minC) / maxC : 0
+            guard saturation > 0.35, maxC > 0.25 else { continue }
+            r += pr * saturation
+            g += pg * saturation
+            b += pb * saturation
+            weight += saturation
+        }
+        // Too few colored pixels: the icon is essentially monochrome.
+        guard weight > 6 else { return nil }
+        return RGB(r: min(r / weight, 1), g: min(g / weight, 1), b: min(b / weight, 1))
     }
 }
 

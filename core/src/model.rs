@@ -88,6 +88,10 @@ pub struct Policy {
     /// sites share a few processes and only sign-in pages and sites that ask
     /// for it (COOP) get their own, as in Chrome on Android. Applies at launch.
     pub strict_site_isolation: bool,
+    /// Today tabs untouched for this long are archived (closed, and
+    /// restorable for the session). 0 turns it off, the default until the
+    /// person chooses otherwise.
+    pub archive_after_hours: u32,
 }
 
 impl Default for Policy {
@@ -97,6 +101,7 @@ impl Default for Policy {
             max_live_tabs: 8,
             freeze_after_secs: 60,
             strict_site_isolation: false,
+            archive_after_hours: 0,
         }
     }
 }
@@ -113,6 +118,27 @@ pub const ALWAYS_ISOLATED_ORIGINS: [&str; 8] = [
     "https://github.com",
     "https://www.paypal.com",
 ];
+
+/// Something closed that can be brought back: a Today tab, a cleared Today
+/// list or a deleted folder. Kept for the session only.
+#[derive(Clone, Debug)]
+pub struct Closed {
+    pub space_id: Id,
+    pub kind: ClosedKind,
+    /// The closed tabs, in sidebar order.
+    pub tabs: Vec<Tab>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ClosedKind {
+    /// Today tabs, with the position each had.
+    Today { indices: Vec<usize> },
+    /// A pinned folder with its contents, and where it was.
+    Folder { node: Node, parent: Option<Id>, index: usize },
+}
+
+/// Most closing actions that can be undone.
+pub const MAX_CLOSED: usize = 25;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pressure {
@@ -163,6 +189,12 @@ pub struct State {
     /// such as mail or chat that must keep delivering notifications.
     #[serde(default)]
     pub keep_awake: Vec<String>,
+    /// The person has answered the offer to tidy up old Today tabs.
+    #[serde(default)]
+    pub cleanup_answered: bool,
+    /// Closed tabs and folders that can be reopened, newest last.
+    #[serde(skip)]
+    pub closed: Vec<Closed>,
 }
 
 fn default_search_template() -> String {
@@ -192,6 +224,8 @@ impl State {
             doomed_profiles: Vec::new(),
             onboarded: false,
             keep_awake: Vec::new(),
+            cleanup_answered: false,
+            closed: Vec::new(),
         };
         let profile = s.create_profile("Personal");
         let space = s.create_space("Home", "🏠", SPACE_COLORS[0], profile);
@@ -449,8 +483,12 @@ impl State {
         let next = self.next_after_close(id, container, now);
         let removed = match container {
             Container::Today { space_id } => {
-                self.space_mut(space_id).unwrap().today.retain(|t| *t != id);
-                self.tabs.remove(&id);
+                let today = &mut self.space_mut(space_id).unwrap().today;
+                let index = today.iter().position(|t| *t == id).unwrap_or(0);
+                today.retain(|t| *t != id);
+                if let Some(tab) = self.tabs.remove(&id) {
+                    self.remember(Closed { space_id, kind: ClosedKind::Today { indices: vec![index] }, tabs: vec![tab] });
+                }
                 true
             }
             _ => {
@@ -518,8 +556,10 @@ impl State {
         if space.active_tab.is_some_and(|t| closed.contains(&t)) {
             space.active_tab = None;
         }
-        for id in &closed {
-            self.tabs.remove(id);
+        let tabs: Vec<Tab> = closed.iter().filter_map(|id| self.tabs.remove(id)).collect();
+        if !tabs.is_empty() {
+            let indices = (0..tabs.len()).collect();
+            self.remember(Closed { space_id, kind: ClosedKind::Today { indices }, tabs });
         }
         closed
     }
@@ -571,19 +611,152 @@ impl State {
     /// Deletes a folder together with its contents. Returns the closed tabs.
     pub fn delete_folder(&mut self, id: Id) -> Vec<Id> {
         let mut closed = Vec::new();
+        let mut removed = None;
         for space in &mut self.spaces {
-            if let Some((node, _, _)) = detach(&mut space.pinned, id, None) {
+            if let Some((node, index, parent)) = detach(&mut space.pinned, id, None) {
                 collect_tabs(std::slice::from_ref(&node), &mut closed);
                 if space.active_tab.is_some_and(|t| closed.contains(&t)) {
                     space.active_tab = None;
                 }
+                removed = Some((space.id, node, index, parent));
                 break;
             }
         }
-        for t in &closed {
-            self.tabs.remove(t);
+        let tabs: Vec<Tab> = closed.iter().filter_map(|t| self.tabs.remove(t)).collect();
+        if let Some((space_id, node, index, parent)) = removed {
+            self.remember(Closed { space_id, kind: ClosedKind::Folder { node, parent, index }, tabs });
         }
         closed
+    }
+
+    // ------------------------------------------------------------ reopening
+
+    fn remember(&mut self, closed: Closed) {
+        self.closed.push(closed);
+        if self.closed.len() > MAX_CLOSED {
+            self.closed.remove(0);
+        }
+    }
+
+    /// Closed tabs that can be reopened, most recently closed first.
+    pub fn closed_tabs(&self) -> impl Iterator<Item = &Tab> {
+        self.closed.iter().rev().flat_map(|c| c.tabs.iter())
+    }
+
+    /// Undoes the most recent close, clear or folder deletion. Returns the
+    /// space and the tabs brought back, asleep.
+    pub fn reopen_last(&mut self) -> Option<(Id, Vec<Id>)> {
+        let closed = self.closed.pop()?;
+        let space_id = if self.space(closed.space_id).is_some() { closed.space_id } else { self.active_space };
+        let ids: Vec<Id> = closed.tabs.iter().map(|t| t.id).collect();
+        for mut tab in closed.tabs {
+            tab.live = false;
+            tab.audible = false;
+            tab.frozen = false;
+            self.tabs.insert(tab.id, tab);
+        }
+        let space = self.space_mut(space_id)?;
+        match closed.kind {
+            ClosedKind::Today { indices } => {
+                let mut placed: Vec<(usize, Id)> = indices.into_iter().zip(ids.iter().copied()).collect();
+                placed.sort();
+                for (index, id) in placed {
+                    space.today.insert(index.min(space.today.len()), id);
+                }
+            }
+            ClosedKind::Folder { node, parent, index } => {
+                let list = match parent.and_then(|p| folder_children_mut(&mut space.pinned, p)) {
+                    Some(children) => children,
+                    None => &mut space.pinned,
+                };
+                list.insert(index.min(list.len()), node);
+            }
+        }
+        Some((space_id, ids))
+    }
+
+    /// Reopens one closed tab at the top of its space's Today list.
+    /// Returns its space.
+    pub fn reopen_tab(&mut self, id: Id) -> Option<Id> {
+        let entry = self.closed.iter().position(|c| c.tabs.iter().any(|t| t.id == id))?;
+        let closed = &mut self.closed[entry];
+        let i = closed.tabs.iter().position(|t| t.id == id)?;
+        let mut tab = closed.tabs.remove(i);
+        let space_id = closed.space_id;
+        match &mut closed.kind {
+            ClosedKind::Today { indices } => {
+                indices.remove(i);
+            }
+            ClosedKind::Folder { node, .. } => {
+                if let Node::Folder { children, .. } = node {
+                    detach(children, id, None);
+                }
+            }
+        }
+        if closed.tabs.is_empty() {
+            self.closed.remove(entry);
+        }
+        let space_id = if self.space(space_id).is_some() { space_id } else { self.active_space };
+        tab.live = false;
+        tab.audible = false;
+        tab.frozen = false;
+        tab.pinned_url = None;
+        self.tabs.insert(id, tab);
+        self.space_mut(space_id)?.today.insert(0, id);
+        Some(space_id)
+    }
+
+    // -------------------------------------------------------------- tidying
+
+    /// Today tabs of a space untouched for at least `hours`, except the
+    /// visible tab, tabs playing sound and sites kept awake.
+    pub fn idle_today(&self, space_id: Id, hours: u32, now: u64) -> Vec<Id> {
+        let visible = self.visible_tab();
+        let after_ms = hours as u64 * 3_600_000;
+        let Some(space) = self.space(space_id) else { return Vec::new() };
+        space
+            .today
+            .iter()
+            .copied()
+            .filter(|id| Some(*id) != visible)
+            .filter(|id| {
+                self.tabs.get(id).is_some_and(|t| {
+                    !t.audible && !self.keeps_awake(&t.url) && now.saturating_sub(t.last_active_ms) >= after_ms
+                })
+            })
+            .collect()
+    }
+
+    /// Archives idle Today tabs of a space as one undoable step. Returns them.
+    pub fn archive_idle(&mut self, space_id: Id, hours: u32, now: u64) -> Vec<Id> {
+        let idle = self.idle_today(space_id, hours, now);
+        if idle.is_empty() {
+            return idle;
+        }
+        let space = self.space_mut(space_id).unwrap();
+        let mut indices = Vec::new();
+        for (i, id) in space.today.iter().enumerate() {
+            if idle.contains(id) {
+                indices.push(i);
+            }
+        }
+        space.today.retain(|id| !idle.contains(id));
+        if space.active_tab.is_some_and(|t| idle.contains(&t)) {
+            space.active_tab = None;
+        }
+        let tabs: Vec<Tab> = idle.iter().filter_map(|id| self.tabs.remove(id)).collect();
+        self.remember(Closed { space_id, kind: ClosedKind::Today { indices }, tabs });
+        idle
+    }
+
+    /// Applies the archive policy to every space. Returns the archived tabs.
+    pub fn archive_by_policy(&mut self, now: u64) -> Vec<Id> {
+        let hours = self.policy.archive_after_hours;
+        if hours == 0 {
+            return Vec::new();
+        }
+        let spaces: Vec<Id> = self.spaces.iter().map(|s| s.id).collect();
+        spaces.into_iter().flat_map(|s| self.archive_idle(s, hours, now)).collect()
     }
 
     // ------------------------------------------------------------ drag & drop
@@ -973,7 +1146,12 @@ pub fn resolve_input(text: &str, search_template: &str) -> String {
             return format!("{scheme}://{text}");
         }
     }
-    search_template.replace("%s", &percent_encode(text))
+    search_url(text, search_template)
+}
+
+/// A web search for `text`, whatever it looks like.
+pub fn search_url(text: &str, search_template: &str) -> String {
+    search_template.replace("%s", &percent_encode(text.trim()))
 }
 
 fn percent_encode(s: &str) -> String {

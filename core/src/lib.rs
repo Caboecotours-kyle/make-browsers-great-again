@@ -3,6 +3,7 @@
 
 uniffi::setup_scaffolding!();
 
+pub mod history;
 pub mod import;
 pub mod model;
 
@@ -72,6 +73,27 @@ pub struct Snapshot {
     pub sleep_after_secs: u64,
     pub max_live_tabs: u32,
     pub strict_site_isolation: bool,
+    /// Something closed this session can be reopened.
+    pub can_reopen: bool,
+    /// Today tabs untouched this long are archived; 0 is off.
+    pub archive_after_hours: u32,
+    pub cleanup_answered: bool,
+}
+
+/// A page from history for the command bar.
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct HistoryItem {
+    pub url: String,
+    pub title: String,
+    /// The query is the start of the page's site ("git" for github.com).
+    pub site_prefix: bool,
+}
+
+/// Tabs brought back by undoing a close, and the space they are in.
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct ReopenOutcome {
+    pub space_id: u64,
+    pub tabs: Vec<u64>,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
@@ -171,6 +193,8 @@ fn import_counts(c: import::Counts) -> ImportSummary {
 struct Inner {
     state: State,
     dirty: bool,
+    history: history::History,
+    history_dirty: bool,
     revision: u64,
     data_dir: PathBuf,
     /// Browsers found by the last `detect_browsers`, ready to import.
@@ -190,6 +214,23 @@ fn now_ms() -> u64 {
 }
 
 const STATE_FILE: &str = "state.json";
+const HISTORY_FILE: &str = "history.json";
+
+fn load_history(dir: &Path) -> history::History {
+    fs::read(dir.join(HISTORY_FILE))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+/// Writes `value` as JSON next to its final path, then renames it into place.
+fn write_atomic(dir: &Path, name: &str, value: &impl serde::Serialize) -> bool {
+    let Ok(json) = serde_json::to_vec(value) else {
+        return false;
+    };
+    let tmp = dir.join(format!("{name}.tmp"));
+    fs::write(&tmp, json).is_ok() && fs::rename(&tmp, dir.join(name)).is_ok()
+}
 
 fn load_state(dir: &Path) -> State {
     let path = dir.join(STATE_FILE);
@@ -309,6 +350,7 @@ impl BrowserCore {
         // storage, so always hand it the resolved path.
         let data_dir = fs::canonicalize(&data_dir).unwrap_or(data_dir);
         let mut state = load_state(&data_dir);
+        let history = load_history(&data_dir);
         // The engine is not running yet, so deleted profiles' storage is free.
         for id in std::mem::take(&mut state.doomed_profiles) {
             let _ = fs::remove_dir_all(profile_dir_in(&data_dir, id));
@@ -317,6 +359,8 @@ impl BrowserCore {
             inner: Mutex::new(Inner {
                 state,
                 dirty: true,
+                history,
+                history_dirty: false,
                 revision: 1,
                 data_dir,
                 detected: Vec::new(),
@@ -377,6 +421,9 @@ impl BrowserCore {
             sleep_after_secs: s.policy.sleep_after_secs,
             max_live_tabs: s.policy.max_live_tabs,
             strict_site_isolation: s.policy.strict_site_isolation,
+            can_reopen: !s.closed.is_empty(),
+            archive_after_hours: s.policy.archive_after_hours,
+            cleanup_answered: s.cleanup_answered,
         }
     }
 
@@ -453,7 +500,13 @@ impl BrowserCore {
     // ------------------------------------------------------------------ tabs
 
     pub fn open_tab(&self, space_id: u64, url: String, activate: bool) -> Option<u64> {
-        self.mutate(|s, now| s.open_tab(space_id, &url, activate, now))
+        let id = self.mutate(|s, now| s.open_tab(space_id, &url, activate, now))?;
+        // The engine reports the first page's address unchanged, so the
+        // visit is counted here.
+        let mut inner = self.lock();
+        inner.history.record(&url, now_ms());
+        inner.history_dirty = true;
+        Some(id)
     }
 
     pub fn activate_tab(&self, space_id: u64, tab_id: u64) {
@@ -469,10 +522,37 @@ impl BrowserCore {
         let changed = url.as_ref().is_some_and(|u| *u != t.url)
             || title.as_ref().is_some_and(|x| *x != t.title);
         if changed {
+            let url_changed = url.as_ref().is_some_and(|u| *u != t.url);
             inner.state.update_tab(id, url.as_deref(), title.as_deref());
             inner.dirty = true;
             inner.revision += 1;
+            // Every navigation the engine reports is a visit; the title
+            // follows a moment later and belongs to the tab's current page.
+            let page = inner.state.tabs[&id].url.clone();
+            if url_changed {
+                inner.history.record(&page, now_ms());
+            }
+            if let Some(title) = title.filter(|t| !t.is_empty()) {
+                inner.history.set_title(&page, &title);
+            }
+            inner.history_dirty = true;
         }
+    }
+
+    /// Pages from history matching `query`, best first.
+    pub fn suggest_history(&self, query: String, limit: u32) -> Vec<HistoryItem> {
+        self.lock()
+            .history
+            .suggest(&query, limit as usize, now_ms())
+            .into_iter()
+            .map(|m| HistoryItem { url: m.url, title: m.title, site_prefix: m.site_prefix })
+            .collect()
+    }
+
+    pub fn clear_history(&self) {
+        let mut inner = self.lock();
+        inner.history.clear();
+        inner.history_dirty = true;
     }
 
     pub fn close_tab(&self, id: u64) -> CloseOutcome {
@@ -482,6 +562,57 @@ impl BrowserCore {
 
     pub fn clear_today(&self, space_id: u64) -> Vec<u64> {
         self.mutate(|s, _| s.clear_today(space_id))
+    }
+
+    /// Undoes the most recent close, clear, tidy-up or folder deletion.
+    pub fn undo_close(&self) -> Option<ReopenOutcome> {
+        self.mutate(|s, _| s.reopen_last())
+            .map(|(space_id, tabs)| ReopenOutcome { space_id, tabs })
+    }
+
+    /// Reopens one closed tab at the top of Today. Returns its space.
+    pub fn reopen_tab(&self, id: u64) -> Option<u64> {
+        self.mutate(|s, _| s.reopen_tab(id))
+    }
+
+    /// Tabs closed this session, most recent first.
+    pub fn closed_tabs(&self, limit: u32) -> Vec<TabInfo> {
+        let inner = self.lock();
+        let s = &inner.state;
+        s.closed_tabs().take(limit as usize).map(|t| tab_info(s, t)).collect()
+    }
+
+    // --------------------------------------------------------------- tidying
+
+    /// How many Today tabs of a space nobody has looked at for `hours`.
+    pub fn idle_today_count(&self, space_id: u64, hours: u32) -> u32 {
+        self.lock().state.idle_today(space_id, hours, now_ms()).len() as u32
+    }
+
+    /// Archives a space's Today tabs untouched for `hours`, as one undoable
+    /// step. Returns them; the shell must destroy their web views.
+    pub fn archive_idle(&self, space_id: u64, hours: u32) -> Vec<u64> {
+        self.mutate(|s, now| s.archive_idle(space_id, hours, now))
+    }
+
+    /// Applies the archive policy. Cheap when there is nothing to archive.
+    pub fn archive_by_policy(&self) -> Vec<u64> {
+        let mut inner = self.lock();
+        let archived = inner.state.archive_by_policy(now_ms());
+        if !archived.is_empty() {
+            inner.dirty = true;
+            inner.revision += 1;
+        }
+        archived
+    }
+
+    pub fn set_archive_after_hours(&self, hours: u32) {
+        self.mutate(|s, _| s.policy.archive_after_hours = hours)
+    }
+
+    /// Remembers that the person answered the offer to tidy up.
+    pub fn answer_cleanup(&self) {
+        self.mutate(|s, _| s.cleanup_answered = true)
     }
 
     /// Stores a favicon (PNG) for the tab's host and attaches it to the tab.
@@ -626,7 +757,12 @@ impl BrowserCore {
         model::resolve_input(&text, &inner.state.search_template)
     }
 
-    /// Writes state to disk if it changed. Atomic: write + rename.
+    /// A web search for `text`, even if it looks like an address.
+    pub fn search_url(&self, text: String) -> String {
+        let inner = self.lock();
+        model::search_url(&text, &inner.state.search_template)
+    }
+
     /// True until the first-launch onboarding has been completed or skipped.
     pub fn needs_onboarding(&self) -> bool {
         !self.lock().state.onboarded
@@ -694,19 +830,24 @@ impl BrowserCore {
         import_counts(self.mutate(|state, now| import::apply(state, &chosen, now)))
     }
 
+    /// Writes state and history to disk if they changed. Atomic: write +
+    /// rename.
     pub fn persist(&self) -> bool {
         let mut inner = self.lock();
-        if !inner.dirty {
-            return true;
+        let mut ok = true;
+        if inner.history_dirty {
+            if write_atomic(&inner.data_dir, HISTORY_FILE, &inner.history) {
+                inner.history_dirty = false;
+            } else {
+                ok = false;
+            }
         }
-        let Ok(json) = serde_json::to_vec(&inner.state) else {
-            return false;
-        };
-        let path = inner.data_dir.join(STATE_FILE);
-        let tmp = inner.data_dir.join(format!("{STATE_FILE}.tmp"));
-        let ok = fs::write(&tmp, json).is_ok() && fs::rename(&tmp, &path).is_ok();
-        if ok {
-            inner.dirty = false;
+        if inner.dirty {
+            if write_atomic(&inner.data_dir, STATE_FILE, &inner.state) {
+                inner.dirty = false;
+            } else {
+                ok = false;
+            }
         }
         ok
     }

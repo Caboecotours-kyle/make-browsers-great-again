@@ -19,10 +19,13 @@ struct ImportSheet: View {
         case choosing([ImportSourceInfo])
         case importing
         case done(ImportSummary)
+        /// First launch only: layout and color, after importing or not.
+        case style
     }
 
     @State private var phase = Phase.scanning
     @State private var selected: Set<String> = []
+    @State private var imported = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -46,23 +49,41 @@ struct ImportSheet: View {
                 status("Importing…")
             case .done(let summary):
                 doneView(summary)
+            case .style:
+                StylePicker(color: store.activeSpace.color)
             }
             buttons
         }
         .padding(24)
         .frame(width: 540)
-        .task { await scan() }
+        .task {
+            // MBGA_DEBUG_ONBOARDING=style opens straight at the style step,
+            // for screenshots.
+            if ProcessInfo.processInfo.environment["MBGA_DEBUG_ONBOARDING"] == "style" {
+                phase = .style
+            } else {
+                await scan()
+            }
+        }
     }
 
     // MARK: - Pieces
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(request.firstLaunch ? "Welcome to MBGA" : "Import from Another Browser")
-                .font(.system(size: 22, weight: .semibold))
-            Text("Bring your spaces, pinned tabs, open tabs and bookmarks from the browsers on this Mac.")
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if case .style = phase {
+                Text("Make it yours")
+                    .font(.system(size: 22, weight: .semibold))
+                Text("Pick a layout and how much color your spaces bring. You can change both later from the View menu.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(request.firstLaunch ? "Welcome to MBGA" : "Import from Another Browser")
+                    .font(.system(size: 22, weight: .semibold))
+                Text("Bring your spaces, pinned tabs, open tabs and bookmarks from the browsers on this Mac.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -109,17 +130,20 @@ struct ImportSheet: View {
                 Button(request.firstLaunch ? "Skip" : "Cancel") { finish() }
                     .keyboardShortcut(.cancelAction)
             case .choosing(let sources):
-                Button(request.firstLaunch ? "Start Fresh" : "Cancel") { finish() }
+                Button(request.firstLaunch ? "Start Fresh" : "Cancel") { next() }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 if sources.isEmpty {
-                    Button("Get Started") { finish() }.keyboardShortcut(.defaultAction)
+                    Button("Get Started") { next() }.keyboardShortcut(.defaultAction)
                 } else {
                     Button("Import") { runImport(sources) }
                         .keyboardShortcut(.defaultAction)
                         .disabled(selected.isEmpty)
                 }
             case .done:
+                Spacer()
+                Button(request.firstLaunch ? "Continue" : "Done") { next() }.keyboardShortcut(.defaultAction)
+            case .style:
                 Spacer()
                 Button("Start Browsing") { finish() }.keyboardShortcut(.defaultAction)
             }
@@ -154,7 +178,17 @@ struct ImportSheet: View {
         Task {
             let summary = await Task.detached { core.importBrowsers(choices: choices) }.value
             store.refresh()
+            imported = true
             phase = .done(summary)
+        }
+    }
+
+    /// First launch goes on to choosing a style; otherwise the sheet closes.
+    private func next() {
+        if request.firstLaunch {
+            withAnimation(Motion.settle) { phase = .style }
+        } else {
+            finish()
         }
     }
 
@@ -164,8 +198,6 @@ struct ImportSheet: View {
         store.core.finishOnboarding()
         store.refresh()
         // Starting fresh opens the address bar, as any launch with no tab does.
-        let imported: Bool
-        if case .done = phase { imported = true } else { imported = false }
         if !imported && store.visibleTabID == nil { store.commandBar = .newTab }
     }
 
@@ -176,6 +208,97 @@ struct ImportSheet: View {
         if s.favorites > 0 { parts.append(plural(s.favorites, "favorite")) }
         if s.today > 0 { parts.append(plural(s.today, "open tab")) }
         return parts.isEmpty ? "Nothing to import." : "Imported " + ListFormatter.localizedString(byJoining: parts) + "."
+    }
+}
+
+/// Layout (sidebar or Focus) and how strongly spaces tint the window, each
+/// with a small live preview. Choices apply at once.
+private struct StylePicker: View {
+    @EnvironmentObject private var store: BrowserStore
+    @AppStorage(TintStyle.defaultsKey) private var style = TintStyle.calm
+    let color: UInt32
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Layout").font(.system(size: 13, weight: .semibold))
+                HStack(spacing: 12) {
+                    choice("Sidebar", detail: "Tabs and spaces on the left", selected: store.sidebarVisible) {
+                        StylePreview(sidebar: true, style: style, color: color)
+                    } action: { store.sidebarVisible = true }
+                    choice("Focus", detail: "Just the page; the sidebar slides out at the edge", selected: !store.sidebarVisible) {
+                        StylePreview(sidebar: false, style: style, color: color)
+                    } action: { store.sidebarVisible = false }
+                }
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Color").font(.system(size: 13, weight: .semibold))
+                HStack(spacing: 12) {
+                    ForEach(TintStyle.allCases) { option in
+                        choice(option.title, detail: nil, selected: style == option) {
+                            StylePreview(sidebar: store.sidebarVisible, style: option, color: color)
+                        } action: { style = option }
+                    }
+                }
+            }
+        }
+    }
+
+    private func choice(_ title: String, detail: String?, selected: Bool,
+                        @ViewBuilder preview: () -> some View, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 6) {
+                preview()
+                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .strokeBorder(selected ? Color.accentColor : .primary.opacity(0.12), lineWidth: selected ? 2 : 1))
+                Text(title).font(.system(size: 12, weight: .medium))
+                if let detail {
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// A miniature MBGA window.
+private struct StylePreview: View {
+    let sidebar: Bool
+    let style: TintStyle
+    let color: UInt32
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let dark = colorScheme == .dark
+        let inset: CGFloat = sidebar ? 5 : 3
+        ZStack(alignment: .topLeading) {
+            LinearGradient(colors: Theme.gradient(for: RGB(color), dark: dark, active: true, style: style),
+                           startPoint: .top, endPoint: .bottom)
+            HStack(spacing: inset) {
+                if sidebar {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Capsule().fill(.primary.opacity(0.15)).frame(height: 6)
+                        ForEach(0..<4, id: \.self) { i in
+                            Capsule().fill(.primary.opacity(i == 1 ? 0.3 : 0.12)).frame(width: i == 1 ? 34 : 28, height: 4)
+                        }
+                    }
+                    .padding(.top, 12)
+                    .padding(.leading, 6)
+                    .frame(width: 40, alignment: .topLeading)
+                }
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(.white)
+                    .shadow(color: .black.opacity(0.1), radius: 1, y: 0.5)
+                    .padding(.vertical, inset)
+                    .padding(.trailing, inset)
+                    .padding(.leading, sidebar ? 0 : inset)
+            }
+        }
+        .frame(height: 74)
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 }
 

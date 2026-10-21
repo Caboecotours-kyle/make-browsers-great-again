@@ -83,6 +83,8 @@ NS_ASSUME_NONNULL_BEGIN
 /// Asks the page whether it is playing audible media. The answer arrives via
 /// -webView:didChangeBusy: when it changes.
 - (void)probeMedia;
+/// Pauses the media the page is playing, or resumes what was paused.
+- (void)setMediaPaused:(BOOL)paused;
 /// Suspends the page (no JavaScript, timers or rendering) while keeping all
 /// of its state, or resumes it.
 - (void)setFrozen:(BOOL)frozen;

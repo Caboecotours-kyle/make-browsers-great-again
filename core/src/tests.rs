@@ -316,3 +316,125 @@ fn site_of_strips_www_port_and_user() {
     assert_eq!(model::site_of("https://user:pw@WWW.Example.com:8080/a?b"), "example.com");
     assert_eq!(model::site_of("about:blank"), "");
 }
+
+#[test]
+fn history_ranks_sites_starting_with_the_query_first() {
+    use history::History;
+    let day = 86_400_000;
+    let mut h = History::default();
+    for _ in 0..30 {
+        h.record("https://news.example.com/github-trends", 10 * day);
+    }
+    h.record("https://github.com/rust-lang/rust", 40 * day);
+    h.record("about:blank", 40 * day);
+    h.set_title("https://github.com/rust-lang/rust", "rust-lang/rust");
+    let found = h.suggest("git", 5, 40 * day);
+    assert_eq!(found[0].url, "https://github.com/rust-lang/rust");
+    assert!(found[0].site_prefix);
+    assert_eq!(found.len(), 2);
+    assert!(h.suggest("rust lang", 5, 40 * day).iter().any(|m| m.title == "rust-lang/rust"));
+    assert!(h.suggest("blank", 5, 40 * day).is_empty());
+}
+
+#[test]
+fn frequent_visits_last_month_beat_one_visit_today() {
+    use history::History;
+    let day = 86_400_000;
+    let mut h = History::default();
+    for i in 0..30 {
+        h.record("https://daily.example.com/", i * day);
+    }
+    h.record("https://once.example.com/", 60 * day);
+    let found = h.suggest("example", 2, 60 * day);
+    assert_eq!(found[0].url, "https://daily.example.com/");
+}
+
+#[test]
+fn navigations_are_recorded_in_history_and_persisted() {
+    let dir = temp_dir("history");
+    let core = BrowserCore::new(dir.clone());
+    let space = core.snapshot().spaces[0].id;
+    let tab = core.open_tab(space, "https://a.example.com/".into(), true).unwrap();
+    core.update_tab(tab, Some("https://b.example.com/page".into()), None);
+    core.update_tab(tab, None, Some("Page B".into()));
+    assert!(core.persist());
+    let reopened = BrowserCore::new(dir.clone());
+    let found = reopened.suggest_history("b.ex".into(), 5);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].title, "Page B");
+    assert_eq!(reopened.suggest_history("a.example".into(), 5).len(), 1);
+    reopened.clear_history();
+    assert!(reopened.suggest_history("b.ex".into(), 5).is_empty());
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn closing_clearing_and_deleting_folders_can_be_undone() {
+    let mut s = State::new_default();
+    let sp = home(&s);
+    let a = s.open_tab(sp, "https://a.com", false, 1).unwrap();
+    let b = s.open_tab(sp, "https://b.com", false, 2).unwrap();
+    let c = s.open_tab(sp, "https://c.com", false, 3).unwrap();
+    // today = [c, b, a]
+    s.close_tab(b, 4);
+    assert_eq!(s.reopen_last(), Some((sp, vec![b])));
+    assert_eq!(s.spaces[0].today, vec![c, b, a]);
+
+    s.clear_today(sp);
+    assert!(s.spaces[0].today.is_empty());
+    assert_eq!(s.closed_tabs().map(|t| t.id).collect::<Vec<_>>(), vec![c, b, a]);
+    assert_eq!(s.reopen_last(), Some((sp, vec![c, b, a])));
+    assert_eq!(s.spaces[0].today, vec![c, b, a]);
+    assert!(!s.tabs[&a].live);
+
+    let folder = s.create_folder(sp, "F", None).unwrap();
+    s.move_item(a, Container::Pinned { space_id: sp, folder_id: Some(folder) }, 0);
+    s.delete_folder(folder);
+    assert!(!s.tabs.contains_key(&a));
+    assert_eq!(s.reopen_last(), Some((sp, vec![a])));
+    assert_eq!(s.locate(a), Some(Container::Pinned { space_id: sp, folder_id: Some(folder) }));
+    assert!(s.reopen_last().is_none());
+}
+
+#[test]
+fn one_closed_tab_can_be_reopened_from_a_cleared_list() {
+    let mut s = State::new_default();
+    let sp = home(&s);
+    let a = s.open_tab(sp, "https://a.com", false, 1).unwrap();
+    let b = s.open_tab(sp, "https://b.com", false, 2).unwrap();
+    s.clear_today(sp);
+    assert_eq!(s.reopen_tab(a), Some(sp));
+    assert_eq!(s.spaces[0].today, vec![a]);
+    assert_eq!(s.closed_tabs().map(|t| t.id).collect::<Vec<_>>(), vec![b]);
+    assert_eq!(s.reopen_last(), Some((sp, vec![b])));
+    assert_eq!(s.spaces[0].today, vec![b, a]);
+}
+
+#[test]
+fn only_so_many_closes_are_remembered() {
+    let mut s = State::new_default();
+    let sp = home(&s);
+    for i in 0..(model::MAX_CLOSED as u64 + 5) {
+        let t = s.open_tab(sp, "https://a.com", false, i).unwrap();
+        s.close_tab(t, i);
+    }
+    assert_eq!(s.closed.len(), model::MAX_CLOSED);
+}
+
+#[test]
+fn idle_today_tabs_are_archived_by_policy_and_restorable() {
+    let hour = 3_600_000;
+    let mut s = State::new_default();
+    let sp = home(&s);
+    let old = s.open_tab(sp, "https://old.com", false, 0).unwrap();
+    let kept = s.open_tab(sp, "https://mail.example.com", false, 0).unwrap();
+    let fresh = s.open_tab(sp, "https://fresh.com", false, 30 * hour).unwrap();
+    s.set_keep_awake("https://mail.example.com", true);
+    assert_eq!(s.idle_today(sp, 24, 30 * hour), vec![old]);
+    assert!(s.archive_by_policy(30 * hour).is_empty(), "off by default");
+    s.policy.archive_after_hours = 24;
+    assert_eq!(s.archive_by_policy(30 * hour), vec![old]);
+    assert_eq!(s.spaces[0].today, vec![fresh, kept]);
+    assert_eq!(s.reopen_last(), Some((sp, vec![old])));
+    assert_eq!(s.spaces[0].today, vec![fresh, kept, old]);
+}

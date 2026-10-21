@@ -58,6 +58,15 @@ constexpr char kMediaProbeScript[] =
     "if(!m.paused&&!m.muted&&m.volume>0&&m.readyState>2)p=true;});"
     "console.debug('__mbga_media:'+(p?1:0));}catch(e){}})();";
 
+// Pauses the page's playing media, marking what it paused so that resuming
+// starts only those again.
+constexpr char kPauseMediaScript[] =
+    "(function(){document.querySelectorAll('video,audio').forEach(function(m){"
+    "if(!m.paused){m.dataset.mbgaPaused='1';m.pause();}});})();";
+constexpr char kResumeMediaScript[] =
+    "(function(){document.querySelectorAll('[data-mbga-paused]').forEach("
+    "function(m){delete m.dataset.mbgaPaused;m.play();});})();";
+
 enum MenuCommand {
   kOpenLinkInNewTab = MENU_ID_USER_FIRST,
   kCopyLink,
@@ -1052,6 +1061,13 @@ class WebClient : public BaseClient,
 - (void)probeMedia {
   if (_browser && !_capturing) {
     _browser->GetMainFrame()->ExecuteJavaScript(kMediaProbeScript, "", 0);
+  }
+}
+
+- (void)setMediaPaused:(BOOL)paused {
+  if (_browser) {
+    _browser->GetMainFrame()->ExecuteJavaScript(
+        paused ? kPauseMediaScript : kResumeMediaScript, "", 0);
   }
 }
 

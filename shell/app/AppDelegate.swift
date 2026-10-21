@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     let core: BrowserCore
     private(set) lazy var store = BrowserStore(core: core)
     private var window: NSWindow?
@@ -30,10 +30,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         store.windowRadius = window.systemCornerRadius
         store.updateTrafficLights()
         store.refresh()
+        store.updateCleanupOffer()
         window.makeKeyAndOrderFront(nil)
         if core.needsOnboarding() {
             store.importSheet = ImportRequest(firstLaunch: true)
-        } else if store.visibleTabID == nil {
+        } else if store.visibleTabID == nil || CommandBar.debugPreset != nil {
             store.commandBar = .newTab
         }
 
@@ -138,6 +139,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func nextSpace(_ sender: Any?) { store.activateAdjacentSpace(1) }
     @objc func previousSpace(_ sender: Any?) { store.activateAdjacentSpace(-1) }
     @objc func selectTab(_ sender: NSMenuItem) { store.selectTab(at: sender.tag) }
+    @objc func reopenClosedTab(_ sender: Any?) { store.undoClose() }
+    /// Edit ▸ Undo reaches the app only when no page or text field took it;
+    /// then it undoes the last closed tab, cleared list or deleted folder.
+    @objc func undo(_ sender: Any?) { store.undoClose() }
+    @objc func setArchiveInterval(_ sender: NSMenuItem) { store.setArchiveAfterHours(UInt32(sender.tag)) }
+    @objc func setTintStyle(_ sender: NSMenuItem) {
+        guard let style = sender.representedObject as? String else { return }
+        UserDefaults.standard.set(style, forKey: TintStyle.defaultsKey)
+    }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(undo(_:)), #selector(reopenClosedTab(_:)):
+            return store.canReopen
+        case #selector(setArchiveInterval(_:)):
+            item.state = store.archiveAfterHours == UInt32(item.tag) ? .on : .off
+        case #selector(setTintStyle(_:)):
+            let current = UserDefaults.standard.string(forKey: TintStyle.defaultsKey) ?? TintStyle.calm.rawValue
+            item.state = current == item.representedObject as? String ? .on : .off
+        case #selector(toggleSidebar(_:)):
+            item.state = store.sidebarVisible ? .off : .on
+        default:
+            break
+        }
+        return true
+    }
     @objc func selectSpace(_ sender: NSMenuItem) { store.activateSpace(at: sender.tag) }
 
     @objc func toggleStrictSiteIsolation(_ sender: NSMenuItem) {
@@ -180,11 +207,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             m.item("Import from Another Browser…", #selector(importFromBrowser(_:)), "", target: self)
             m.addItem(.separator())
             m.item("Close Tab", #selector(closeTab(_:)), "w", target: self)
+            m.item("Reopen Closed Tab", #selector(reopenClosedTab(_:)), "t", [.command, .shift], target: self)
             m.item("Clear Today Tabs", #selector(clearToday(_:)), "k", [.command, .shift], target: self)
         }
 
         main.addSubmenu("Edit") { m in
-            m.item("Undo", Selector(("undo:")), "z", target: nil)
+            m.item("Undo", #selector(undo(_:)), "z", target: nil)
             m.item("Redo", Selector(("redo:")), "z", [.command, .shift], target: nil)
             m.addItem(.separator())
             m.item("Cut", #selector(NSText.cut(_:)), "x", target: nil)
@@ -197,6 +225,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         main.addSubmenu("View") { m in
             m.item("Focus Mode", #selector(toggleSidebar(_:)), "s", target: self)
+            m.addSubmenu("Sidebar Colour") { colours in
+                for style in TintStyle.allCases {
+                    colours.item(style.title, #selector(setTintStyle(_:)), "", target: self).representedObject = style.rawValue
+                }
+            }
             m.addItem(.separator())
             m.item("Reload Page", #selector(reload(_:)), "r", target: self)
             m.item("Zoom In", #selector(zoomIn(_:)), "=", target: self)
@@ -215,6 +248,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         main.addSubmenu("Tabs") { m in
             m.item("Pin/Unpin Tab", #selector(togglePin(_:)), "d", target: self)
+            m.addSubmenu("Archive Unused Today Tabs") { archive in
+                for (title, hours) in [("Never", 0), ("After 12 Hours", 12), ("After a Day", 24), ("After a Week", 168)] {
+                    archive.item(title, #selector(setArchiveInterval(_:)), "", target: self).tag = hours
+                }
+            }
             m.addItem(.separator())
             m.item("Next Tab", #selector(nextTab(_:)), "\t", [.control], target: self)
             m.item("Previous Tab", #selector(previousTab(_:)), "\t", [.control, .shift], target: self)

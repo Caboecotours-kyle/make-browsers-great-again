@@ -22,6 +22,14 @@ struct DropIndicator: Equatable {
     let edge: DropEdge
 }
 
+/// A brief note at the bottom of the window, optionally offering Undo.
+struct Toast: Identifiable, Equatable {
+    let id = UUID()
+    let message: String
+    var symbol = "checkmark"
+    var undoable = false
+}
+
 struct SpaceEditorRequest: Identifiable {
     let id = UUID()
     /// nil creates a new space.
@@ -71,6 +79,13 @@ final class BrowserStore: NSObject, ObservableObject {
     @Published private(set) var contentFullscreen = false
     /// The window's corner radius, which the page's corners follow.
     @Published var windowRadius: CGFloat = 10
+    @Published private(set) var toast: Toast?
+    /// A tab whose media was paused from the mini player; it keeps the
+    /// player showing so it can be resumed.
+    @Published private(set) var pausedMediaTab: UInt64?
+    /// Number of old Today tabs in the active space, when MBGA should offer
+    /// to tidy them up.
+    @Published private(set) var cleanupOffer: Int?
 
     let pager = PagerModel()
     let webContainer = WebContainerView()
@@ -82,7 +97,9 @@ final class BrowserStore: NSObject, ObservableObject {
     private var navStates: [UInt64: NavState] = [:]
     private var refreshPending = false
     private var persistTimer: Timer?
+    private var toastTimer: Timer?
     private var enteredFullscreenForContent = false
+    private var lastVisibleTab: UInt64?
 
     init(core: BrowserCore) {
         self.core = core
@@ -164,6 +181,12 @@ final class BrowserStore: NSObject, ObservableObject {
         }
         webContainer.show(visible.flatMap { views[$0] })
         nav = visible.flatMap { navStates[$0] } ?? NavState()
+        // A tab left playing should show the mini player right away rather
+        // than at the next idle check.
+        if lastVisibleTab != visible {
+            if let previous = lastVisibleTab { views[previous]?.probeMedia() }
+            lastVisibleTab = visible
+        }
     }
 
     private func createView(for tab: TabInfo) {
@@ -181,6 +204,7 @@ final class BrowserStore: NSObject, ObservableObject {
     private func destroyView(_ id: UInt64) {
         guard let view = views.removeValue(forKey: id) else { return }
         navStates[id] = nil
+        if pausedMediaTab == id { pausedMediaTab = nil }
         view.isHidden = true
         view.close()
     }
@@ -219,8 +243,16 @@ final class BrowserStore: NSObject, ObservableObject {
     }
 
     func submit(_ input: String, mode: CommandBarMode) {
+        open(core.resolveInput(text: input), mode: mode)
+    }
+
+    /// Searches the web for `query` even if it looks like an address.
+    func search(_ query: String, mode: CommandBarMode) {
+        open(core.searchUrl(text: query), mode: mode)
+    }
+
+    private func open(_ url: String, mode: CommandBarMode) {
         commandBar = nil
-        let url = core.resolveInput(text: input)
         guard !url.isEmpty else { return }
         if mode == .editCurrent, let id = visibleTabID {
             core.updateTab(id: id, url: url, title: nil)
@@ -247,6 +279,30 @@ final class BrowserStore: NSObject, ObservableObject {
     func closeVisibleTab() {
         if let id = visibleTabID { close(id) }
     }
+
+    /// Unloads a tab but keeps it in the sidebar.
+    func sleep(_ tabID: UInt64) {
+        guard views[tabID] != nil else { return }
+        destroyView(tabID)
+        core.setLive(id: tabID, live: false)
+        refresh()
+    }
+
+    /// Brings back what was closed last: a tab, a cleared Today list, a
+    /// tidy-up or a deleted folder.
+    func undoClose() {
+        toast = nil
+        guard let outcome = core.undoClose() else { return }
+        refresh()
+        if outcome.tabs.count == 1, let id = outcome.tabs.first { select(id, in: outcome.spaceId) }
+    }
+
+    func reopenClosedTab(_ id: UInt64) {
+        guard let space = core.reopenTab(id: id) else { return }
+        select(id, in: space)
+    }
+
+    var canReopen: Bool { snapshot.canReopen }
 
     func duplicate(_ tab: TabInfo, in space: SpaceInfo) {
         _ = core.openTab(spaceId: space.id, url: tab.url, activate: true)
@@ -283,8 +339,76 @@ final class BrowserStore: NSObject, ObservableObject {
     }
 
     func clearToday(_ spaceID: UInt64) {
-        destroyViews(core.clearToday(spaceId: spaceID))
+        let closed = core.clearToday(spaceId: spaceID)
+        destroyViews(closed)
         refresh()
+        if !closed.isEmpty {
+            showToast(Toast(message: closed.count == 1 ? "Archived 1 tab" : "Archived \(closed.count) tabs",
+                            symbol: "archivebox", undoable: true))
+        }
+    }
+
+    // MARK: - Tidying up
+
+    /// Today tabs untouched this long are offered for tidying up.
+    static let cleanupOfferHours: UInt32 = 12
+
+    /// Offers to tidy up once, when the active space has piled up old tabs
+    /// and the person hasn't answered before.
+    func updateCleanupOffer() {
+        guard !snapshot.cleanupAnswered else {
+            if cleanupOffer != nil { cleanupOffer = nil }
+            return
+        }
+        let count = Int(core.idleTodayCount(spaceId: activeSpace.id, hours: Self.cleanupOfferHours))
+        let offer = count >= 5 ? count : nil
+        if offer != cleanupOffer { cleanupOffer = offer }
+    }
+
+    enum CleanupAnswer { case notNow, once, daily }
+
+    func answerCleanup(_ answer: CleanupAnswer) {
+        core.answerCleanup()
+        cleanupOffer = nil
+        if answer == .daily { core.setArchiveAfterHours(hours: 24) }
+        if answer != .notNow {
+            let archived = core.archiveIdle(spaceId: activeSpace.id, hours: Self.cleanupOfferHours)
+            destroyViews(archived)
+            // The first tidy-up is shown: the tabs drop away toward Clear.
+            withAnimation(Motion.settle) { refresh() }
+            showToast(Toast(message: "Archived \(archived.count) tabs", symbol: "archivebox", undoable: true))
+        } else {
+            refresh()
+        }
+    }
+
+    /// Hours after which untouched Today tabs are archived; 0 is never.
+    var archiveAfterHours: UInt32 { snapshot.archiveAfterHours }
+
+    func setArchiveAfterHours(_ hours: UInt32) {
+        core.setArchiveAfterHours(hours: hours)
+        if !snapshot.cleanupAnswered { core.answerCleanup() }
+        refresh()
+        updateCleanupOffer()
+    }
+
+    // MARK: - Toasts
+
+    func showToast(_ toast: Toast, duration: TimeInterval = 4) {
+        withAnimation(Motion.settle) { self.toast = toast }
+        toastTimer?.invalidate()
+        let timer = Timer(timeInterval: duration, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.toast?.id == toast.id else { return }
+                withAnimation(Motion.quick) { self.toast = nil }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        toastTimer = timer
+    }
+
+    func dismissToast() {
+        withAnimation(Motion.quick) { toast = nil }
     }
 
     func selectTab(at index: Int) {
@@ -316,9 +440,40 @@ final class BrowserStore: NSObject, ObservableObject {
     func showDevTools() { visibleView?.showDevTools() }
 
     func copyVisibleURL() {
-        guard let url = visibleTab?.url else { return }
+        if let url = visibleTab?.url { copyLink(url) }
+    }
+
+    func copyLink(_ url: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url, forType: .string)
+        showToast(Toast(message: "Link copied", symbol: "link"), duration: 1.6)
+    }
+
+    // MARK: - Media
+
+    /// The tab the mini player shows: one playing sound out of sight, or
+    /// one paused from the player.
+    var mediaTab: (tab: TabInfo, space: SpaceInfo)? {
+        var found: (TabInfo, SpaceInfo)?
+        for space in snapshot.spaces {
+            for tab in space.favorites + space.pinned.compactMap(\.tab) + space.today
+            where tab.id != visibleTabID && tab.live && (tab.audible || tab.id == pausedMediaTab) {
+                if tab.id == pausedMediaTab { return (tab, space) }
+                if found == nil { found = (tab, space) }
+            }
+        }
+        return found
+    }
+
+    func toggleMedia(_ tabID: UInt64) {
+        let pause = pausedMediaTab != tabID
+        views[tabID]?.setMediaPaused(pause)
+        pausedMediaTab = pause ? tabID : nil
+    }
+
+    /// Hides the player for a paused tab.
+    func dismissMedia() {
+        pausedMediaTab = nil
     }
 
     // MARK: - Spaces and profiles
@@ -327,6 +482,7 @@ final class BrowserStore: NSObject, ObservableObject {
         guard id != snapshot.activeSpace else { return }
         core.setActiveSpace(id: id)
         refresh()
+        updateCleanupOffer()
     }
 
     func activateSpace(at index: Int) {
@@ -398,8 +554,10 @@ final class BrowserStore: NSObject, ObservableObject {
     }
 
     func deleteFolder(_ id: UInt64) {
+        let name = activeSpace.pinned.first { $0.id == id }?.folderName
         destroyViews(core.deleteFolder(id: id))
         refresh()
+        showToast(Toast(message: name.map { "Deleted “\($0)”" } ?? "Deleted folder", symbol: "trash", undoable: true))
     }
 
     // MARK: - Drag and drop
@@ -473,18 +631,22 @@ final class BrowserStore: NSObject, ObservableObject {
 
     // MARK: - Memory
 
-    /// Puts idle tabs to sleep and freezes idle hidden Today tabs according to
-    /// the core's policy, then asks the remaining hidden tabs whether they
-    /// play audio so they are kept awake.
+    /// Archives old Today tabs if the person chose to, puts idle tabs to
+    /// sleep and freezes idle hidden Today tabs according to the core's
+    /// policy, then asks the remaining hidden tabs whether they play audio so
+    /// they are kept awake.
     func sleepIdleTabs(pressure: MemoryPressure = .normal) {
+        let archived = core.archiveByPolicy()
+        destroyViews(archived)
         let sleepers = core.collectSleepers(pressure: pressure)
         sleepers.forEach(destroyView)
         let freezers = core.collectFreezers()
         for id in freezers { views[id]?.setFrozen(true) }
-        if !sleepers.isEmpty || !freezers.isEmpty { setNeedsRefresh() }
+        if !archived.isEmpty || !sleepers.isEmpty || !freezers.isEmpty { setNeedsRefresh() }
         for (id, view) in views where id != visibleTabID {
             view.probeMedia()
         }
+        updateCleanupOffer()
     }
 }
 
