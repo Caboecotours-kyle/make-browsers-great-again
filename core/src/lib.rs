@@ -174,6 +174,9 @@ pub struct ImportSourceInfo {
     pub profiles: Vec<ImportProfileInfo>,
     /// Why the browser's data could not be read.
     pub error: Option<String>,
+    /// The keychain item with the password its cookies are encrypted with
+    /// (Chromium-based browsers).
+    pub keychain_service: Option<String>,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
@@ -188,15 +191,52 @@ pub struct ImportSummary {
     pub pinned: u32,
     pub favorites: u32,
     pub today: u32,
+    /// The MBGA profile each imported profile became.
+    pub profiles: Vec<ImportedProfileLink>,
 }
 
-fn import_counts(c: import::Counts) -> ImportSummary {
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct ImportedProfileLink {
+    pub source_id: String,
+    pub profile_id: String,
+    pub into: u64,
+}
+
+fn import_counts(c: import::Counts, profiles: Vec<ImportedProfileLink>) -> ImportSummary {
     ImportSummary {
         spaces: c.spaces,
         pinned: c.pinned,
         favorites: c.favorites,
         today: c.today,
+        profiles,
     }
+}
+
+/// A cookie of another browser, for the engine to set.
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct ImportedCookie {
+    /// ".example.com" covers subdomains; "example.com" is that host alone.
+    pub domain: String,
+    pub name: String,
+    pub value: String,
+    pub path: String,
+    pub secure: bool,
+    pub http_only: bool,
+    /// Microseconds since 1601; 0 for a session cookie.
+    pub expires: i64,
+    pub created: i64,
+    pub last_used: i64,
+    /// -1 unspecified, 0 none, 1 lax, 2 strict.
+    pub same_site: i32,
+    /// 0 low, 1 medium, 2 high.
+    pub priority: i32,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct CookieRead {
+    pub cookies: Vec<ImportedCookie>,
+    /// Why they couldn't be read.
+    pub error: Option<String>,
 }
 
 // --------------------------------------------------------------------- core
@@ -946,10 +986,42 @@ impl BrowserCore {
                     })
                     .collect(),
                 error: s.error.clone(),
+                keychain_service: import::cookies::keychain_service(s),
             })
             .collect();
         self.lock().detected = sources;
         infos
+    }
+
+    /// The unexpired cookies of a profile found by `detect_browsers`;
+    /// Chromium-based browsers need the password from their keychain item.
+    pub fn read_browser_cookies(&self, source_id: String, profile_id: String, password: Option<Vec<u8>>) -> CookieRead {
+        let source = self.lock().detected.iter().find(|s| s.id == source_id).cloned();
+        let Some(source) = source else {
+            return CookieRead { cookies: Vec::new(), error: Some("That browser is no longer there.".into()) };
+        };
+        match import::cookies::read(&source, &profile_id, password.as_deref(), now_ms()) {
+            Ok(cookies) => CookieRead {
+                cookies: cookies
+                    .into_iter()
+                    .map(|c| ImportedCookie {
+                        domain: c.domain,
+                        name: c.name,
+                        value: c.value,
+                        path: c.path,
+                        secure: c.secure,
+                        http_only: c.http_only,
+                        expires: c.expires,
+                        created: c.created,
+                        last_used: c.last_used,
+                        same_site: c.same_site,
+                        priority: c.priority,
+                    })
+                    .collect(),
+                error: None,
+            },
+            Err(error) => CookieRead { cookies: Vec::new(), error: Some(error) },
+        }
     }
 
     /// Imports the chosen profiles of browsers found by `detect_browsers`.
@@ -966,9 +1038,19 @@ impl BrowserCore {
             })
             .collect();
         if chosen.is_empty() {
-            return import_counts(import::Counts::default());
+            return import_counts(import::Counts::default(), Vec::new());
         }
-        import_counts(self.mutate(|state, now| import::apply(state, &chosen, now)))
+        let (counts, made) = self.mutate(|state, now| import::apply(state, &chosen, now));
+        let links = chosen
+            .iter()
+            .zip(made)
+            .map(|((source, profile), into)| ImportedProfileLink {
+                source_id: source.id.clone(),
+                profile_id: profile.id.clone(),
+                into,
+            })
+            .collect();
+        import_counts(counts, links)
     }
 
     /// Writes state and history to disk if they changed. Atomic: write +

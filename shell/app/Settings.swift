@@ -222,6 +222,76 @@ private final class SettingsPaneController: NSViewController {
             [NSGridCell.emptyContentView, filters],
             [label("Processes:"), isolation],
             [NSGridCell.emptyContentView, caption("Every site gets its own process, as in desktop Chrome: the strongest protection against one site reading another's data, for about 30% more memory. Takes effect at next launch.")],
+        ] + signInRows()
+    }
+
+    /// Another browser's cookies into one of MBGA's profiles, e.g. for
+    /// profiles imported before sign-ins came along.
+    private func signInRows() -> [[NSView]] {
+        let from = NSPopUpButton(frame: .zero, pullsDown: false)
+        from.addItem(withTitle: "Looking for browsers…")
+        from.isEnabled = false
+        let into = NSPopUpButton(frame: .zero, pullsDown: false)
+        let status = NSTextField(labelWithString: "")
+        status.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        status.textColor = .secondaryLabelColor
+        status.lineBreakMode = .byTruncatingTail
+        status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        var choices: [(ImportSourceInfo, ImportProfileInfo)] = []
+        let fillProfiles = { [store] in
+            let profiles = store.snapshot.profiles
+            let current = into.selectedItem?.tag
+            into.removeAllItems()
+            for profile in profiles {
+                into.addItem(withTitle: profile.name)
+                into.lastItem?.tag = Int(profile.id)
+            }
+            if let current { into.selectItem(withTag: current) }
+        }
+        // The MBGA profile the chosen browser profile was imported as.
+        let matchProfile = { [store] in
+            guard let (source, profile) = choices[safe: from.indexOfSelectedItem] else { return }
+            let id = SignIns.likelyProfile(for: profile, of: source, among: store.snapshot.profiles)?.id
+                ?? store.activeSpace.profileId
+            into.selectItem(withTag: Int(id))
+        }
+        fillProfiles()
+        refreshers.append(fillProfiles)
+        from.onAction(matchProfile)
+        let bring = NSButton.push("Bring Sign-ins") {}
+        bring.isEnabled = false
+        bring.onAction { [store, weak bring] in
+            guard let (source, profile) = choices[safe: from.indexOfSelectedItem], let target = into.selectedItem else { return }
+            bring?.isEnabled = false
+            status.stringValue = "Bringing…"
+            Task {
+                let outcome = await SignIns.bring(from: source, profileID: profile.id, into: UInt64(target.tag), store: store)
+                let text = SignIns.describe(outcome, from: source.name)
+                status.stringValue = text
+                status.toolTip = text
+                bring?.isEnabled = true
+            }
+        }
+        let core = store.core
+        let home = ProcessInfo.processInfo.environment["MBGA_IMPORT_HOME"] ?? NSHomeDirectory()
+        Task { [weak self] in
+            let sources = await Task.detached { core.detectBrowsers(home: home) }.value
+            guard self != nil else { return }
+            choices = sources.filter(SignIns.available).flatMap { s in s.profiles.map { (s, $0) } }
+            from.removeAllItems()
+            from.addItems(withTitles: choices.map { SignIns.title($1, of: $0) })
+            from.isEnabled = !choices.isEmpty
+            bring.isEnabled = !choices.isEmpty
+            if choices.isEmpty { from.addItem(withTitle: "No other browsers found") }
+            matchProfile()
+        }
+        let action = NSStackView(views: [bring, status])
+        action.spacing = 10
+        return [
+            [label("Sign-ins from:"), from],
+            [label("Into profile:"), into],
+            [NSGridCell.emptyContentView, action],
+            [NSGridCell.emptyContentView, caption("Brings the browser's cookies, so sites it's signed in to know you here too. Sign-ins you already have in MBGA stay. macOS asks before MBGA can read the browser's key in your keychain; reload open pages afterwards.")],
         ]
     }
 

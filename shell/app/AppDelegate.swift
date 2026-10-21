@@ -102,6 +102,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
            let pane = SettingsPane.allCases.first(where: { $0.title.lowercased() == raw }) {
             showSettings(pane)
         }
+        // MBGA_DEBUG_SIGNINS=1 brings the first browser's sign-ins into the
+        // active space's profile at launch and logs how it went.
+        if ProcessInfo.processInfo.environment["MBGA_DEBUG_SIGNINS"] != nil {
+            let home = ProcessInfo.processInfo.environment["MBGA_IMPORT_HOME"] ?? NSHomeDirectory()
+            Task { [store, core] in
+                let sources = await Task.detached { core.detectBrowsers(home: home) }.value
+                guard let source = sources.first(where: SignIns.available), let profile = source.profiles.first else {
+                    NSLog("sign-ins: no browser found")
+                    return
+                }
+                let outcome = await SignIns.bring(from: source, profileID: profile.id, into: store.activeSpace.profileId, store: store)
+                NSLog("sign-ins: %@ (added %d, kept %d)", SignIns.describe(outcome, from: source.name), outcome.added, outcome.kept)
+            }
+        }
         if core.needsOnboarding() {
             store.importSheet = ImportRequest(firstLaunch: true)
         } else if store.visibleTabID == nil || CommandBarView.debugPreset != nil {
@@ -230,6 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @objc func newSpace(_ sender: Any?) { store.spaceEditor = SpaceEditorRequest(spaceID: nil) }
     @objc func importFromBrowser(_ sender: Any?) { store.importSheet = ImportRequest(firstLaunch: false) }
+    @objc func importSignIns(_ sender: Any?) { showSettings(.privacy) }
     @objc func editSpace(_ sender: Any?) { store.spaceEditor = SpaceEditorRequest(spaceID: store.activeSpace.id) }
     @objc func newFolder(_ sender: Any?) { store.newFolder() }
     @objc func clearToday(_ sender: Any?) { store.clearToday(store.activeSpace.id) }
@@ -355,6 +370,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             m.item("New Space…", #selector(newSpace(_:)), "n", [.command, .shift], target: self)
             m.addItem(.separator())
             m.item("Import from Another Browser…", #selector(importFromBrowser(_:)), "", target: self)
+            m.item("Import Sign-ins…", #selector(importSignIns(_:)), "", target: self)
             m.addItem(.separator())
             m.item("Close Tab", #selector(closeTab(_:)), "w", target: self)
             m.item("Reopen Closed Tab", #selector(reopenClosedTab(_:)), "t", [.command, .shift], target: self)

@@ -19,6 +19,7 @@
 #include "include/cef_application_mac.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
+#include "include/cef_cookie.h"
 #include "include/cef_parser.h"
 #include "include/cef_request_context.h"
 #include "include/wrapper/cef_library_loader.h"
@@ -1645,12 +1646,177 @@ class WebClient : public BaseClient,
 
 @end
 
+// ------------------------------------------------------------- cookie import
+
+namespace {
+
+std::string CookieKey(const CefCookie& cookie) {
+  return CefString(&cookie.name).ToString() + '\n' +
+         CefString(&cookie.domain).ToString() + '\n' +
+         CefString(&cookie.path).ToString();
+}
+
+class CompletionCallback : public CefCompletionCallback {
+ public:
+  explicit CompletionCallback(std::function<void()> done)
+      : done_(std::move(done)) {}
+  void OnComplete() override { done_(); }
+
+ private:
+  std::function<void()> done_;
+  IMPLEMENT_REFCOUNTING(CompletionCallback);
+};
+
+class SetCookieCallback : public CefSetCookieCallback {
+ public:
+  explicit SetCookieCallback(std::function<void(bool)> done)
+      : done_(std::move(done)) {}
+  void OnComplete(bool success) override { done_(success); }
+
+ private:
+  std::function<void(bool)> done_;
+  IMPLEMENT_REFCOUNTING(SetCookieCallback);
+};
+
+// Collects the keys of every cookie in a store. CEF lets the visitor go
+// once it has seen them all (at once when there are none), so that's when
+// |done| runs.
+class CookieKeys : public CefCookieVisitor {
+ public:
+  explicit CookieKeys(std::function<void(std::set<std::string>)> done)
+      : done_(std::move(done)) {}
+  ~CookieKeys() override {
+    auto done = std::move(done_);
+    auto keys = std::move(keys_);
+    dispatch_async(dispatch_get_main_queue(), ^{
+      done(keys);
+    });
+  }
+  bool Visit(const CefCookie& cookie, int, int, bool&) override {
+    keys_.insert(CookieKey(cookie));
+    return true;
+  }
+
+ private:
+  std::function<void(std::set<std::string>)> done_;
+  std::set<std::string> keys_;
+  IMPLEMENT_REFCOUNTING(CookieKeys);
+};
+
+}  // namespace
+
+@implementation MBCookie
+@end
+
 // --------------------------------------------------------------------- MBEngine
 
 @implementation MBEngine
 
 + (void)setRejectsDrops:(BOOL)reject {
   g_reject_drops = reject;
+}
+
++ (void)importCookies:(NSArray<MBCookie*>*)cookies
+      intoProfilePath:(NSString*)profilePath
+           completion:(void (^)(NSInteger added, NSInteger kept,
+                                NSInteger refused))completion {
+  // Each cookie with the URL it's set for: https for secure ones, the
+  // domain without its leading dot. A host-only cookie names no domain.
+  auto list = std::make_shared<std::vector<std::pair<std::string, CefCookie>>>();
+  for (MBCookie* c in cookies) {
+    std::string domain = c.domain.UTF8String ?: "";
+    bool wide = !domain.empty() && domain[0] == '.';
+    std::string host = wide ? domain.substr(1) : domain;
+    if (host.empty()) {
+      continue;
+    }
+    std::string path = c.path.length ? c.path.UTF8String : "/";
+    CefCookie cookie;
+    CefString(&cookie.name) = std::string(c.name.UTF8String ?: "");
+    CefString(&cookie.value) = std::string(c.value.UTF8String ?: "");
+    if (wide) {
+      CefString(&cookie.domain) = domain;
+    }
+    CefString(&cookie.path) = path;
+    cookie.secure = c.secure;
+    cookie.httponly = c.httpOnly;
+    cookie.creation.val = c.created;
+    cookie.last_access.val = c.lastUsed;
+    cookie.has_expires = c.expires != 0;
+    cookie.expires.val = c.expires;
+    cookie.same_site = static_cast<cef_cookie_same_site_t>(
+        std::clamp(c.sameSite + 1, 0, 3));
+    cookie.priority = static_cast<cef_cookie_priority_t>(
+        std::clamp(c.priority - 1, -1, 1));
+    std::string url = (c.secure ? "https://" : "http://") + host + path;
+    list->emplace_back(url, cookie);
+  }
+  CefRefPtr<CefRequestContext> context =
+      ContextForPath(profilePath.UTF8String);
+  auto finish = [completion](NSInteger added, NSInteger kept,
+                             NSInteger refused) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      completion(added, kept, refused);
+    });
+  };
+  context->GetCookieManager(new CompletionCallback([context, list, finish] {
+    CefRefPtr<CefCookieManager> manager = context->GetCookieManager(nullptr);
+    if (!manager) {
+      finish(0, 0, list->size());
+      return;
+    }
+    manager->VisitAllCookies(new CookieKeys([manager, list, finish](
+                                                std::set<std::string> keys) {
+      struct Tally {
+        size_t pending = 0;
+        NSInteger added = 0, kept = 0, refused = 0;
+      };
+      auto tally = std::make_shared<Tally>();
+      std::vector<const std::pair<std::string, CefCookie>*> todo;
+      for (const auto& item : *list) {
+        CefCookie keyed = item.second;
+        if (!CefString(&keyed.domain).length()) {
+          // Stored host-only cookies carry their host as the domain.
+          std::string url = item.first;
+          size_t start = url.find("://") + 3;
+          CefString(&keyed.domain) =
+              url.substr(start, url.find('/', start) - start);
+        }
+        if (keys.count(CookieKey(keyed))) {
+          tally->kept++;
+        } else {
+          todo.push_back(&item);
+        }
+      }
+      tally->pending = todo.size();
+      auto settled = [manager, tally, finish] {
+        if (--tally->pending == 0) {
+          manager->FlushStore(nullptr);
+          finish(tally->added, tally->kept, tally->refused);
+        }
+      };
+      if (todo.empty()) {
+        finish(0, tally->kept, 0);
+        return;
+      }
+      for (const auto* item : todo) {
+        bool started = manager->SetCookie(
+            item->first, item->second,
+            new SetCookieCallback([tally, settled](bool success) {
+              if (success) {
+                tally->added++;
+              } else {
+                tally->refused++;
+              }
+              settled();
+            }));
+        if (!started) {
+          tally->refused++;
+          settled();
+        }
+      }
+    }));
+  }));
 }
 
 + (void)setRequestFilter:(MBRequestFilter)filter

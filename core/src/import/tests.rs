@@ -296,13 +296,14 @@ fn importing_into_a_fresh_state_replaces_the_empty_space() {
     let arc = &sources[0];
     let mut state = State::new_default();
     let chosen: Vec<(&Source, &ImportedProfile)> = arc.profiles.iter().map(|p| (arc, p)).collect();
-    let counts = apply(&mut state, &chosen, 1);
+    let (counts, made) = apply(&mut state, &chosen, 1);
     assert_eq!(counts, Counts { spaces: 3, pinned: 6, favorites: 2, today: 1 });
 
     // The unused "Personal" profile and "Home" space are gone; Arc's took
     // over, in Arc's sidebar order.
     let names: Vec<&str> = state.profiles.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(names, ["Personal", "Work"]);
+    assert_eq!(made, state.profiles.iter().map(|p| p.id).collect::<Vec<_>>());
     let spaces: Vec<&str> = state.spaces.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(spaces, ["Home", "Work", "Research"]);
     assert_eq!(state.spaces[2].profile_id, state.profiles[0].id);
@@ -334,5 +335,88 @@ fn importing_into_a_used_state_adds_alongside() {
     assert_eq!(state.spaces.len(), 3);
     assert_eq!(state.spaces[0].id, existing);
     assert_eq!(state.active_space, state.spaces[1].id);
+    let _ = fs::remove_dir_all(home);
+}
+
+/// Chromium's cookie table as of version 24, with the columns read.
+fn chromium_cookies(path: &Path, version: u32, rows: &[(&str, &str, &str, &[u8], i64, &str)]) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let db = rusqlite::Connection::open(path).unwrap();
+    db.execute_batch(&format!(
+        "CREATE TABLE meta (key LONGVARCHAR NOT NULL UNIQUE PRIMARY KEY, value LONGVARCHAR);
+         INSERT INTO meta VALUES ('version', '{version}');
+         CREATE TABLE cookies (creation_utc INTEGER, host_key TEXT, top_frame_site_key TEXT, name TEXT, value TEXT,
+             encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER,
+             last_access_utc INTEGER, has_expires INTEGER, is_persistent INTEGER, priority INTEGER, samesite INTEGER);"
+    ))
+    .unwrap();
+    for (host, name, value, encrypted, expires, top_frame) in rows {
+        db.execute(
+            "INSERT INTO cookies VALUES (1, ?1, ?2, ?3, ?4, ?5, '/', ?6, 1, 1, 2, 1, ?7, 1, 0)",
+            rusqlite::params![host, top_frame, name, value, encrypted, expires, (*expires != 0) as i64],
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn chromium_cookies_decrypt_with_the_keychain_password() {
+    let home = fixture_home("cookies");
+    let sources = detect(&home, &exclude(&home));
+    let chrome = &sources[1];
+    let future = 13_500_000_000_000_000; // 2028, in microseconds since 1601
+    let encrypted = cookies::encrypt_for_test(b"peanuts", ".github.com", "secret-session");
+    let foreign = cookies::encrypt_for_test(b"other", "x.com", "nope");
+    chromium_cookies(
+        &home.join("Library/Application Support/Google/Chrome/Default/Cookies"),
+        24,
+        &[
+            (".github.com", "user_session", "", &encrypted, future, ""),
+            ("example.com", "plain", "visible", b"", 0, ""),
+            ("old.example", "expired", "x", b"", 13_000_000_000_000_000, ""),
+            ("embed.example", "partitioned", "x", b"", future, "https://top.example"),
+            ("x.com", "wrong_key", "", &foreign, future, ""),
+        ],
+    );
+    let read = cookies::read(chrome, "Default", Some(b"peanuts"), 1_790_000_000_000).unwrap();
+    let got: Vec<(&str, &str, &str, i64)> =
+        read.iter().map(|c| (c.domain.as_str(), c.name.as_str(), c.value.as_str(), c.expires)).collect();
+    assert_eq!(got, [(".github.com", "user_session", "secret-session", future), ("example.com", "plain", "visible", 0)]);
+    // SameSite=None without Secure would be refused, so it's left unspecified.
+    assert!(read[0].secure && read[0].http_only && read[0].same_site == 0);
+    assert_eq!(cookies::keychain_service(chrome).as_deref(), Some("Chrome Safe Storage"));
+    assert_eq!(cookies::keychain_service(&sources[0]).as_deref(), Some("Arc Safe Storage"));
+    assert!(cookies::read(chrome, "Default", None, 0).is_err());
+    assert!(cookies::read(chrome, "Profile 2", Some(b"peanuts"), 0).is_err());
+    let _ = fs::remove_dir_all(home);
+}
+
+#[test]
+fn firefox_cookies_are_read_in_the_clear() {
+    let home = fixture_home("ff-cookies");
+    let sources = detect(&home, &exclude(&home));
+    let firefox = sources.iter().find(|s| s.kind == Kind::Firefox).unwrap();
+    let db = rusqlite::Connection::open(
+        home.join("Library/Application Support/Firefox/Profiles/abc.default-release/cookies.sqlite"),
+    )
+    .unwrap();
+    db.execute_batch(
+        "CREATE TABLE moz_cookies (id INTEGER PRIMARY KEY, originAttributes TEXT NOT NULL DEFAULT '', name TEXT,
+             value TEXT, host TEXT, path TEXT, expiry INTEGER, lastAccessed INTEGER, creationTime INTEGER,
+             isSecure INTEGER, isHttpOnly INTEGER, sameSite INTEGER);
+         INSERT INTO moz_cookies VALUES (1, '', 'sid', 'abc', '.mozilla.org', '/', 1900000000, 1, 1, 1, 0, 1);
+         INSERT INTO moz_cookies VALUES (2, '', 'ms', 'def', 'mdn.dev', '/', 1900000000000, 1, 1, 0, 1, 0);
+         INSERT INTO moz_cookies VALUES (3, '^userContextId=2', 'work', 'x', 'mdn.dev', '/', 1900000000, 1, 1, 0, 0, 0);
+         INSERT INTO moz_cookies VALUES (4, '', 'gone', 'x', 'mdn.dev', '/', 1000000000, 1, 1, 0, 0, 0);",
+    )
+    .unwrap();
+    let read = cookies::read(firefox, &firefox.profiles[0].id, None, 1_790_000_000_000).unwrap();
+    let names: Vec<&str> = read.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["sid", "ms"]);
+    // Seconds and milliseconds land on the same moment.
+    assert_eq!(read[0].expires, read[1].expires);
+    assert_eq!(read[0].expires, 11_644_473_600_000_000 + 1_900_000_000_000_000);
+    assert_eq!((read[0].same_site, read[1].same_site), (1, -1));
+    assert!(cookies::keychain_service(firefox).is_none());
     let _ = fs::remove_dir_all(home);
 }

@@ -2,10 +2,9 @@
 //! "profiles.ini" and bookmarks from each profile's "places.sqlite".
 
 use super::{ImportedProfile, ImportedSpace, Item};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::Connection;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Profile paths (relative to `data_dir` when the profile is) and names.
 pub fn profiles(data_dir: &Path) -> Vec<(String, String)> {
@@ -39,7 +38,7 @@ pub fn profiles(data_dir: &Path) -> Vec<(String, String)> {
     out
 }
 
-fn profile_path(data_dir: &Path, path: &str) -> PathBuf {
+pub fn profile_path(data_dir: &Path, path: &str) -> PathBuf {
     let p = Path::new(path);
     if p.is_absolute() { p.to_path_buf() } else { data_dir.join(p) }
 }
@@ -48,23 +47,8 @@ fn profile_path(data_dir: &Path, path: &str) -> PathBuf {
 /// database locked while it runs, so a copy is read instead.
 pub fn load(data_dir: &Path, path: &str, name: &str, space_name: &str) -> Result<ImportedProfile, String> {
     let dir = profile_path(data_dir, path);
-    static NEXT: AtomicU32 = AtomicU32::new(0);
-    let tmp = std::env::temp_dir().join(format!(
-        "mbga-import-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-    let copy = tmp.join("places.sqlite");
-    let result = (|| {
-        fs::copy(dir.join("places.sqlite"), &copy).map_err(|e| format!("Can't read bookmarks: {e}"))?;
-        // Recent changes may still be in the write-ahead log.
-        let _ = fs::copy(dir.join("places.sqlite-wal"), tmp.join("places.sqlite-wal"));
-        let db = Connection::open_with_flags(&copy, OpenFlags::SQLITE_OPEN_READ_WRITE)
-            .map_err(|e| format!("Can't open bookmarks: {e}"))?;
-        read_bookmarks(&db).map_err(|e| format!("Can't read bookmarks: {e}"))
-    })();
-    let _ = fs::remove_dir_all(&tmp);
+    let result = super::read_copy(&dir.join("places.sqlite"), read_bookmarks)
+        .map_err(|e| format!("Can't read bookmarks: {e}"));
     let pinned = result?;
     Ok(ImportedProfile {
         id: path.to_string(),

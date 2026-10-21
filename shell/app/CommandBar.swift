@@ -649,6 +649,10 @@ struct CommandAction {
             CommandAction(id: "import", title: "Import from Another Browser…", symbol: "square.and.arrow.down", keywords: ["chrome", "arc", "safari"]) {
                 store.importSheet = ImportRequest(firstLaunch: false)
             },
+            CommandAction(id: "import-sign-ins", title: "Import Sign-ins…", symbol: "person.badge.key",
+                          keywords: ["cookies", "logged out", "login", "arc", "chrome", "firefox"]) {
+                store.openSettings?(.privacy)
+            },
             CommandAction(id: "block-ads", title: store.blockAds ? "Turn Off Ad Blocking" : "Block Ads and Trackers",
                           symbol: "shield", keywords: ["adblock", "trackers", "privacy"]) {
                 store.setBlockAds(!store.blockAds)

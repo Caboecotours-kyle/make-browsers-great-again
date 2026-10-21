@@ -76,6 +76,25 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
                     params:(NSDictionary*)params;
 @end
 
+/// A cookie to set, e.g. one imported from another browser. Times are
+/// microseconds since 1601; an |expires| of 0 is a session cookie.
+@interface MBCookie : NSObject
+/// ".example.com" covers its subdomains; "example.com" is that host alone.
+@property(nonatomic, copy) NSString* domain;
+@property(nonatomic, copy) NSString* name;
+@property(nonatomic, copy) NSString* value;
+@property(nonatomic, copy) NSString* path;
+@property(nonatomic) BOOL secure;
+@property(nonatomic) BOOL httpOnly;
+@property(nonatomic) int64_t expires;
+@property(nonatomic) int64_t created;
+@property(nonatomic) int64_t lastUsed;
+/// -1 unspecified, 0 none, 1 lax, 2 strict.
+@property(nonatomic) int sameSite;
+/// 0 low, 1 medium, 2 high.
+@property(nonatomic) int priority;
+@end
+
 @interface MBEngine : NSObject
 
 /// Loads the framework and initializes the engine. Call once, after creating
@@ -99,6 +118,15 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
 
 /// Makes pages refuse dropped items, or accept them again.
 + (void)setRejectsDrops:(BOOL)reject;
+
+/// Adds |cookies| to the profile at |profilePath|, leaving any it already
+/// has with the same name, domain and path. |completion| runs on the main
+/// thread with how many were added, kept and refused.
++ (void)importCookies:(NSArray<MBCookie*>*)cookies
+      intoProfilePath:(NSString*)profilePath
+           completion:(void (^)(NSInteger added, NSInteger kept,
+                                NSInteger refused))completion
+    NS_SWIFT_NAME(importCookies(_:intoProfilePath:completion:));
 
 /// Turns on ad blocking. Call before the first web view is created.
 + (void)setRequestFilter:(MBRequestFilter)filter

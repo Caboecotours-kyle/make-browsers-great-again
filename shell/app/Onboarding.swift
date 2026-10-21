@@ -7,7 +7,7 @@ struct ImportRequest {
 }
 
 /// Finds other browsers on this Mac and imports their spaces, tabs and
-/// bookmarks. Shown once at first launch, and from File ▸ Import. First
+/// bookmarks, and their sign-ins (cookies). Shown once at first launch, and from File ▸ Import. First
 /// launch ends with a choice of layout and color.
 @MainActor
 final class ImportSheet: NSObject {
@@ -20,13 +20,16 @@ final class ImportSheet: NSObject {
         case scanning
         case choosing([ImportSourceInfo])
         case importing
-        case done(ImportSummary)
+        case signingIn
+        case done(ImportSummary, [String])
         /// First launch only: layout and color, after importing or not.
         case style
     }
 
     private var phase = Phase.scanning
     private var selected: Set<String> = []
+    /// Bring the chosen profiles' cookies too.
+    private var signIns = true
     private weak var importButton: NSButton?
     private var imported = false
     private var closed = false
@@ -128,9 +131,29 @@ final class ImportSheet: NSObject {
             store.refresh()
             store.showDefaultTab()
             imported = true
-            phase = .done(summary)
+            var notes: [String] = []
+            if signIns {
+                phase = .signingIn
+                render()
+                notes = await bringSignIns(summary, sources: sources)
+            }
+            phase = .done(summary, notes)
             render()
         }
+    }
+
+    /// Each imported profile's cookies into the MBGA profile it became, a
+    /// line per browser profile.
+    private func bringSignIns(_ summary: ImportSummary, sources: [ImportSourceInfo]) async -> [String] {
+        var notes: [String] = []
+        for link in summary.profiles {
+            guard let source = sources.first(where: { $0.id == link.sourceId }), SignIns.available(source),
+                  let profile = source.profiles.first(where: { $0.id == link.profileId }) else { continue }
+            let outcome = await SignIns.bring(from: source, profileID: link.profileId, into: link.into, store: store)
+            let name = source.profiles.count == 1 ? source.name : SignIns.title(profile, of: source)
+            notes.append(SignIns.describe(outcome, from: name, named: true))
+        }
+        return notes
     }
 
     /// First launch goes on to choosing a style; otherwise the sheet closes.
@@ -160,7 +183,7 @@ final class ImportSheet: NSObject {
             subtitle.stringValue = "Pick a layout and how much color your spaces bring. You can change both later from the View menu."
         } else {
             title.stringValue = request.firstLaunch ? "Welcome to MBGA" : "Import from Another Browser"
-            subtitle.stringValue = "Bring your spaces, pinned tabs, open tabs and bookmarks from the browsers on this Mac."
+            subtitle.stringValue = "Bring your spaces, pinned tabs, open tabs, bookmarks and sign-ins from the browsers on this Mac."
         }
         for view in body.arrangedSubviews { view.removeFromSuperview() }
         for view in buttons.arrangedSubviews { view.removeFromSuperview() }
@@ -179,7 +202,14 @@ final class ImportSheet: NSObject {
                 addButtons(cancel: cancel, primary: ("Get Started", next))
             } else {
                 body.addArrangedSubview(sourceList(sources))
-                let note = Label.wrapping("Tabs and bookmarks are copied; your other browsers stay as they are. Passwords, history and cookies aren't imported, so you'll sign in to sites again.",
+                if sources.contains(where: SignIns.available) {
+                    let keep = NSButton(checkboxWithTitle: "Stay signed in to sites", target: nil, action: nil)
+                    keep.state = signIns ? .on : .off
+                    keep.onAction { [weak self, weak keep] in self?.signIns = keep?.state == .on }
+                    body.setCustomSpacing(12, after: body.arrangedSubviews.last!)
+                    body.addArrangedSubview(keep)
+                }
+                let note = Label.wrapping("Your other browsers stay as they are. Staying signed in brings their cookies; macOS asks once per browser before MBGA can read them. Passwords and history aren't imported.",
                                           size: 11)
                 note.preferredMaxLayoutWidth = 492
                 body.addArrangedSubview(note)
@@ -190,8 +220,11 @@ final class ImportSheet: NSObject {
         case .importing:
             body.addArrangedSubview(status("Importing…"))
             addButtons(cancel: (request.firstLaunch ? "Skip" : "Cancel", finish))
-        case .done(let summary):
-            body.addArrangedSubview(doneView(summary))
+        case .signingIn:
+            body.addArrangedSubview(status("Bringing your sign-ins…"))
+            addButtons(cancel: nil)
+        case .done(let summary, let notes):
+            body.addArrangedSubview(doneView(summary, notes: notes))
             addButtons(cancel: nil, primary: (request.firstLaunch ? "Continue" : "Done", next))
         case .style:
             body.addArrangedSubview(StylePicker(store: store))
@@ -301,7 +334,7 @@ final class ImportSheet: NSObject {
         return scroll
     }
 
-    private func doneView(_ s: ImportSummary) -> NSView {
+    private func doneView(_ s: ImportSummary, notes: [String]) -> NSView {
         let check = NSImageView(image: .symbol("checkmark.circle.fill", size: 28, weight: .regular) ?? NSImage())
         check.contentTintColor = .systemGreen
         let headline = Label.make(summaryText(s), size: 14, weight: .medium)
@@ -309,6 +342,11 @@ final class ImportSheet: NSObject {
                                     size: 13)
         detail.preferredMaxLayoutWidth = 440
         let text = NSStackView(views: [headline, detail])
+        for note in notes {
+            let line = Label.wrapping(note, size: 13)
+            line.preferredMaxLayoutWidth = 440
+            text.addArrangedSubview(line)
+        }
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = 4

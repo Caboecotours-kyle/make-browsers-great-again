@@ -6,18 +6,22 @@
 //! profile is read into plain `ImportedProfile` data, which `apply` turns
 //! into MBGA profiles, spaces, pinned trees, Today tabs and favorites.
 //!
-//! Only tabs and bookmarks are copied; history, passwords and cookies stay
-//! in the other browser.
+//! Tabs and bookmarks are copied into MBGA's state; cookies, read
+//! separately by `cookies`, go into the engine so imported profiles stay
+//! signed in. History and passwords stay in the other browser.
 
 mod arc;
 mod chromium;
+pub mod cookies;
 mod firefox;
 mod safari;
 pub mod snss;
 
 use crate::model::{Id, Node, State, Tab, SPACE_COLORS};
+use rusqlite::{Connection, OpenFlags};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
@@ -229,8 +233,36 @@ pub fn detect(home: &Path, exclude: &Path) -> Vec<Source> {
         }
     }
 
-    sources.retain(|s| s.error.is_some() || s.profiles.iter().any(|p| count(p).total() > 0));
+    // A browser with nothing but sign-ins is still worth bringing.
+    sources.retain(|s| {
+        s.error.is_some()
+            || s.profiles.iter().any(|p| count(p).total() > 0 || cookies::database(s, &p.id).is_some())
+    });
     sources
+}
+
+/// Runs `read` on a copy of the SQLite database at `path`: browsers keep
+/// theirs locked while they run.
+fn read_copy<T>(path: &Path, read: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, String> {
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let tmp = std::env::temp_dir().join(format!(
+        "mbga-import-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    let copy = tmp.join("db.sqlite");
+    let result = (|| {
+        fs::copy(path, &copy).map_err(|e| e.to_string())?;
+        // Recent changes may still be in the write-ahead log.
+        let mut wal = path.as_os_str().to_owned();
+        wal.push("-wal");
+        let _ = fs::copy(wal, tmp.join("db.sqlite-wal"));
+        let db = Connection::open_with_flags(&copy, OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(|e| e.to_string())?;
+        read(&db).map_err(|e| e.to_string())
+    })();
+    let _ = fs::remove_dir_all(&tmp);
+    result
 }
 
 fn subdirs(dir: &Path) -> Vec<PathBuf> {
@@ -291,13 +323,15 @@ pub fn count(p: &ImportedProfile) -> Counts {
 /// Adds the chosen profiles to `state`: an MBGA profile for each (so each
 /// keeps its own cookies and logins), their spaces, pinned trees, Today
 /// tabs and favorites. Every imported tab starts asleep. A state nobody has
-/// used yet (one empty space) is replaced rather than added to.
-pub fn apply(state: &mut State, sources: &[(&Source, &ImportedProfile)], now: u64) -> Counts {
+/// used yet (one empty space) is replaced rather than added to. Also returns
+/// the MBGA profile made for each of `sources`, in order.
+pub fn apply(state: &mut State, sources: &[(&Source, &ImportedProfile)], now: u64) -> (Counts, Vec<Id>) {
     let pristine = state.profiles.len() == 1 && state.spaces.len() == 1 && state.tabs.is_empty();
     let old_space = state.spaces[0].id;
     let old_profile = state.profiles[0].id;
     let mut counts = Counts::default();
     let mut first_space = None;
+    let mut made = Vec::new();
 
     // Profiles first, then every space in its browser's sidebar order (Arc
     // interleaves spaces of different profiles).
@@ -312,6 +346,7 @@ pub fn apply(state: &mut State, sources: &[(&Source, &ImportedProfile)], now: u6
             name = format!("{name} ({})", source.name);
         }
         let profile_id = state.create_profile(&name);
+        made.push(profile_id);
         for fav in flatten(&profile.favorites) {
             let id = new_tab(state, fav, true, now);
             state.favorites.entry(profile_id).or_default().push(id);
@@ -345,7 +380,7 @@ pub fn apply(state: &mut State, sources: &[(&Source, &ImportedProfile)], now: u6
         }
         state.set_active_space(first, now);
     }
-    counts
+    (counts, made)
 }
 
 fn flatten(items: &[Item]) -> Vec<&Item> {
