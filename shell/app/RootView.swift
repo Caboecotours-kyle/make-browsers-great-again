@@ -178,6 +178,8 @@ final class RootView: NSView {
         sidebar.isHidden = !chrome
         peek.isHidden = !chrome || peeking == 0 || shownLayout == .full
         if !peek.isHidden { peek.frame = peekFrame(at: peeking) }
+        // The traffic lights ride on the peek card, in line with its toolbar.
+        store.offsetTrafficLights(peek.isHidden ? .zero : CGSize(width: peek.frame.minX, height: peek.frame.minY))
         if rail.superview === self {
             let shown = railShown
             rail.frame = NSRect(x: -SidebarRail.width * (1 - shown), y: 0, width: SidebarRail.width, height: bounds.height)

@@ -876,6 +876,40 @@ final class BrowserStore: NSObject {
 
     /// Shows or hides the traffic lights, fading them in Focus mode so they
     /// don't pop. Hidden buttons are also made unclickable.
+    private var lightsOffset = CGSize.zero
+    private var lightsResizeObserver: NSObjectProtocol?
+
+    /// Moves the traffic lights by `offset` from where AppKit puts them, so
+    /// they ride on the peek card with the sidebar's toolbar instead of
+    /// staying in the window's corner.
+    func offsetTrafficLights(_ offset: CGSize) {
+        guard let window else { return }
+        if lightsResizeObserver == nil {
+            // AppKit puts the buttons back in place when it lays out the
+            // title bar (a resize): the offset has to be applied again.
+            lightsResizeObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResizeNotification, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    let wanted = self.lightsOffset
+                    self.lightsOffset = .zero
+                    self.offsetTrafficLights(wanted)
+                }
+            }
+        }
+        guard offset != lightsOffset else { return }
+        let dx = offset.width - lightsOffset.width, dy = offset.height - lightsOffset.height
+        lightsOffset = offset
+        for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            guard let button = window.standardWindowButton(type) else { continue }
+            var origin = button.frame.origin
+            origin.x += dx
+            // The title bar isn't flipped: down is negative.
+            origin.y += (button.superview?.isFlipped == true) ? dy : -dy
+            button.setFrameOrigin(origin)
+        }
+    }
+
     func updateTrafficLights() {
         let hidden = (layout == .focus && !sidebarPeek && !trafficLightsRevealed) || contentFullscreen
         let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
