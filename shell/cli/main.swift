@@ -1,9 +1,8 @@
 import Foundation
 
-// mbga: use the running MBGA browser from a terminal or an agent.
-//   mbga <command> [args]   runs one command and prints the result
-//   mbga mcp                serves the same commands over MCP (stdio)
-// It talks to the socket MBGA opens while Settings ▸ Agents allows it.
+// mbga: use the running MBGA browser from a terminal, a script or an
+// agent's shell. `mbga <command> [args]` runs one command and prints the
+// result. It talks to the socket MBGA opens while Settings ▸ Agents allows it.
 
 let guide = """
 mbga: drive the MBGA browser. Pages come back as short outlines with refs
@@ -111,111 +110,6 @@ final class Browser {
     }
 }
 
-/// Splits a command line as a shell would: spaces, with quotes grouping.
-func words(_ line: String) -> [String] {
-    var out: [String] = [], current = "", quote: Character?, started = false
-    var iterator = line.makeIterator()
-    while let c = iterator.next() {
-        if let q = quote {
-            if c == q { quote = nil } else if c == "\\", q == "\"", let next = iterator.next() { current.append(next) } else { current.append(c) }
-        } else if c == "\"" || c == "'" {
-            quote = c
-            started = true
-        } else if c == " " || c == "\t" || c == "\n" {
-            if started || !current.isEmpty { out.append(current) }
-            current = ""
-            started = false
-        } else {
-            current.append(c)
-        }
-    }
-    if started || !current.isEmpty { out.append(current) }
-    return out
-}
-
-// MARK: - MCP
-
-/// MCP over stdio with a single tool taking a command line: one short
-/// schema in the model's context instead of one per command.
-func serveMCP() -> Never {
-    var browser: Browser?
-    // An MCP client is one agent, with a current tab of its own.
-    let mcpSession = ProcessInfo.processInfo.environment["MBGA_SESSION"] ?? "mcp-\(getpid())"
-    let tool: [String: Any] = [
-        "name": "browser",
-        "description": "Use the MBGA browser on this Mac, as the person's own browser.\n\n" + guide,
-        "inputSchema": [
-            "type": "object",
-            "properties": [
-                "command": ["type": "string", "description": "An mbga command line, e.g. \"snapshot\" or \"click e12\" or \"fill e3 'hello' --enter\""],
-                "script": ["type": "string", "description": "JavaScript for `run` (instead of command): many steps in one call"],
-            ],
-        ],
-    ]
-    func send(_ object: [String: Any]) {
-        guard var data = try? JSONSerialization.data(withJSONObject: object) else { return }
-        data.append(0x0A)
-        FileHandle.standardOutput.write(data)
-    }
-    while let line = readLine(strippingNewline: true) {
-        guard let message = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-              let method = message["method"] as? String else { continue }
-        let id = message["id"]
-        let params = message["params"] as? [String: Any] ?? [:]
-        func reply(_ result: [String: Any]) {
-            if let id { send(["jsonrpc": "2.0", "id": id, "result": result]) }
-        }
-        switch method {
-        case "initialize":
-            reply([
-                "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
-                "capabilities": ["tools": [String: Any]()],
-                "serverInfo": ["name": "mbga", "version": "1.0"],
-            ])
-        case "ping":
-            reply([:])
-        case "tools/list":
-            reply(["tools": [tool]])
-        case "tools/call":
-            let arguments = params["arguments"] as? [String: Any] ?? [:]
-            let argv = (arguments["script"] as? String).map { ["run", $0] } ?? words(arguments["command"] as? String ?? "")
-            guard !argv.isEmpty else {
-                reply(["content": [["type": "text", "text": guide]]])
-                continue
-            }
-            do {
-                if browser == nil { browser = try Browser(session: mcpSession) }
-                let text: String
-                do {
-                    text = try browser!.run(argv)
-                } catch {
-                    // The browser may have restarted; try once on a new connection.
-                    browser = try Browser(session: mcpSession)
-                    text = try browser!.run(argv)
-                }
-                var content: [[String: Any]] = [["type": "text", "text": text]]
-                // Screenshots come back as images the model can see.
-                if ["screenshot", "shot"].contains(argv[0]), let path = text.components(separatedBy: " (").first,
-                   let png = FileManager.default.contents(atPath: path) {
-                    content.append(["type": "image", "data": png.base64EncodedString(), "mimeType": "image/png"])
-                }
-                reply(["content": content])
-            } catch Failure.message(let text) {
-                browser = nil
-                reply(["content": [["type": "text", "text": text]], "isError": true])
-            } catch {
-                browser = nil
-                reply(["content": [["type": "text", "text": error.localizedDescription]], "isError": true])
-            }
-        default:
-            if let id {
-                send(["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "Unknown method \(method)"]])
-            }
-        }
-    }
-    exit(0)
-}
-
 // MARK: - Main
 
 let argv = Array(CommandLine.arguments.dropFirst())
@@ -223,7 +117,6 @@ if argv.isEmpty || ["help", "-h", "--help", "guide"].contains(argv[0]) {
     print(guide)
     exit(0)
 }
-if argv[0] == "mcp" { serveMCP() }
 do {
     var argv = argv
     // A script goes over as its text.

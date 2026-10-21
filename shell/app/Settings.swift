@@ -229,12 +229,27 @@ private final class SettingsPaneController: NSViewController {
             }
         }
         let link = AgentSettings.commandLink.path
-        let setup = NSTextField(wrappingLabelWithString: "claude mcp add mbga -- \(link) mcp")
-        setup.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
-        setup.isSelectable = true
-        setup.preferredMaxLayoutWidth = 340
+        let taught = caption("")
+        let claude = NSButton.push("Add to Claude Code") {
+            if let error = AgentSettings.installClaudeSkill() {
+                taught.stringValue = "Couldn't add it: \(error)"
+            } else {
+                taught.stringValue = Self.skillNote
+            }
+        }
+        let copy = NSButton.push("Copy Instructions") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(AgentSettings.instructions, forType: .string)
+            taught.stringValue = "Copied. Paste them into your agent's AGENTS.md or CLAUDE.md."
+        }
+        let teach = NSStackView(views: [claude, copy])
+        teach.spacing = 8
         refreshers.append {
             enabled.state = AgentSettings.enabled ? .on : .off
+            if taught.stringValue.isEmpty || taught.stringValue == Self.skillNote {
+                taught.stringValue = FileManager.default.fileExists(atPath: AgentSettings.claudeSkill.path) ? Self.skillNote
+                    : "Agents use mbga straight from their terminal. Claude Code learns it from a skill; other agents, from a few lines in their AGENTS.md."
+            }
             if status.stringValue.isEmpty || status.stringValue == Self.installedNote {
                 status.stringValue = FileManager.default.fileExists(atPath: link) ? Self.installedNote
                     : "Puts mbga in ~/.local/bin, so any terminal or agent can run it."
@@ -288,7 +303,7 @@ private final class SettingsPaneController: NSViewController {
         }
         return [
             [label("Agent access:"), enabled],
-            [NSGridCell.emptyContentView, caption("Agents on this Mac (Claude Code, MCP apps, your scripts) can open tabs, read pages, click and type, through the mbga command. They see pages as short outlines rather than screenshots, so it costs them few tokens. Only apps running as you can connect, and the page glows while an agent acts on it.")],
+            [NSGridCell.emptyContentView, caption("Agents on this Mac (Claude Code and other coding agents, your scripts) can open tabs, read pages, click and type, with the mbga command in their terminal. They see pages as short outlines rather than screenshots, so it costs them few tokens. Only apps running as you can connect, and the page glows while an agent acts on it.")],
             [label("Agents work:"), workspace],
             [label("Signed in as:"), profile],
             [NSGridCell.emptyContentView, caption("In their own space, agents' tabs stay out of your sidebar and off your screen, so you both use MBGA at once; switch to the Agents space to watch them. Your profile shares your sign-ins; a separate one starts signed out, with its own cookies.")],
@@ -296,11 +311,12 @@ private final class SettingsPaneController: NSViewController {
             [NSGridCell.emptyContentView, caption("Sites agents can't read, use or open, with their subdomains. Separate them with commas.")],
             [label("Command:"), install],
             [NSGridCell.emptyContentView, status],
-            [label("MCP:"), setup],
-            [NSGridCell.emptyContentView, caption("Adds MBGA to Claude Code as an MCP server. Other MCP apps: run \"mbga mcp\". Run \"mbga help\" for every command.")],
+            [label("Teach agents:"), teach],
+            [NSGridCell.emptyContentView, taught],
         ]
     }
 
+    private static let skillNote = "Claude Code has the mbga skill (~/.claude/skills/mbga-browser) and uses the browser when a task needs it."
     private static let installedNote = "Installed at ~/.local/bin/mbga. Run \"mbga help\" in a terminal to try it."
 
     // MARK: Controls

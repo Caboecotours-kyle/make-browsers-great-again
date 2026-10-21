@@ -1,8 +1,8 @@
 import AppKit
 import Darwin
 
-// Agent access: lets agents on this Mac (Claude Code, MCP clients, scripts)
-// use the browser through the `mbga` command. The command talks to a Unix
+// Agent access: lets agents on this Mac (Claude Code, other coding agents,
+// scripts) use the browser from their shell through the `mbga` command. The command talks to a Unix
 // socket in the data folder; only the same macOS user can connect, and the
 // socket exists only while Settings ▸ Agents allows it.
 
@@ -23,6 +23,61 @@ enum AgentSettings {
     static var bundledCommand: URL? {
         Bundle.main.url(forResource: "mbga", withExtension: nil, subdirectory: "bin")
     }
+
+    /// What `mbga help` prints: the one description of the commands, for
+    /// the skill and instructions given to agents.
+    static var guide: String {
+        guard let command = bundledCommand else { return "" }
+        let process = Process()
+        process.executableURL = command
+        process.arguments = ["help"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        guard (try? process.run()) != nil else { return "" }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static var claudeSkill: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/skills/mbga-browser/SKILL.md")
+    }
+
+    /// A Claude Code skill, so Claude reaches for `mbga` whenever a task
+    /// touches the web. Returns an error to show.
+    static func installClaudeSkill() -> String? {
+        if !FileManager.default.fileExists(atPath: commandLink.path), let error = installCommand() { return error }
+        let skill = [
+            "---",
+            "name: mbga-browser",
+            "description: Use the person's MBGA browser from the terminal with the `mbga` command - open pages, read them as compact outlines, click, fill forms, run multi-step scripts, check console errors and network requests. Use it whenever a task involves a website or web app, especially pages that need JavaScript or the person's sign-ins, and to check web work you just built (localhost).",
+            "---",
+            "",
+            "# Using the MBGA browser",
+            "",
+            "`mbga` (~/.local/bin/mbga) drives the browser the person uses on this Mac. Your tabs open in its Agents space, off the person's screen, so they keep working while you do. Read pages with `snapshot` or `read`, not screenshots: far fewer tokens. When you know the page, write code: `mbga run` executes a whole script in one call, and `mbga eval` runs JavaScript in the page.",
+            "",
+            "If a command says it can't reach MBGA, ask the person to open MBGA and turn on Settings > Agents.",
+            "",
+            "```",
+            guide,
+            "```",
+            "",
+        ].joined(separator: "\n")
+        do {
+            try FileManager.default.createDirectory(at: claudeSkill.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try skill.write(to: claudeSkill, atomically: true, encoding: .utf8)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// A few lines for an AGENTS.md or CLAUDE.md, for any agent.
+    static let instructions = [
+        "## Browser",
+        "Use the person's MBGA browser from the shell with `mbga` (~/.local/bin/mbga) for anything on the web: `mbga open <url>`, `mbga snapshot` (the page as an outline with refs like [e4]), `mbga click e4`, `mbga fill e6 \"text\" --enter`, `mbga read`, `mbga console`, `mbga network`. For many steps, write a script: `mbga run -e 'await open(url); return await evaluate(() => document.title)'`. Your tabs stay off the person's screen. Run `mbga help` for everything.",
+    ].joined(separator: "\n")
 
     /// Links ~/.local/bin/mbga to the app's command. Returns an error to show.
     static func installCommand() -> String? {
