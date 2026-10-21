@@ -282,3 +282,13 @@ fn engine_paths_are_resolved_through_symlinks() {
     let _ = fs::remove_file(&link);
     let _ = fs::remove_dir_all(real);
 }
+
+#[test]
+fn only_new_state_needs_onboarding() {
+    assert!(!State::new_default().onboarded);
+    // State files written before onboarding existed have no such field.
+    let mut v = serde_json::to_value(State::new_default()).unwrap();
+    v.as_object_mut().unwrap().remove("onboarded");
+    let old: State = serde_json::from_value(v).unwrap();
+    assert!(old.onboarded);
+}

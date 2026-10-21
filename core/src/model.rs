@@ -155,10 +155,18 @@ pub struct State {
     /// directories are removed on the next launch, before the engine starts.
     #[serde(default)]
     pub doomed_profiles: Vec<Id>,
+    /// False until the first-launch onboarding has been shown. State files
+    /// from before onboarding existed count as onboarded.
+    #[serde(default = "default_onboarded")]
+    pub onboarded: bool,
 }
 
 fn default_search_template() -> String {
     "https://www.google.com/search?q=%s".into()
+}
+
+fn default_onboarded() -> bool {
+    true
 }
 
 pub const SPACE_COLORS: [u32; 8] = [
@@ -178,6 +186,7 @@ impl State {
             policy: Policy::default(),
             search_template: default_search_template(),
             doomed_profiles: Vec::new(),
+            onboarded: false,
         };
         let profile = s.create_profile("Personal");
         let space = s.create_space("Home", "🏠", SPACE_COLORS[0], profile);
@@ -185,7 +194,7 @@ impl State {
         s
     }
 
-    fn alloc(&mut self) -> Id {
+    pub(crate) fn alloc(&mut self) -> Id {
         let id = self.next_id;
         self.next_id += 1;
         id

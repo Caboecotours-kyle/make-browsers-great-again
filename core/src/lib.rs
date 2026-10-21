@@ -3,6 +3,7 @@
 
 uniffi::setup_scaffolding!();
 
+pub mod import;
 pub mod model;
 
 use model::{Container, Id, Node, Pressure, State, Tab};
@@ -109,6 +110,60 @@ impl From<DropTarget> for Container {
     }
 }
 
+#[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrowserKind {
+    Arc,
+    Chromium,
+    Firefox,
+    Safari,
+}
+
+/// A profile of another browser and what importing it would bring.
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct ImportProfileInfo {
+    pub id: String,
+    pub name: String,
+    pub spaces: u32,
+    pub pinned: u32,
+    pub favorites: u32,
+    pub today: u32,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct ImportSourceInfo {
+    pub id: String,
+    pub name: String,
+    pub kind: BrowserKind,
+    /// For showing the browser's app icon.
+    pub bundle_id: Option<String>,
+    pub profiles: Vec<ImportProfileInfo>,
+    /// Why the browser's data could not be read.
+    pub error: Option<String>,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct ImportChoice {
+    pub source_id: String,
+    pub profile_ids: Vec<String>,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct ImportSummary {
+    pub spaces: u32,
+    pub pinned: u32,
+    pub favorites: u32,
+    pub today: u32,
+}
+
+fn import_counts(c: import::Counts) -> ImportSummary {
+    ImportSummary {
+        spaces: c.spaces,
+        pinned: c.pinned,
+        favorites: c.favorites,
+        today: c.today,
+    }
+}
+
 // --------------------------------------------------------------------- core
 
 struct Inner {
@@ -116,6 +171,8 @@ struct Inner {
     dirty: bool,
     revision: u64,
     data_dir: PathBuf,
+    /// Browsers found by the last `detect_browsers`, ready to import.
+    detected: Vec<import::Source>,
 }
 
 #[derive(uniffi::Object)]
@@ -259,6 +316,7 @@ impl BrowserCore {
                 dirty: true,
                 revision: 1,
                 data_dir,
+                detected: Vec::new(),
             }),
         })
     }
@@ -560,6 +618,73 @@ impl BrowserCore {
     }
 
     /// Writes state to disk if it changed. Atomic: write + rename.
+    /// True until the first-launch onboarding has been completed or skipped.
+    pub fn needs_onboarding(&self) -> bool {
+        !self.lock().state.onboarded
+    }
+
+    pub fn finish_onboarding(&self) {
+        self.mutate(|s, _| s.onboarded = true);
+    }
+
+    /// Finds other browsers' tabs and bookmarks under `home`. Reads every
+    /// profile it finds, so call it off the main thread.
+    pub fn detect_browsers(&self, home: String) -> Vec<ImportSourceInfo> {
+        let exclude = self.lock().data_dir.clone();
+        let sources = import::detect(Path::new(&home), &exclude);
+        let infos = sources
+            .iter()
+            .map(|s| ImportSourceInfo {
+                id: s.id.clone(),
+                name: s.name.clone(),
+                kind: match s.kind {
+                    import::Kind::Arc => BrowserKind::Arc,
+                    import::Kind::Chromium => BrowserKind::Chromium,
+                    import::Kind::Firefox => BrowserKind::Firefox,
+                    import::Kind::Safari => BrowserKind::Safari,
+                },
+                bundle_id: s.bundle_id.clone(),
+                profiles: s
+                    .profiles
+                    .iter()
+                    .map(|p| {
+                        let c = import::count(p);
+                        ImportProfileInfo {
+                            id: p.id.clone(),
+                            name: p.name.clone(),
+                            spaces: c.spaces,
+                            pinned: c.pinned,
+                            favorites: c.favorites,
+                            today: c.today,
+                        }
+                    })
+                    .collect(),
+                error: s.error.clone(),
+            })
+            .collect();
+        self.lock().detected = sources;
+        infos
+    }
+
+    /// Imports the chosen profiles of browsers found by `detect_browsers`.
+    pub fn import_browsers(&self, choices: Vec<ImportChoice>) -> ImportSummary {
+        let detected = self.lock().detected.clone();
+        let chosen: Vec<(&import::Source, &import::ImportedProfile)> = detected
+            .iter()
+            .flat_map(|s| {
+                let choice = choices.iter().find(|c| c.source_id == s.id);
+                s.profiles
+                    .iter()
+                    .filter(move |p| choice.is_some_and(|c| c.profile_ids.contains(&p.id)))
+                    .map(move |p| (s, p))
+            })
+            .collect();
+        if chosen.is_empty() {
+            return import_counts(import::Counts::default());
+        }
+        import_counts(self.mutate(|state, now| import::apply(state, &chosen, now)))
+    }
+
     pub fn persist(&self) -> bool {
         let mut inner = self.lock();
         if !inner.dirty {
