@@ -26,11 +26,12 @@ enum SettingsPane: Int, CaseIterable {
 /// out as macOS settings are (labels right-aligned against their controls).
 @MainActor
 final class SettingsWindowController: NSWindowController {
-    private let tabs = NSTabViewController()
+    private let tabs = SettingsTabsController()
 
     init(store: BrowserStore) {
         tabs.tabStyle = .toolbar
-        tabs.transitionOptions = [.crossfade, .allowUserInteraction]
+        // Panes swap at once; the window's height follows quickly (below).
+        tabs.transitionOptions = []
         for pane in SettingsPane.allCases {
             let controller = SettingsPaneController(pane: pane, store: store)
             let item = NSTabViewItem(viewController: controller)
@@ -43,8 +44,20 @@ final class SettingsWindowController: NSWindowController {
         window.toolbarStyle = .preference
         window.isReleasedWhenClosed = false
         super.init(window: window)
+        tabs.fitWindow(animated: false)
         window.center()
         window.setFrameAutosaveName("Settings")
+        // MBGA_DEBUG_SETTINGS_CYCLE moves to the next pane every 1.5 s, to
+        // measure the switch.
+        if ProcessInfo.processInfo.environment["MBGA_DEBUG_SETTINGS_CYCLE"] != nil {
+            let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let tabs = self?.tabs else { return }
+                    tabs.selectedTabViewItemIndex = (tabs.selectedTabViewItemIndex + 1) % tabs.tabViewItems.count
+                }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -56,6 +69,42 @@ final class SettingsWindowController: NSWindowController {
     }
 }
 
+/// The panes, switched as System Settings does: the new pane shows at
+/// once, pinned to the top, and the window's height follows in a fifth of
+/// a second, its top staying put. (NSTabViewController's own resize was
+/// slow and slid the panes about while crossfading them.)
+@MainActor
+private final class SettingsTabsController: NSTabViewController {
+    override func tabView(_ tabView: NSTabView, didSelect item: NSTabViewItem?) {
+        super.tabView(tabView, didSelect: item)
+        fitWindow(animated: true)
+    }
+
+    func fitWindow(animated: Bool) {
+        guard let window = view.window ?? viewIfLoaded?.window,
+              let pane = tabViewItems[safe: selectedTabViewItemIndex]?.viewController as? SettingsPaneController
+        else { return }
+        let content = window.frameRect(forContentRect: NSRect(origin: .zero, size: pane.contentSize))
+        var frame = window.frame
+        frame.origin.y += frame.height - content.height
+        frame.size = content.size
+        guard frame != window.frame else { return }
+        guard animated, window.isVisible, !Motion.reduced else {
+            window.setFrame(frame, display: true)
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2 * Motion.slow
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1)
+            window.animator().setFrame(frame, display: true)
+        }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
+}
+
 /// One pane: a grid of labelled rows that reads its values when shown and
 /// whenever the preferences change elsewhere (a menu, the command bar).
 @MainActor
@@ -63,6 +112,8 @@ private final class SettingsPaneController: NSViewController {
     private let pane: SettingsPane
     private let store: BrowserStore
     private var refreshers: [() -> Void] = []
+    /// The size the pane's rows need; the window fits it.
+    private(set) var contentSize = NSSize(width: 564, height: 300)
 
     init(pane: SettingsPane, store: BrowserStore) {
         self.pane = pane
@@ -96,16 +147,20 @@ private final class SettingsPaneController: NSViewController {
         }
         let view = NSView()
         view.addSubview(grid)
+        // The rows hang from the top: while the window's height changes they
+        // stay put rather than stretch or slide.
+        let bottom = grid.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -24)
+        bottom.priority = .defaultLow
         NSLayoutConstraint.activate([
             grid.topAnchor.constraint(equalTo: view.topAnchor, constant: 24),
-            grid.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -24),
+            bottom,
             grid.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
             grid.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
         ])
         self.view = view
         // Values first: a caption filled in later would be cut off.
         refresh()
-        preferredContentSize = view.fittingSize
+        contentSize = view.fittingSize
         NotificationCenter.default.addObserver(self, selector: #selector(refresh),
                                                name: UserDefaults.didChangeNotification, object: nil)
         store.observe(self) { [weak self] change in
