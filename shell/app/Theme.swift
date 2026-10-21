@@ -172,8 +172,8 @@ enum Motion {
     }
 
     /// MBGA_DEBUG_SLOW_MOTION=8 plays every animation 8 times slower, for
-    /// captures of transitions mid-way.
-    private static let slow = Double(ProcessInfo.processInfo.environment["MBGA_DEBUG_SLOW_MOTION"] ?? "") ?? 1
+    /// captures of transitions mid-way (speed effects stay at full strength).
+    static let slow = Double(ProcessInfo.processInfo.environment["MBGA_DEBUG_SLOW_MOTION"] ?? "") ?? 1
 
     // Springs approximated by an ease-out with a soft landing, so AppKit's
     // animator and Core Animation can both use them.
@@ -187,9 +187,9 @@ enum Motion {
     static let reflow = Curve(duration: 0.3 * slow, timing: CAMediaTimingFunction(name: .easeInEaseOut))
     /// How long a spring takes to (nearly) settle.
     static let springResponse = 0.3 * slow
-    /// The sidebar peeking over the page: a little slower than a layout
-    /// change, so it glides in rather than snapping open.
-    static let peekResponse = 0.38 * slow
+    /// The sidebar peeking over the page: quick (95% of the way in under
+    /// 0.2 s), with a smear off its edge carrying the speed.
+    static let peekResponse = 0.24 * slow
     /// A page giving way to another space's.
     static let fade = Curve(duration: 0.22 * slow, timing: CAMediaTimingFunction(name: .easeInEaseOut))
 

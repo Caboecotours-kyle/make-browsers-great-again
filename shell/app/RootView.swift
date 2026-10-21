@@ -13,6 +13,7 @@ final class RootView: NSView {
     private let emptyHint: EmptySpaceHintView
     private let dropPreview = DropPreviewView()
     private let peek = PeekContainerView()
+    private let smear = MotionSmearView()
     private let toast: ToastView
     private var commandBar: CommandBarView?
     private var sheets = SheetPresenter()
@@ -36,6 +37,7 @@ final class RootView: NSView {
         dropPreview.isHidden = true
         // The peek card sits right under the sidebar, which never leaves this
         // view: moving it into the peek redrew it all as it slid in.
+        addSubview(smear)
         addSubview(peek)
         peek.isHidden = true
         addSubview(sidebar)
@@ -121,6 +123,7 @@ final class RootView: NSView {
                                    style: TintStyle.saved).map(\.cgColor)
         backdrop.setColors(stops, curve: curve)
         peek.backdrop.setColors(stops, curve: curve)
+        smear.colors = stops
     }
 
     private func updateEmptyHint() {
@@ -162,15 +165,17 @@ final class RootView: NSView {
         // it, or floating on the peek card; hidden, it waits at the peek's
         // size so the peek doesn't make it lay out again.
         let shown = sidebarShown, peeking = peekSpring.value
+        // Out of sight it waits just past the left edge rather than hidden:
+        // a hidden list makes no rows, and making them all as it slides in
+        // cost several frames.
         if shownLayout == .full || shown > 0.001 {
             sidebar.frame = NSRect(x: -sidebarWidth * (1 - shown), y: 0, width: sidebarWidth, height: bounds.height)
             sidebar.alphaValue = shown
-            sidebar.isHidden = !chrome || shown == 0
         } else {
             sidebar.frame = peekFrame(at: peeking)
             sidebar.alphaValue = 1
-            sidebar.isHidden = !chrome || peeking == 0
         }
+        sidebar.isHidden = !chrome
         peek.isHidden = !chrome || peeking == 0 || shownLayout == .full
         if !peek.isHidden { peek.frame = peekFrame(at: peeking) }
         if rail.superview === self {
@@ -181,6 +186,12 @@ final class RootView: NSView {
         }
         handle.isHidden = !(chrome && shownLayout == .full)
         handle.frame = NSRect(x: sidebarWidth, y: 0, width: 8, height: bounds.height)
+        if !peek.isHidden {
+            smear.update(edge: peek.frame, cornerRadius: peek.cornerRadius,
+                         speed: peekSpring.velocity * (sidebarWidth + 18))
+        } else {
+            smear.update(edge: .zero, cornerRadius: 0, speed: 0)
+        }
         layoutToast()
         commandBar?.frame = bounds
     }
@@ -440,6 +451,66 @@ final class PeekContainerView: FlippedView {
         layer.shadowOpacity = 1
         layer.shadowRadius = 18
         layer.shadowOffset = CGSize(width: 4, height: 0)
+    }
+}
+
+/// A soft smear off the right edge of the sidebar as it peeks in or out,
+/// as long as the sidebar is fast and gone as it settles: it reads as
+/// motion blur on the edge sweeping over the page. Plain gradients, so it
+/// costs nothing per frame (blurring the sidebar itself with a filter cost
+/// about one frame in thirty).
+final class MotionSmearView: NSView {
+    private let fill = CAGradientLayer()
+    private let fade = CAGradientLayer()
+
+    /// The sidebar's colors, top to bottom.
+    var colors: [CGColor] = [] {
+        didSet {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            fill.colors = colors
+            CATransaction.commit()
+        }
+    }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        isHidden = true
+        fill.startPoint = CGPoint(x: 0.5, y: 1)
+        fill.endPoint = CGPoint(x: 0.5, y: 0)
+        // Solid at the edge, gone at the far end, easing out.
+        fade.startPoint = CGPoint(x: 0, y: 0.5)
+        fade.endPoint = CGPoint(x: 1, y: 0.5)
+        fade.colors = [1, 0.55, 0.2, 0].map { NSColor.black.withAlphaComponent($0).cgColor }
+        fade.locations = [0, 0.3, 0.65, 1]
+        fill.mask = fade
+        layer?.addSublayer(fill)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// `edge` is the sidebar's frame, `speed` in points per second.
+    func update(edge: NSRect, cornerRadius: CGFloat, speed: CGFloat) {
+        // A slowed-down capture shows it as at full speed.
+        let length = min(abs(speed) * CGFloat(Motion.slow) / 55, 72)
+        guard length >= 2, !Motion.reduced else {
+            isHidden = true
+            return
+        }
+        isHidden = false
+        // Tucked a little under the edge so there is no seam, and clear of
+        // the rounded corners.
+        frame = NSRect(x: edge.maxX - 2, y: edge.minY + cornerRadius,
+                       width: length + 2, height: max(edge.height - cornerRadius * 2, 0))
+        alphaValue = min(length / 24, 1) * 0.9
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fill.frame = bounds
+        fade.frame = bounds
+        CATransaction.commit()
     }
 }
 
