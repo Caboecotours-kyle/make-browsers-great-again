@@ -21,14 +21,17 @@ struct RootView: View {
                 .overlay(WindowDragArea())
 
             HStack(spacing: 0) {
+                // The sidebar slides over the page as it comes and goes.
                 if chrome && store.layout == .full {
                     Sidebar()
                         .frame(width: sidebarWidth)
                         .transition(.move(edge: .leading).combined(with: .opacity))
+                        .zIndex(1)
                     SidebarResizeHandle(width: $sidebarWidth)
                 } else if chrome && store.layout == .compact {
                     SidebarRail()
                         .transition(.move(edge: .leading).combined(with: .opacity))
+                        .zIndex(1)
                 }
                 WebArea(container: store.webContainer, cornerRadius: radius,
                         border: chrome ? (colorScheme == .dark ? .white.withAlphaComponent(0.1)
@@ -40,6 +43,10 @@ struct RootView: View {
                                 .shadow(color: .black.opacity(colorScheme == .dark ? 0.3 : 0.07), radius: 6, y: 1)
                         }
                     }
+                    // The page takes its new size at once instead of being
+                    // resized (and laid out again by the engine) on every
+                    // frame of a layout change.
+                    .transaction { $0.animation = nil }
                     .overlay {
                         if store.visibleTabID == nil && store.commandBar == nil {
                             EmptySpaceHint()

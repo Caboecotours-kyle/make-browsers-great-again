@@ -215,6 +215,9 @@ private struct SpacePager: View {
             .onAppear { pager.pageWidth = stride }
             .onChange(of: geo.size.width) { pager.pageWidth = stride }
         }
+        // Neighbouring spaces wait just past the edge; never show them over
+        // the page.
+        .clipped()
     }
 }
 
