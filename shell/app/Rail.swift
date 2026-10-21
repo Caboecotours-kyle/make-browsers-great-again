@@ -5,7 +5,9 @@ import AppKit
 /// selected one on a pill; the full sidebar slides out at the window edge.
 @MainActor
 final class SidebarRail: FlippedView {
-    static let width: CGFloat = 72
+    /// Wide enough for the traffic lights above it to keep as much room
+    /// from the page as from the window's edge (they end about 69 pt in).
+    static let width: CGFloat = 80
 
     private let store: BrowserStore
     private let toggle: SymbolButton
