@@ -224,6 +224,9 @@ final class WebContainerView: NSView {
     /// The part the page fills; DevTools takes the rest, on the right.
     private(set) var pageArea = NSRect.zero
     private let devToolsEdge = NSView()
+    /// DevTools' own background under its window, so the window's rounded
+    /// corners and edge don't show the white page container.
+    private let devToolsBacking = NSView()
     /// The visible tab's DevTools window, docked over the panel.
     private weak var dockedWindow: NSWindow?
     private lazy var devToolsHandle = DevToolsResizeHandle { [weak self] x in self?.resizeDevTools(to: x) }
@@ -351,6 +354,7 @@ extension WebContainerView {
         guard DeveloperSettings.docksDevTools, let window, let devTools = current?.devToolsWindow else {
             undock()
             devToolsEdge.isHidden = true
+            devToolsBacking.isHidden = true
             devToolsHandle.isHidden = true
             return bounds
         }
@@ -359,15 +363,21 @@ extension WebContainerView {
         let edge = (bounds.width - width).rounded()
         if devToolsEdge.superview !== self {
             devToolsEdge.wantsLayer = true
+            devToolsBacking.wantsLayer = true
+            addSubview(devToolsBacking)
             addSubview(devToolsEdge)
             addSubview(devToolsHandle)
         }
-        for view in [devToolsEdge, devToolsHandle] {
+        for view in [devToolsBacking, devToolsEdge, devToolsHandle] {
             view.layer?.zPosition = 2
             view.isHidden = false
         }
+        // DevTools follows the system appearance, as the window does.
+        let dark = effectiveAppearance.isDark
+        devToolsBacking.frame = NSRect(x: edge, y: 0, width: bounds.width - edge, height: bounds.height)
+        devToolsBacking.layer?.backgroundColor = (dark ? NSColor(srgbRed: 0.157, green: 0.157, blue: 0.157, alpha: 1) : .white).cgColor
         devToolsEdge.frame = NSRect(x: edge, y: 0, width: 1, height: bounds.height)
-        devToolsEdge.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        devToolsEdge.layer?.backgroundColor = NSColor.black.withAlphaComponent(dark ? 0.6 : 0.12).cgColor
         devToolsHandle.frame = NSRect(x: edge - 3, y: 0, width: 7, height: bounds.height)
         if dockedWindow !== devTools {
             undock()
