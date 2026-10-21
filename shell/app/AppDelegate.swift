@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         store.window = window
         store.windowRadius = window.systemCornerRadius
         store.updateTrafficLights()
+        _ = core.selectDefaultTab(spaceId: store.activeSpace.id)
         store.refresh()
         store.updateCleanupOffer()
         window.makeKeyAndOrderFront(nil)

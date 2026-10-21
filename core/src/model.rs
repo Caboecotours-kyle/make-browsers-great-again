@@ -723,6 +723,28 @@ impl State {
         Some(space_id)
     }
 
+    /// Selects a tab in a space that has tabs but none selected (after an
+    /// import, say): the most recently used, ties going to sidebar order
+    /// (Today, then pinned). Favorites are shared between spaces, so a space
+    /// with only those stays empty. Returns the tab if one was chosen.
+    pub fn select_default_tab(&mut self, space_id: Id, now: u64) -> Option<Id> {
+        let space = self.space(space_id)?;
+        if space.active_tab.is_some_and(|t| self.tabs.contains_key(&t)) {
+            return None;
+        }
+        let mut candidates = space.today.clone();
+        collect_tabs(&space.pinned, &mut candidates);
+        let mut best: Option<&Tab> = None;
+        for tab in candidates.iter().filter_map(|id| self.tabs.get(id)) {
+            if best.is_none_or(|b| tab.last_active_ms > b.last_active_ms) {
+                best = Some(tab);
+            }
+        }
+        let id = best?.id;
+        self.activate_tab(space_id, id, now);
+        Some(id)
+    }
+
     /// Moves the main window off `id` (popped out into its own window) to
     /// the tab Arc would show after closing it. Returns that tab.
     pub fn step_away(&mut self, id: Id, now: u64) -> Option<Id> {

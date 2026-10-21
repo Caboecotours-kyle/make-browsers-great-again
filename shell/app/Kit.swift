@@ -110,6 +110,26 @@ enum Label {
         return label
     }
 
+    /// A shortcut or action chip: small centered text on a rounded fill (set
+    /// the layer's background), centered vertically however tall it is.
+    static func chip(_ text: String = "") -> NSTextField {
+        let label = NSTextField(frame: .zero)
+        label.cell = CenteredTextCell(textCell: text)
+        label.isEditable = false
+        label.isSelectable = false
+        label.isBezeled = false
+        label.isBordered = false
+        label.drawsBackground = false
+        label.font = Theme.font(11, .medium)
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.alignment = .center
+        label.wantsLayer = true
+        label.layer?.cornerRadius = 5
+        label.layer?.cornerCurve = .continuous
+        return label
+    }
+
     /// Wrapping text for sheets and cards.
     static func wrapping(_ text: String, size: CGFloat = 12, color: NSColor = .secondaryLabelColor) -> NSTextField {
         let label = NSTextField(wrappingLabelWithString: text)
@@ -117,6 +137,21 @@ enum Label {
         label.textColor = color
         label.isSelectable = false
         return label
+    }
+}
+
+/// Draws its one line centered in the cell's height rather than at the top.
+private final class CenteredTextCell: NSTextFieldCell {
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
+        var title = super.titleRect(forBounds: rect)
+        let height = min(cellSize(forBounds: rect).height, title.height)
+        title.origin.y += (title.height - height) / 2
+        title.size.height = height
+        return title
+    }
+
+    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+        super.drawInterior(withFrame: titleRect(forBounds: cellFrame), in: controlView)
     }
 }
 

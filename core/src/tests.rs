@@ -548,3 +548,33 @@ fn scriptlets_and_user_rules_come_from_the_filter_directory() {
     assert!(!b.page_script("https://other.example.com/").contains("mbgaFlag"));
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn a_space_with_tabs_but_none_selected_gets_its_most_recent_tab() {
+    let mut s = State::new_default();
+    let sp = home(&s);
+    let pinned = s.open_tab(sp, "https://pinned.com", false, 5).unwrap();
+    s.move_item(pinned, Container::Pinned { space_id: sp, folder_id: None }, 0);
+    let older = s.open_tab(sp, "https://older.com", false, 1).unwrap();
+    let newer = s.open_tab(sp, "https://newer.com", false, 3).unwrap();
+    let _ = (older, newer);
+    s.spaces[0].active_tab = None;
+    assert_eq!(s.select_default_tab(sp, 10), Some(pinned), "most recently used");
+    assert_eq!(s.select_default_tab(sp, 11), None, "already has one");
+    // Ties go to sidebar order: the newest Today tab first.
+    let mut t = State::new_default();
+    let sp = home(&t);
+    let first = t.open_tab(sp, "https://a.com", false, 1).unwrap();
+    let second = t.open_tab(sp, "https://b.com", false, 1).unwrap();
+    let _ = first;
+    t.spaces[0].active_tab = None;
+    assert_eq!(t.select_default_tab(sp, 2), Some(second));
+    // An empty space stays empty, even with Favorites.
+    let mut e = State::new_default();
+    let sp = home(&e);
+    let fav = e.open_tab(sp, "https://fav.com", false, 1).unwrap();
+    let profile = e.spaces[0].profile_id;
+    e.move_item(fav, Container::Favorites { profile_id: profile }, 0);
+    e.spaces[0].active_tab = None;
+    assert_eq!(e.select_default_tab(sp, 2), None);
+}

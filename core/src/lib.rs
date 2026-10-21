@@ -602,6 +602,18 @@ impl BrowserCore {
         })
     }
 
+    /// Selects a tab in a space with tabs but none selected. Returns it if
+    /// one was chosen.
+    pub fn select_default_tab(&self, space_id: u64) -> Option<u64> {
+        let mut inner = self.lock();
+        let chosen = inner.state.select_default_tab(space_id, now_ms());
+        if chosen.is_some() {
+            inner.dirty = true;
+            inner.revision += 1;
+        }
+        chosen
+    }
+
     /// Selects another tab in the main window if `id` was on screen there.
     pub fn step_away(&self, id: u64) -> Option<u64> {
         self.mutate(|s, now| s.step_away(id, now))

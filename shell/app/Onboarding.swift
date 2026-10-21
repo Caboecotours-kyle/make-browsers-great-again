@@ -126,6 +126,7 @@ final class ImportSheet: NSObject {
         Task {
             let summary = await Task.detached { core.importBrowsers(choices: choices) }.value
             store.refresh()
+            store.showDefaultTab()
             imported = true
             phase = .done(summary)
             render()

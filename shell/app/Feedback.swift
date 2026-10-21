@@ -305,42 +305,74 @@ final class DropPreviewView: NSView {
     }
 }
 
-/// Over an empty space: its emoji and a way to open a tab.
+/// An empty space: just a quiet search field, like the command bar's, to
+/// open the first tab.
 @MainActor
 final class EmptySpaceHintView: FlippedView {
     private let store: BrowserStore
-    private let icon = Label.make(size: 40)
-    private let title = Label.make(size: 15, weight: .medium)
-    private let button = NSButton()
+    private let field = EmptySearchField()
 
     init(store: BrowserStore) {
         self.store = store
         super.init(frame: .zero)
-        icon.alignment = .center
-        title.alignment = .center
-        title.textColor = NSColor.black.withAlphaComponent(0.7)
-        button.isBordered = false
-        button.attributedTitle = NSAttributedString(string: "Search or Enter URL  ⌘T", attributes: [
-            .font: Theme.font(13), .foregroundColor: NSColor.black.withAlphaComponent(0.45),
-        ])
-        button.onAction { store.commandBar = .newTab }
-        for view in [icon, title, button] as [NSView] { addSubview(view) }
+        field.onClick = { store.commandBar = .newTab }
+        addSubview(field)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    func update() {
-        let space = store.activeSpace
-        icon.stringValue = space.icon
-        title.stringValue = "No tab open in \(space.name)"
-        needsLayout = true
-    }
+    func update() {}
 
     override func layout() {
         super.layout()
-        let y = bounds.midY - 50
-        icon.frame = NSRect(x: 0, y: y, width: bounds.width, height: 48)
-        title.frame = NSRect(x: 0, y: y + 56, width: bounds.width, height: 20)
-        button.frame = NSRect(x: bounds.midX - 110, y: y + 82, width: 220, height: 18)
+        let width = min(520, bounds.width - 80)
+        field.frame = NSRect(x: (bounds.width - width) / 2, y: bounds.midY - 60, width: width, height: 46)
+    }
+}
+
+/// Looks like the command bar's field; clicking it opens the bar.
+private final class EmptySearchField: HoverView {
+    var onClick: (() -> Void)?
+    private let fill = FillLayer()
+    private let icon = NSImageView()
+    private let placeholder = Label.make("Search or enter address", size: 16, color: .placeholderTextColor)
+    private let chip = Label.chip("⌘T")
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        fill.cornerRadius = 12
+        layer?.addSublayer(fill)
+        icon.image = .symbol("magnifyingglass", size: 15)
+        icon.contentTintColor = .secondaryLabelColor
+        for view in [icon, placeholder, chip] as [NSView] { addSubview(view) }
+        // The page is white in either appearance, so the field is too.
+        appearance = NSAppearance(named: .aqua)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fill.frame = bounds
+        CATransaction.commit()
+        icon.frame = NSRect(x: 16, y: bounds.midY - 9, width: 18, height: 18)
+        let chipWidth = chip.textWidth + 10
+        chip.frame = NSRect(x: bounds.width - 14 - chipWidth, y: bounds.midY - 9, width: chipWidth, height: 18)
+        placeholder.frame = NSRect(x: 44, y: bounds.midY - 10, width: chip.frame.minX - 52, height: 20)
+    }
+
+    override func updateLayer() {
+        fill.paint(fill: NSColor(white: hovering ? 0.94 : 0.965, alpha: 1), border: .black.withAlphaComponent(0.07),
+                   in: effectiveAppearance)
+        fill.borderWidth = 0.5
+        chip.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.05).cgColor
+    }
+
+    override func mouseDown(with event: NSEvent) {}
+
+    override func mouseUp(with event: NSEvent) {
+        if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
     }
 }

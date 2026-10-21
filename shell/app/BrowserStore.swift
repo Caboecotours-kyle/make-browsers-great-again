@@ -586,8 +586,15 @@ final class BrowserStore: NSObject {
     func activateSpace(_ id: UInt64) {
         guard id != snapshot.activeSpace else { return }
         core.setActiveSpace(id: id)
+        _ = core.selectDefaultTab(spaceId: id)
         refresh()
         updateCleanupOffer()
+    }
+
+    /// A space with tabs always shows one: its most recently used, as Arc
+    /// does. Only an empty space shows the empty page.
+    func showDefaultTab() {
+        if core.selectDefaultTab(spaceId: activeSpace.id) != nil { refresh() }
     }
 
     func activateSpace(at index: Int) {
@@ -618,6 +625,7 @@ final class BrowserStore: NSObject {
     func deleteSpace(_ id: UInt64) {
         destroyViews(core.deleteSpace(id: id))
         refresh()
+        showDefaultTab()
     }
 
     func createProfile(_ name: String) -> UInt64 {

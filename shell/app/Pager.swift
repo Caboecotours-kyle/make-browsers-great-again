@@ -58,14 +58,20 @@ final class PagerModel {
         setPosition(CGFloat(index), animated: animated)
     }
 
+    private var lastWheelStep: TimeInterval = 0
+
+    private func inSidebar(_ event: NSEvent, _ host: NSView) -> Bool {
+        var point = host.convert(event.locationInWindow, from: nil)
+        if !host.isFlipped { point.y = host.bounds.height - point.y }
+        return sidebarFrame.contains(point)
+    }
+
     /// Returns true if the event was consumed.
     func handle(_ event: NSEvent, in host: NSView) -> Bool {
-        guard event.hasPreciseScrollingDeltas else { return false }
+        guard event.hasPreciseScrollingDeltas else { return handleWheel(event, in: host) }
 
         if event.phase.contains(.began) {
-            var point = host.convert(event.locationInWindow, from: nil)
-            if !host.isFlipped { point.y = host.bounds.height - point.y }
-            tracking = sidebarFrame.contains(point) && pageCount > 1 ? .undecided(dx: 0, dy: 0) : .idle
+            tracking = inSidebar(event, host) && pageCount > 1 ? .undecided(dx: 0, dy: 0) : .idle
         }
         let ended = event.phase.contains(.ended) || event.phase.contains(.cancelled)
 
@@ -107,6 +113,24 @@ final class PagerModel {
             }
             return true
         }
+    }
+
+    /// A mouse's horizontal wheel (or Shift-scroll) over the sidebar steps
+    /// one space at a time.
+    private func handleWheel(_ event: NSEvent, in host: NSView) -> Bool {
+        var dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
+        // The system usually turns Shift-scroll horizontal; not always.
+        if event.modifierFlags.contains(.shift), dx == 0 { (dx, dy) = (dy, 0) }
+        guard pageCount > 1, abs(dx) >= 1, abs(dx) > abs(dy), inSidebar(event, host) else { return false }
+        // One step per flick of the wheel, however many notches it reports.
+        guard event.timestamp - lastWheelStep > 0.35 else { return true }
+        lastWheelStep = event.timestamp
+        let current = Int(position.rounded())
+        let target = min(max(current + (dx < 0 ? 1 : -1), 0), pageCount - 1)
+        guard target != current else { return true }
+        setPosition(CGFloat(target), animated: true)
+        onSettle?(target)
+        return true
     }
 
     private func rubberBand(_ raw: CGFloat) -> CGFloat {

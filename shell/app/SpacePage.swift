@@ -417,6 +417,11 @@ final class SidebarTableView: NSTableView {
     var windowPreview: NSImage?
     private var showingWindow = false
 
+    /// With responsive scrolling the scroll view takes a gesture's events
+    /// straight from the queue after the first one, so the app's monitor
+    /// never sees a horizontal swipe to switch spaces.
+    override class var isCompatibleWithResponsiveScrolling: Bool { false }
+
     func centerDragImage(_ session: NSDraggingSession, image: NSImage, at screenPoint: NSPoint) {
         guard let window else { return }
         let point = convert(window.convertPoint(fromScreen: screenPoint), from: nil)

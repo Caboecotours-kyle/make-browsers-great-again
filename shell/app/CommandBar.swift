@@ -436,16 +436,12 @@ private final class CommandItemCell: NSTableCellView {
     private let emoji = Label.make(size: 13)
     private let title = Label.make()
     private let subtitle = Label.make(color: .secondaryLabelColor)
-    private let chip = Label.make(size: 11, weight: .medium, color: .secondaryLabelColor)
+    private let chip = Label.chip()
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         icon.imageScaling = .scaleProportionallyUpOrDown
         icon.contentTintColor = .secondaryLabelColor
-        chip.alignment = .center
-        chip.wantsLayer = true
-        chip.layer?.cornerRadius = 5
-        chip.layer?.cornerCurve = .continuous
         emoji.alignment = .center
         for view in [icon, emoji, title, subtitle, chip] as [NSView] { addSubview(view) }
     }
