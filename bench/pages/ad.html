@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- A 300x250 ad: ?kind=canvas animates with JavaScript and polls a timer
+     every 50 ms; ?kind=video plays a muted looping video. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; overflow: hidden; background: #222; }
+  canvas, video { width: 300px; height: 250px; display: block; object-fit: cover; }
+</style>
+</head>
+<body>
+<script>
+  const kind = new URLSearchParams(location.search).get("kind");
+  if (kind === "video") {
+    const v = document.createElement("video");
+    Object.assign(v, { src: "/media/ad.webm", muted: true, loop: true, autoplay: true, playsInline: true });
+    document.body.append(v);
+  } else {
+    const c = document.createElement("canvas");
+    c.width = 300; c.height = 250;
+    document.body.append(c);
+    const ctx = c.getContext("2d");
+    let viewable = 0;
+    setInterval(() => { viewable++; }, 50);  // viewability tracking
+    (function frame(t) {
+      ctx.fillStyle = `hsl(${(t / 15) % 360} 60% 45%)`;
+      ctx.fillRect(0, 0, 300, 250);
+      ctx.fillStyle = "#fff";
+      ctx.font = "700 30px -apple-system, sans-serif";
+      ctx.fillText("SALE", 110 + 20 * Math.sin(t / 300), 135);
+      requestAnimationFrame(frame);
+    })(0);
+  }
+</script>
+</body>
+</html>

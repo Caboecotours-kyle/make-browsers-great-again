@@ -1,0 +1,79 @@
+<!doctype html>
+<!-- A news page the way ad-funded sites behave while you read: a ticker, a
+     spinner, an animated banner, analytics timers, and two cross-site ad
+     iframes (one animated, one with a muted looping video). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Busy news page</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="masthead">The Daily Benchmark <span class="spinner"></span></header>
+<div class="ticker" id="ticker">Markets</div>
+<main class="column layout">
+  <article>
+    <h1>Live: the story that keeps updating</h1>
+    <p class="byline">Updated <span id="clock">now</span></p>
+    <canvas id="banner" width="600" height="200" style="width:600px;height:200px"></canvas>
+    <p>The page keeps a ticker scrolling, a clock ticking and an animated banner running while you read.
+    Analytics scripts wake up several times a second to record what you are doing. None of it is what you
+    came for, and all of it runs for as long as the tab is on screen.</p>
+    <p>On the right, two advertisements load from another site. One draws an animation with JavaScript; the
+    other plays a muted video on a loop.</p>
+    <p>Browsers can throttle some of this: small cross-site frames that you are not interacting with,
+    animations nobody is looking at, and timers on pages that are hidden.</p>
+  </article>
+  <aside id="ads"></aside>
+</main>
+<script>
+  // Cross-site ad frames: localhost and 127.0.0.1 are different sites.
+  const other = location.hostname === "127.0.0.1" ? "localhost" : "127.0.0.1";
+  for (const kind of ["canvas", "video"]) {
+    const f = document.createElement("iframe");
+    f.className = "ad";
+    f.src = `${location.protocol}//${other}:${location.port}/ad.html?kind=${kind}`;
+    document.getElementById("ads").append(f);
+  }
+
+  const ticker = document.getElementById("ticker");
+  const symbols = ["AAPL", "MSFT", "GOOG", "AMZN", "NVDA", "META", "TSLA", "NFLX"];
+  let tick = 0;
+  setInterval(() => {
+    tick++;
+    ticker.textContent = symbols.map((s, i) =>
+      `${s} ${(100 + 20 * Math.sin(tick / 10 + i)).toFixed(2)}`).join("   ");
+  }, 200);
+
+  const clock = document.getElementById("clock");
+  setInterval(() => { clock.textContent = new Date().toLocaleTimeString(); }, 1000);
+
+  // Analytics: wakes up every 250 ms and does a little bookkeeping.
+  const events = [];
+  (function beacon() {
+    events.push({ t: performance.now(), y: scrollY, w: innerWidth });
+    if (events.length > 200) JSON.stringify(events.splice(0, 100));
+    setTimeout(beacon, 250);
+  })();
+
+  const canvas = document.getElementById("banner");
+  const ctx = canvas.getContext("2d");
+  function frame(t) {
+    ctx.fillStyle = "#13294b";
+    ctx.fillRect(0, 0, 600, 200);
+    for (let i = 0; i < 12; i++) {
+      const x = (t / 8 + i * 60) % 660 - 30;
+      ctx.fillStyle = `hsl(${(i * 30 + t / 20) % 360} 70% 60%)`;
+      ctx.beginPath();
+      ctx.arc(x, 100 + 50 * Math.sin(t / 400 + i), 22, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = "#fff";
+    ctx.font = "600 28px -apple-system, sans-serif";
+    ctx.fillText("Subscribe for $1", 190, 110);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+</script>
+</body>
+</html>

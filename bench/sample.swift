@@ -76,10 +76,12 @@ for pid in tree {
     footprint += usage.ri_phys_footprint
     cpu += cpuNs
     energy += usage.ri_energy_nj
-    wakeups += usage.ri_pkg_idle_wkups + usage.ri_interrupt_wkups
+    let procWakeups = usage.ri_pkg_idle_wkups + usage.ri_interrupt_wkups
+    wakeups += procWakeups
     procs.append([
         "pid": pid, "name": name(of: pid), "type": processType(of: pid),
         "footprint": usage.ri_phys_footprint, "cpu_ns": cpuNs, "energy_nj": usage.ri_energy_nj,
+        "wakeups": procWakeups,
     ])
 }
 

@@ -1,0 +1,13 @@
+/* Fixed-width layout so every browser renders the same pixels whatever its
+   window size. */
+body { margin: 0; font: 17px/1.6 -apple-system, "Helvetica Neue", sans-serif; color: #1d232b; background: #fafaf7; }
+.masthead { font: 700 22px/56px Georgia, serif; text-align: center; border-bottom: 1px solid #ddd; }
+.column { width: 960px; margin: 0 auto; padding: 24px 0 64px; }
+.hero { width: 960px; height: 400px; display: block; border-radius: 6px; }
+.byline { color: #69707a; font-size: 14px; }
+.layout { display: grid; grid-template-columns: 620px 300px; gap: 40px; }
+.ad { width: 300px; height: 250px; border: 0; display: block; margin-bottom: 20px; background: #eee; }
+.ticker { font: 600 14px/32px ui-monospace, monospace; background: #1d232b; color: #9be29b; padding: 0 12px; white-space: nowrap; overflow: hidden; }
+.spinner { width: 28px; height: 28px; border: 3px solid #cfd6e0; border-top-color: #3b6fd8; border-radius: 50%; animation: spin 0.9s linear infinite; display: inline-block; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+video { display: block; background: #000; }

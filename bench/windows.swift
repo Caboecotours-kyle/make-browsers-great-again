@@ -1,6 +1,13 @@
 // Prints how many normal on-screen windows the given process owns.
+// Usage: windows <pid> [--bounds]   (--bounds: the windows' frames as JSON)
 import CoreGraphics
 import Foundation
 let pid = Int(CommandLine.arguments[1])!
 let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as! [[String: Any]]
-print(list.filter { ($0[kCGWindowOwnerPID as String] as? Int) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }.count)
+let mine = list.filter { ($0[kCGWindowOwnerPID as String] as? Int) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }
+if CommandLine.arguments.contains("--bounds") {
+    let frames = mine.compactMap { $0[kCGWindowBounds as String] }
+    print(String(data: try! JSONSerialization.data(withJSONObject: frames), encoding: .utf8)!)
+} else {
+    print(mine.count)
+}

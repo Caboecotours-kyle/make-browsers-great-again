@@ -1,0 +1,38 @@
+<!doctype html>
+<!-- A plain article with no scripts: the cost of a browser showing a page. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Static article</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="masthead">The Daily Benchmark</header>
+<main class="column">
+  <h1>Why idle browsers still drain batteries</h1>
+  <p class="byline">By A. Writer · 6 min read</p>
+  <svg class="hero" viewBox="0 0 960 400" role="img" aria-label="Illustration">
+    <defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#6d8bd6"/><stop offset="1" stop-color="#9ad1c4"/></linearGradient></defs>
+    <rect width="960" height="400" fill="url(#g)"/>
+    <circle cx="720" cy="140" r="70" fill="#f6e3a1"/>
+    <path d="M0 330 L220 200 L400 300 L600 170 L960 320 L960 400 L0 400 Z" fill="#3e5a7a"/>
+  </svg>
+  <p>A web page that has finished loading should cost almost nothing to keep on screen. In practice, the
+  browser still runs timers, paints when something changes, and keeps its processes awake. Each of these
+  is small, and together they decide how long a laptop lasts on battery.</p>
+  <p>This page has no scripts, no animations and no video. It measures the floor: what a browser costs when
+  it only has to keep a finished page visible.</p>
+  <h2>Timers</h2>
+  <p>Pages schedule work with timers. A timer that fires every few milliseconds keeps a processor core from
+  entering its deepest idle state, and every wake-up costs energy before any useful work happens.</p>
+  <h2>Painting</h2>
+  <p>A browser paints a new frame whenever something on screen changes. On a 120 Hz display, an animation
+  that never stops means 120 frames a second, each with its own work on the processor and the graphics
+  chip.</p>
+  <h2>Processes</h2>
+  <p>Modern browsers split pages across many processes. Each process has its own housekeeping, and each one
+  that wakes up costs a little energy even when the page inside it is doing nothing.</p>
+  <p>Read the rest of the story in tomorrow's edition.</p>
+</main>
+</body>
+</html>
