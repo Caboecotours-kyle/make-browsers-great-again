@@ -318,6 +318,20 @@ final class WebContainerView: NSView {
 }
 
 extension WebContainerView {
+    /// Shows `view` under the visible page, so the engine draws it for a
+    /// capture, until the returned closure puts it away.
+    func renderBehind(_ view: MBWebView) -> () -> Void {
+        guard view.superview === self, view !== current else { return {} }
+        view.layer?.zPosition = -1
+        view.frame = pageArea == .zero ? bounds : pageArea
+        view.isHidden = false
+        return { [weak self, weak view] in
+            guard let view, view !== self?.current else { return }
+            view.isHidden = true
+            view.layer?.zPosition = 0
+        }
+    }
+
     /// A device preview turned on or off: the page takes its new size and
     /// fades in at it, rather than squeezing there.
     func viewportChanged() {

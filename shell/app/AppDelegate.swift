@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var scrollMonitor: Any?
     private var sidebarReveal: SidebarReveal?
     private var settings: SettingsWindowController?
+    private var agentServer: AgentServer?
     /// Safari-style: the Develop menu is there only in Developer Mode.
     private var developMenu: NSMenuItem?
 
@@ -27,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         NSApp.mainMenu = buildMainMenu()
         store.openSettings = { [weak self] pane in self?.showSettings(pane) }
+        agentServer = AgentServer(store: store, path: dataDirectory.appendingPathComponent("agent.sock").path)
         updateDevelopMenu()
         NotificationCenter.default.addObserver(self, selector: #selector(updateDevelopMenu),
                                                name: UserDefaults.didChangeNotification, object: nil)

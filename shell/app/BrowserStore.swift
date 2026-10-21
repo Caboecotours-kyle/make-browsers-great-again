@@ -64,6 +64,16 @@ enum StoreChange {
     /// The visible tab's developer toolbar: its emulations, how its page
     /// loaded, or whether it shows.
     case developer
+    /// An agent started or stopped acting on the visible tab.
+    case agent
+}
+
+/// A console message, kept for agents (`mbga console`).
+struct ConsoleEntry {
+    let level: Int
+    let text: String
+    let source: String
+    let line: Int
 }
 
 /// The shell's single source of UI state. Browser data lives in the Rust core;
@@ -160,6 +170,14 @@ final class BrowserStore: NSObject {
     private var devToolbarOverrides: [UInt64: Bool] = [:]
     /// Opens Settings, at a pane if given.
     var openSettings: ((SettingsPane?) -> Void)?
+    /// The tab agents act on when they name none: the one they last opened
+    /// or chose.
+    var agentTab: UInt64?
+    /// Console messages since each page loaded, newest last.
+    private var consoleLogs: [UInt64: [ConsoleEntry]] = [:]
+    /// Tabs an agent acted on in the last moments, which glow on screen.
+    private(set) var agentActiveTabs: Set<UInt64> = []
+    private var agentTimers: [UInt64: Timer] = [:]
     /// Theme colors pages declared, by site, so a site that was put to sleep
     /// keeps its color.
     private(set) var pageColors: [String: RGB] = [:] {
@@ -312,6 +330,7 @@ final class BrowserStore: NSObject {
             }
             lastVisibleTab = visible
             changed(.developer)
+            changed(.agent)
         }
     }
 
@@ -338,6 +357,7 @@ final class BrowserStore: NSObject {
         navStates[id] = nil
         blockedCounts[id] = nil
         devReports[id] = nil
+        consoleLogs[id] = nil
         devStates[id]?.picking = false
         if pausedMediaTab == id { pausedMediaTab = nil }
         view.isHidden = true
@@ -1144,6 +1164,70 @@ extension BrowserStore {
     }
 }
 
+// MARK: - Agents
+
+extension BrowserStore {
+    /// The tab's engine view, made (and its page loaded) if it was asleep.
+    func engineView(for id: UInt64) -> MBWebView? {
+        if views[id] == nil, let tab = core.tab(id: id), !tab.url.isEmpty { createView(for: tab) }
+        return views[id]
+    }
+
+    func isLoaded(_ id: UInt64) -> Bool { views[id] != nil && navStates[id] != nil }
+
+    /// Lets a tab out of sight draw (behind the visible page) until the
+    /// returned closure is called.
+    func renderBehind(_ id: UInt64) -> () -> Void {
+        guard id != visibleTabID, let view = views[id] else { return {} }
+        return webContainer.renderBehind(view)
+    }
+
+    func navState(of id: UInt64) -> NavState { navStates[id] ?? NavState() }
+
+    func devReport(of id: UInt64) -> DevPageReport { devReports[id] ?? DevPageReport() }
+
+    func consoleEntries(of id: UInt64) -> [ConsoleEntry] { consoleLogs[id] ?? [] }
+
+    func clearConsole(of id: UInt64) { consoleLogs[id] = nil }
+
+    func spaceID(of tabID: UInt64) -> UInt64? {
+        snapshot.spaces.first { space in
+            (space.favorites + space.pinned.compactMap(\.tab) + space.today).contains { $0.id == tabID }
+        }?.id
+    }
+
+    /// Opens a tab for an agent: behind the one on screen unless `focus`,
+    /// so it doesn't take the page away from the person.
+    func openTabForAgent(_ url: String, focus: Bool) -> UInt64? {
+        guard !url.isEmpty, let id = core.openTab(spaceId: activeSpace.id, url: url, activate: focus) else { return nil }
+        refresh()
+        if !focus, let tab = core.tab(id: id) { createView(for: tab) }
+        return id
+    }
+
+    /// Marks the tab as being worked by an agent for a moment: on screen,
+    /// the page glows, so it's clear something other than the person is
+    /// acting on it.
+    func agentActed(on id: UInt64) {
+        let wasActive = agentActiveTabs.contains(id)
+        agentActiveTabs.insert(id)
+        agentTimers[id]?.invalidate()
+        let timer = Timer(timeInterval: 1.6, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.agentActiveTabs.remove(id)
+                self.agentTimers[id] = nil
+                if id == self.visibleTabID { self.changed(.agent) }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        agentTimers[id] = timer
+        if !wasActive, id == visibleTabID { changed(.agent) }
+    }
+
+    var agentActingOnVisibleTab: Bool { visibleTabID.map { agentActiveTabs.contains($0) } ?? false }
+}
+
 // MARK: - Engine events
 
 extension BrowserStore: MBWebViewDelegate {
@@ -1170,6 +1254,8 @@ extension BrowserStore: MBWebViewDelegate {
     nonisolated func webView(_ view: MBWebView, didChangeLoading loading: Bool, canGoBack: Bool, canGoForward: Bool) {
         MainActor.assumeIsolated {
             guard isCurrent(view) else { return }
+            // A new page starts a new console.
+            if loading, navStates[view.tabID]?.isLoading != true { consoleLogs[view.tabID] = nil }
             let state = NavState(isLoading: loading, canGoBack: canGoBack, canGoForward: canGoForward)
             navStates[view.tabID] = state
             if view.tabID == visibleTabID { nav = state }
@@ -1288,6 +1374,16 @@ extension BrowserStore: MBWebViewDelegate {
             guard isCurrent(view), devStates[view.tabID]?.picking == true else { return }
             devStates[view.tabID]?.picking = false
             if view.tabID == visibleTabID { changed(.developer) }
+        }
+    }
+
+    nonisolated func webView(_ view: MBWebView, didLogConsoleMessage message: String, level: Int, source: String, line: Int32) {
+        MainActor.assumeIsolated {
+            guard isCurrent(view) else { return }
+            var log = consoleLogs[view.tabID] ?? []
+            log.append(ConsoleEntry(level: level, text: message, source: source, line: Int(line)))
+            if log.count > 200 { log.removeFirst(log.count - 200) }
+            consoleLogs[view.tabID] = log
         }
     }
 

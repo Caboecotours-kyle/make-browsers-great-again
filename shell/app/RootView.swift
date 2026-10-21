@@ -13,6 +13,7 @@ final class RootView: NSView {
     private let emptyHint: EmptySpaceHintView
     private let dropPreview = DropPreviewView()
     private let devToolbar: DevToolbarView
+    private let agentGlow = AgentGlowView()
     private let peek = PeekContainerView()
     private let smear = MotionSmearView()
     private let toast: ToastView
@@ -35,6 +36,7 @@ final class RootView: NSView {
         card.addSubview(emptyHint)
         card.addSubview(dropPreview)
         card.addSubview(devToolbar)
+        card.addSubview(agentGlow)
         emptyHint.autoresizingMask = [.width, .height]
         dropPreview.autoresizingMask = [.width, .height]
         dropPreview.isHidden = true
@@ -86,6 +88,8 @@ final class RootView: NSView {
             updateEmptyHint()
         case .toast:
             updateToast()
+        case .agent:
+            agentGlow.setActive(store.agentActingOnVisibleTab)
         case .dragOverPage:
             updateDropPreview()
         case .chrome:
@@ -182,6 +186,8 @@ final class RootView: NSView {
         // The card isn't flipped: the strip runs along its top.
         // Over the page only, not docked DevTools beside it.
         let page = store.webContainer.pageArea
+        agentGlow.frame = card.bounds
+        agentGlow.cornerRadius = card.isCard ? card.cornerRadius : 0
         devToolbar.frame = NSRect(x: 0, y: card.bounds.height - DevToolbarView.height,
                                   width: page.width > 0 ? page.width : card.bounds.width, height: DevToolbarView.height)
         // Out of sight, the sidebar and rail stay attached but hidden:
@@ -450,6 +456,71 @@ final class BackdropView: NSView {
         }
         gradient.colors = colors
         CATransaction.commit()
+    }
+}
+
+/// An edge of light around the page while an agent acts on it, so it's
+/// always clear when something other than the person is driving.
+final class AgentGlowView: NSView {
+    private let ring = CALayer()
+    var cornerRadius: CGFloat = 8 {
+        didSet { if cornerRadius != oldValue { needsLayout = true } }
+    }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.masksToBounds = false
+        ring.borderWidth = 2
+        ring.cornerCurve = .continuous
+        ring.shadowRadius = 12
+        ring.shadowOffset = .zero
+        ring.shadowOpacity = 1
+        ring.opacity = 0
+        layer?.addSublayer(ring)
+        isHidden = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        ring.frame = bounds
+        ring.cornerRadius = cornerRadius
+        CATransaction.commit()
+    }
+
+    func setActive(_ active: Bool) {
+        let accent = NSColor.controlAccentColor
+        ring.borderColor = accent.cgColor
+        ring.shadowColor = accent.withAlphaComponent(0.8).cgColor
+        if active { isHidden = false }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = ring.presentation()?.opacity ?? ring.opacity
+        fade.toValue = active ? 1 : 0
+        fade.duration = Motion.reduced ? 0 : (active ? Motion.quick.duration : Motion.fade.duration * 2)
+        ring.opacity = active ? 1 : 0
+        ring.add(fade, forKey: "fade")
+        // It breathes while the agent works.
+        if active, !Motion.reduced, ring.animation(forKey: "breathe") == nil {
+            let breathe = CABasicAnimation(keyPath: "shadowRadius")
+            breathe.fromValue = 6
+            breathe.toValue = 16
+            breathe.duration = 0.9
+            breathe.autoreverses = true
+            breathe.repeatCount = .infinity
+            ring.add(breathe, forKey: "breathe")
+        } else if !active {
+            DispatchQueue.main.asyncAfter(deadline: .now() + fade.duration) { [weak self] in
+                guard let self, self.ring.opacity == 0 else { return }
+                self.ring.removeAnimation(forKey: "breathe")
+                self.isHidden = true
+            }
+        }
     }
 }
 

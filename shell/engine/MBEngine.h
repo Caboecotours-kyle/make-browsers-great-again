@@ -63,6 +63,13 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
 - (void)webViewDidStopPicking:(MBWebView*)view;
 /// DevTools opened or closed: -devToolsWindow appeared or went away.
 - (void)webViewDidChangeDevTools:(MBWebView*)view;
+/// A console message from the page (level 0 debug, 1 info, 2 warning,
+/// 3 error).
+- (void)webView:(MBWebView*)view
+    didLogConsoleMessage:(NSString*)message
+                   level:(NSInteger)level
+                  source:(NSString*)source
+                    line:(int)line;
 @end
 
 @interface MBEngine : NSObject
@@ -149,6 +156,13 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
 - (void)clearSiteDataAndReload;
 /// The whole page, not just what fits the view, as PNG; nil on failure.
 - (void)captureFullPage:(void (^)(NSData* _Nullable png))completion;
+
+/// Sends a DevTools protocol command with |params| (a JSON object, or nil);
+/// |completion| gets the result as JSON, or nil and the error.
+- (void)sendDevToolsCommand:(NSString*)method
+                     params:(nullable NSString*)params
+                 completion:(void (^)(NSString* _Nullable result,
+                                      NSString* _Nullable error))completion;
 /// Gives keyboard focus to the page.
 - (void)focusContent;
 /// Asks the page whether it is playing audible media. The answer arrives via

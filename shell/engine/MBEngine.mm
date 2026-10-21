@@ -860,6 +860,16 @@ class WebClient : public BaseClient,
     }
     if (text.rfind(kMediaProbePrefix, 0) != 0) {
       CountConsoleMessage(level);
+      NSInteger severity = level >= LOGSEVERITY_ERROR     ? 3
+                           : level == LOGSEVERITY_WARNING ? 2
+                           : level == LOGSEVERITY_INFO    ? 1
+                                                          : 0;
+      MBWebView* view = view_;
+      [view.delegate webView:view
+          didLogConsoleMessage:@(text.c_str())
+                         level:severity
+                        source:ToNS(source)
+                          line:line];
       return false;
     }
     [view_ engineSetMediaPlaying:text.back() == '1'];
@@ -1049,6 +1059,13 @@ class WebClient : public BaseClient,
                               bool success,
                               const void* result,
                               size_t result_size) override {
+    auto raw = raw_replies_.find(message_id);
+    if (raw != raw_replies_.end()) {
+      RawReply done = std::move(raw->second);
+      raw_replies_.erase(raw);
+      done(success, std::string(static_cast<const char*>(result), result_size));
+      return;
+    }
     auto reply = replies_.find(message_id);
     if (reply != replies_.end()) {
       Reply done = std::move(reply->second);
@@ -1143,6 +1160,30 @@ class WebClient : public BaseClient,
       }
     } else if (done) {
       replies_[id] = std::move(done);
+    }
+  }
+
+  using RawReply = std::function<void(bool, const std::string&)>;
+
+  // Sends a command given as JSON; |done| gets the result or error JSON.
+  void CallRaw(CefRefPtr<CefBrowser> browser,
+               const std::string& method,
+               const std::string& params,
+               RawReply done) {
+    CefRefPtr<CefDictionaryValue> args;
+    if (!params.empty()) {
+      CefRefPtr<CefValue> value = CefParseJSON(params, JSON_PARSER_RFC);
+      if (!value || value->GetType() != VTYPE_DICTIONARY) {
+        done(false, "{\"message\":\"params must be a JSON object\"}");
+        return;
+      }
+      args = value->GetDictionary();
+    }
+    int id = browser->GetHost()->ExecuteDevToolsMethod(0, method, args);
+    if (id == 0) {
+      done(false, "{\"message\":\"the command could not be sent\"}");
+    } else {
+      raw_replies_[id] = std::move(done);
     }
   }
 
@@ -1363,6 +1404,7 @@ class WebClient : public BaseClient,
   CFAbsoluteTime navigation_started_ = 0;
   int load_error_ = 0;
   std::map<int, Reply> replies_;
+  std::map<int, RawReply> raw_replies_;
   bool picking_ = false;
   bool network_enabled_ = false;
 
@@ -1867,6 +1909,31 @@ class WebClient : public BaseClient,
     return;
   }
   _client->CaptureFullPage(_browser, completion);
+}
+
+- (void)sendDevToolsCommand:(NSString*)method
+                     params:(NSString*)params
+                 completion:(void (^)(NSString*, NSString*))completion {
+  if (!_browser) {
+    completion(nil, @"the page isn't loaded");
+    return;
+  }
+  _client->CallRaw(_browser, method.UTF8String, params.UTF8String ?: "",
+                   [completion](bool success, const std::string& json) {
+                     NSString* text = @(json.c_str());
+                     if (success) {
+                       completion(text, nil);
+                       return;
+                     }
+                     NSDictionary* error = [NSJSONSerialization
+                         JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding]
+                                    options:0
+                                      error:nil];
+                     completion(nil, [error isKindOfClass:NSDictionary.class] &&
+                                             error[@"message"]
+                                         ? error[@"message"]
+                                         : text);
+                   });
 }
 
 - (void)focusContent {

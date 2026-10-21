@@ -1,13 +1,14 @@
 import AppKit
 
 enum SettingsPane: Int, CaseIterable {
-    case general, privacy, developer
+    case general, privacy, developer, agents
 
     var title: String {
         switch self {
         case .general: "General"
         case .privacy: "Privacy"
         case .developer: "Developer"
+        case .agents: "Agents"
         }
     }
 
@@ -16,6 +17,7 @@ enum SettingsPane: Int, CaseIterable {
         case .general: "gearshape"
         case .privacy: "hand.raised"
         case .developer: "hammer"
+        case .agents: "sparkles"
         }
     }
 }
@@ -77,6 +79,7 @@ private final class SettingsPaneController: NSViewController {
         case .general: rows = generalRows()
         case .privacy: rows = privacyRows()
         case .developer: rows = developerRows()
+        case .agents: rows = agentRows()
         }
         let grid = NSGridView(views: rows)
         grid.translatesAutoresizingMaskIntoConstraints = false
@@ -84,6 +87,8 @@ private final class SettingsPaneController: NSViewController {
         grid.columnSpacing = 10
         grid.column(at: 0).xPlacement = .trailing
         grid.column(at: 0).width = 150
+        // Captions wrap at this width; a narrower column would cut them off.
+        grid.column(at: 1).width = 340
         grid.rowAlignment = .firstBaseline
         // Captions sit closer under the control they explain.
         for (i, row) in rows.enumerated() where row.last?.identifier == Self.captionID {
@@ -98,6 +103,8 @@ private final class SettingsPaneController: NSViewController {
             grid.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
         ])
         self.view = view
+        // Values first: a caption filled in later would be cut off.
+        refresh()
         preferredContentSize = view.fittingSize
         NotificationCenter.default.addObserver(self, selector: #selector(refresh),
                                                name: UserDefaults.didChangeNotification, object: nil)
@@ -207,6 +214,44 @@ private final class SettingsPaneController: NSViewController {
         ]
     }
 
+    private func agentRows() -> [[NSView]] {
+        let enabled = NSSwitch()
+        enabled.controlSize = .small
+        enabled.onAction { [weak enabled] in
+            UserDefaults.standard.set(enabled?.state == .on, forKey: AgentSettings.enabledKey)
+        }
+        let status = caption("")
+        let install = NSButton.push("Install the mbga Command") {
+            if let error = AgentSettings.installCommand() {
+                status.stringValue = "Couldn't install it: \(error)"
+            } else {
+                status.stringValue = Self.installedNote
+            }
+        }
+        let link = AgentSettings.commandLink.path
+        let setup = NSTextField(wrappingLabelWithString: "claude mcp add mbga -- \(link) mcp")
+        setup.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        setup.isSelectable = true
+        setup.preferredMaxLayoutWidth = 340
+        refreshers.append {
+            enabled.state = AgentSettings.enabled ? .on : .off
+            if status.stringValue.isEmpty || status.stringValue == Self.installedNote {
+                status.stringValue = FileManager.default.fileExists(atPath: link) ? Self.installedNote
+                    : "Puts mbga in ~/.local/bin, so any terminal or agent can run it."
+            }
+        }
+        return [
+            [label("Agent access:"), enabled],
+            [NSGridCell.emptyContentView, caption("Agents on this Mac (Claude Code, MCP apps, your scripts) can open tabs, read pages, click and type, through the mbga command. They see pages as short outlines rather than screenshots, so it costs them few tokens. Only apps running as you can connect, and the page glows while an agent acts on it.")],
+            [label("Command:"), install],
+            [NSGridCell.emptyContentView, status],
+            [label("MCP:"), setup],
+            [NSGridCell.emptyContentView, caption("Adds MBGA to Claude Code as an MCP server. Other MCP apps: run \"mbga mcp\". Run \"mbga help\" for every command.")],
+        ]
+    }
+
+    private static let installedNote = "Installed at ~/.local/bin/mbga. Run \"mbga help\" in a terminal to try it."
+
     // MARK: Controls
 
     private static let captionID = NSUserInterfaceItemIdentifier("caption")
@@ -222,7 +267,7 @@ private final class SettingsPaneController: NSViewController {
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         label.textColor = .secondaryLabelColor
         label.isSelectable = false
-        label.preferredMaxLayoutWidth = 330
+        label.preferredMaxLayoutWidth = 340
         label.identifier = Self.captionID
         return label
     }

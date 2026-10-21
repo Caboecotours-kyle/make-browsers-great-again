@@ -125,6 +125,11 @@ target_compile_options(mbga PRIVATE
 target_link_libraries(mbga PRIVATE
   mbga_engine libcef_dll_wrapper "${CORE_LIB}" ${CEF_STANDARD_LIBS})
 
+# The `mbga` command agents use; it goes into Contents/Resources/bin.
+add_executable(mbga_cli shell/cli/main.swift)
+set_target_properties(mbga_cli PROPERTIES OUTPUT_NAME "mbga-cli")
+add_dependencies(mbga mbga_cli)
+
 # Assemble the bundle: helpers and the framework go into Contents/Frameworks.
 # rsync keeps incremental builds fast (the framework is ~320 MB).
 set(_app "$<TARGET_BUNDLE_DIR:mbga>")
@@ -144,6 +149,10 @@ foreach(_name ${MBGA_HELPER_NAMES})
             "${_app}/Contents/Frameworks/${_name}.app/"
     VERBATIM)
 endforeach()
+add_custom_command(TARGET mbga POST_BUILD
+  COMMAND mkdir -p "${_app}/Contents/Resources/bin"
+  COMMAND cp "$<TARGET_FILE:mbga_cli>" "${_app}/Contents/Resources/bin/mbga"
+  VERBATIM)
 add_custom_command(TARGET mbga POST_BUILD
   COMMAND codesign --force --deep --sign - "${_app}"
   COMMENT "Ad-hoc signing ${MBGA_PRODUCT_NAME}.app"
