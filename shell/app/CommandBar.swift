@@ -671,6 +671,7 @@ struct CommandAction {
                 store.showToast(Toast(message: "History cleared", symbol: "clock.arrow.circlepath"))
             },
         ]
+        list += developerActions(for: store)
         if store.canReopen {
             list.append(CommandAction(id: "reopen", title: "Reopen Closed Tab", symbol: "arrow.uturn.backward", shortcut: "⇧⌘T",
                                       keywords: ["undo", "restore"]) { store.undoClose() })
@@ -685,6 +686,60 @@ struct CommandAction {
                                       keywords: ["theme", "tint", "color", "appearance"]) {
                 UserDefaults.standard.set(style.rawValue, forKey: TintStyle.defaultsKey)
             })
+        }
+        return list
+    }
+
+    /// Developer Mode's tools, and the switch to turn it on.
+    @MainActor
+    private static func developerActions(for store: BrowserStore) -> [CommandAction] {
+        var list = [
+            CommandAction(id: "settings", title: "Settings…", symbol: "gearshape", shortcut: "⌘,", keywords: ["preferences", "options"]) {
+                store.openSettings?(nil)
+            },
+            CommandAction(id: "developer-mode", title: DeveloperSettings.enabled ? "Turn Off Developer Mode" : "Turn On Developer Mode",
+                          symbol: "hammer", keywords: ["dev", "toolbar", "localhost"]) {
+                UserDefaults.standard.set(!DeveloperSettings.enabled, forKey: DeveloperSettings.enabledKey)
+            },
+        ]
+        guard DeveloperSettings.enabled, store.visibleTab != nil else { return list }
+        let state = store.visibleDevState
+        let keywords = ["dev", "developer"]
+        list += [
+            CommandAction(id: "dev-toolbar", title: store.developerToolbarShown ? "Hide Developer Toolbar" : "Show Developer Toolbar",
+                          symbol: "wrench.and.screwdriver", shortcut: "⇧⌘D", keywords: keywords) { store.toggleDeveloperToolbar() },
+            CommandAction(id: "hard-reload", title: "Reload Without Cache", symbol: "arrow.clockwise", shortcut: "⇧⌘R",
+                          keywords: keywords + ["hard", "refresh", "empty"]) { store.hardReload() },
+            CommandAction(id: "pick", title: "Pick an Element", symbol: "cursorarrow.rays", shortcut: "⌥⌘C",
+                          keywords: keywords + ["inspect", "select"]) { store.togglePicking() },
+            CommandAction(id: "screenshot", title: "Screenshot the Whole Page", symbol: "camera.viewfinder",
+                          keywords: keywords + ["capture", "full", "image"]) { store.screenshotPage() },
+            CommandAction(id: "view-source", title: "View Page Source", symbol: "chevron.left.forwardslash.chevron.right", shortcut: "⌥⌘U",
+                          keywords: keywords + ["html", "code"]) { store.viewSource() },
+            CommandAction(id: "clear-site", title: "Clear Site Data and Reload", symbol: "trash",
+                          keywords: keywords + ["cookies", "storage", "cache", "reset"]) { store.clearSiteData() },
+            CommandAction(id: "cache", title: state.cacheDisabled ? "Enable Cache" : "Disable Cache", symbol: "externaldrive",
+                          keywords: keywords + ["network"]) { store.updateDev { $0.cacheDisabled.toggle() } },
+            CommandAction(id: "scripts", title: state.scriptsDisabled ? "Enable JavaScript" : "Disable JavaScript", symbol: "curlybraces",
+                          keywords: keywords + ["js"]) { store.toggleScripts() },
+        ]
+        for scheme in [ColorSchemePreview.dark, .light, .system] where scheme != state.colorScheme {
+            list.append(CommandAction(id: "scheme-\(scheme.rawValue)", title: "Preview Colour Scheme: \(scheme.title)", symbol: scheme.symbol,
+                                      keywords: keywords + ["dark", "light", "mode", "appearance", "color"]) {
+                store.updateDev { $0.colorScheme = scheme }
+            })
+        }
+        for preset in DevicePreset.all where preset != state.device {
+            list.append(CommandAction(id: "device-\(preset.name)", title: "Preview on \(preset.name)", symbol: preset.symbol,
+                                      keywords: keywords + ["device", "responsive", "mobile", "viewport"]) { store.setDevice(preset) })
+        }
+        if state.device != nil {
+            list.append(CommandAction(id: "device-off", title: "Stop Device Preview", symbol: "rectangle",
+                                      keywords: keywords + ["responsive", "desktop"]) { store.setDevice(nil) })
+        }
+        for preset in NetworkPreset.allCases where preset != state.network {
+            list.append(CommandAction(id: "network-\(preset)", title: "Network: \(preset.title)", symbol: "wifi",
+                                      keywords: keywords + ["throttle", "slow", "offline"]) { store.updateDev { $0.network = preset } })
         }
         return list
     }

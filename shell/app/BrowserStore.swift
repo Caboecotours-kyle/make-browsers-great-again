@@ -61,6 +61,9 @@ extension NSPasteboard.PasteboardType {
 enum StoreChange {
     case snapshot, nav, layout, peek, commandBar, toast, media, cleanup, blocked
     case pageColors, dragOverPage, drag, renaming, spaceEditor, importSheet, chrome
+    /// The visible tab's developer toolbar: its emulations, how its page
+    /// loaded, or whether it shows.
+    case developer
 }
 
 /// The shell's single source of UI state. Browser data lives in the Rust core;
@@ -150,6 +153,13 @@ final class BrowserStore: NSObject {
     /// tab, so a loading page doesn't redraw on every blocked request.
     private var blockedCounts: [UInt64: Int] = [:]
     private var blockedCountTimer: Timer?
+    /// Developer Mode emulations by tab, and how each page loaded.
+    private var devStates: [UInt64: DevTabState] = [:]
+    private var devReports: [UInt64: DevPageReport] = [:]
+    /// Tabs whose developer toolbar was shown or hidden by hand (⇧⌘D).
+    private var devToolbarOverrides: [UInt64: Bool] = [:]
+    /// Opens Settings, at a pane if given.
+    var openSettings: ((SettingsPane?) -> Void)?
     /// Theme colors pages declared, by site, so a site that was put to sleep
     /// keeps its color.
     private(set) var pageColors: [String: RGB] = [:] {
@@ -213,6 +223,9 @@ final class BrowserStore: NSObject {
             guard let self, snapshot.spaces.indices.contains(index) else { return }
             warmSpace(snapshot.spaces[index].id)
         }
+        webContainer.viewport = { [weak self] view in self?.devStates[view.tabID]?.viewport }
+        NotificationCenter.default.addObserver(self, selector: #selector(defaultsChanged),
+                                               name: UserDefaults.didChangeNotification, object: nil)
     }
 
     // MARK: - Derived state
@@ -289,8 +302,16 @@ final class BrowserStore: NSObject {
         // A tab left playing should show the mini player right away rather
         // than at the next idle check.
         if lastVisibleTab != visible {
-            if let previous = lastVisibleTab { views[previous]?.probeMedia() }
+            if let previous = lastVisibleTab {
+                views[previous]?.probeMedia()
+                // Picking an element ends with the page out of sight.
+                if devStates[previous]?.picking == true {
+                    devStates[previous]?.picking = false
+                    views[previous]?.setPicking(false)
+                }
+            }
             lastVisibleTab = visible
+            changed(.developer)
         }
     }
 
@@ -299,6 +320,8 @@ final class BrowserStore: NSObject {
         let url = tab.url.isEmpty ? "about:blank" : tab.url
         let view = MBWebView(url: url, profilePath: core.profileDir(profileId: profile), tabID: tab.id)
         view.delegate = self
+        // A tab put to sleep wakes with the emulations it had.
+        if let state = devStates[tab.id] { view.apply(state) }
         views[tab.id] = view
         webContainer.add(view)
         core.setLive(id: tab.id, live: true)
@@ -314,6 +337,8 @@ final class BrowserStore: NSObject {
         guard let view = views.removeValue(forKey: id) else { return }
         navStates[id] = nil
         blockedCounts[id] = nil
+        devReports[id] = nil
+        devStates[id]?.picking = false
         if pausedMediaTab == id { pausedMediaTab = nil }
         view.isHidden = true
         view.close()
@@ -554,6 +579,8 @@ final class BrowserStore: NSObject {
     func zoomOut() { visibleView?.zoomOut() }
     func resetZoom() { visibleView?.resetZoom() }
     func showDevTools() { visibleView?.showDevTools() }
+
+    func reloadIgnoringCache() { visibleView?.reloadIgnoringCache() }
 
     func copyVisibleURL() {
         if let url = visibleTab?.url { copyLink(url) }
@@ -977,6 +1004,136 @@ final class BrowserStore: NSObject {
     }
 }
 
+// MARK: - Developer Mode
+
+extension BrowserStore {
+    var visibleDevState: DevTabState { visibleTabID.flatMap { devStates[$0] } ?? DevTabState() }
+    var visibleDevReport: DevPageReport { visibleTabID.flatMap { devReports[$0] } ?? DevPageReport() }
+
+    /// Whether the visible tab gets the developer toolbar: a local site, or
+    /// any site if so set, unless shown or hidden by hand.
+    var developerToolbarShown: Bool {
+        guard DeveloperSettings.enabled, !contentFullscreen, let tab = visibleTab, !tab.url.isEmpty else { return false }
+        if let shown = devToolbarOverrides[tab.id] { return shown }
+        return DeveloperSettings.everywhere || DevSite.isLocal(tab.url)
+    }
+
+    /// Shows or hides the toolbar on the visible tab, turning Developer Mode
+    /// on if needed.
+    func toggleDeveloperToolbar() {
+        guard let id = visibleTabID else { return }
+        if !DeveloperSettings.enabled {
+            devToolbarOverrides[id] = true
+            UserDefaults.standard.set(true, forKey: DeveloperSettings.enabledKey)
+        } else {
+            devToolbarOverrides[id] = !developerToolbarShown
+        }
+        changed(.developer)
+    }
+
+    /// Changes the visible tab's emulations and sends the change to its page.
+    func updateDev(_ change: (inout DevTabState) -> Void) {
+        guard let id = visibleTabID else { return }
+        let old = devStates[id] ?? DevTabState()
+        var state = old
+        change(&state)
+        guard state != old else { return }
+        devStates[id] = state
+        views[id]?.apply(state, from: old)
+        if state.viewport != old.viewport { webContainer.viewportChanged() }
+        changed(.developer)
+    }
+
+    func hardReload() { visibleView?.reloadIgnoringCache() }
+
+    func togglePicking() {
+        guard visibleView != nil else { return }
+        updateDev { $0.picking.toggle() }
+    }
+
+    func setDevice(_ device: DevicePreset?) {
+        updateDev {
+            $0.device = device
+            if device == nil { $0.landscape = false }
+        }
+    }
+
+    /// Scripts that already ran stay; a reload shows the page without them.
+    func toggleScripts() {
+        updateDev { $0.scriptsDisabled.toggle() }
+        visibleView?.reload()
+    }
+
+    func clearSiteData() {
+        guard let view = visibleView else { return }
+        view.clearSiteDataAndReload()
+        showToast(Toast(message: "Site data cleared", symbol: "trash"), duration: 1.6)
+    }
+
+    func viewSource() {
+        guard let url = visibleTab?.url, !url.isEmpty, !url.hasPrefix("view-source:") else { return }
+        _ = core.openTab(spaceId: activeSpace.id, url: "view-source:" + url, activate: true)
+        refresh()
+    }
+
+    func openVisible(in app: URL) {
+        guard let url = visibleTab?.url, let page = URL(string: url) else { return }
+        NSWorkspace.shared.open([page], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    func loadInVisibleTab(_ url: String) {
+        open(url, mode: .editCurrent)
+    }
+
+    /// The whole page as PNG, copied and saved to Downloads.
+    func screenshotPage() {
+        guard let view = visibleView, let tab = visibleTab else { return }
+        view.captureFullPage { [weak self] png in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                guard let png else {
+                    self.showToast(Toast(message: "Couldn't take the screenshot", symbol: "exclamationmark.triangle"), duration: 2.5)
+                    return
+                }
+                // MBGA_DEBUG_SCREENSHOTS=<dir> saves test copies' screenshots
+                // there and leaves the clipboard alone.
+                let debugDir = ProcessInfo.processInfo.environment["MBGA_DEBUG_SCREENSHOTS"]
+                if debugDir == nil {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setData(png, forType: .png)
+                }
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+                let site = DevSite.label(tab.url).replacingOccurrences(of: ":", with: " ").replacingOccurrences(of: "/", with: " ")
+                let name = "\(site) \(formatter.string(from: Date())).png"
+                let downloads = debugDir.map { URL(fileURLWithPath: $0) }
+                    ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+                try? png.write(to: downloads.appendingPathComponent(name))
+                self.showToast(Toast(message: "Screenshot copied and saved to Downloads", symbol: "camera.viewfinder"), duration: 2.5)
+            }
+        }
+    }
+
+    /// Turning Developer Mode off drops every emulation with the toolbar.
+    @objc fileprivate func defaultsChanged() {
+        if !DeveloperSettings.enabled, !devStates.isEmpty {
+            for (id, state) in devStates { views[id]?.apply(DevTabState(), from: state) }
+            devStates = [:]
+            webContainer.viewportChanged()
+        }
+        if !DeveloperSettings.enabled { devToolbarOverrides = [:] }
+        changed(.developer)
+    }
+
+    fileprivate func updateDevReport(_ id: UInt64, _ change: (inout DevPageReport) -> Void) {
+        var report = devReports[id] ?? DevPageReport()
+        change(&report)
+        guard report != devReports[id] else { return }
+        devReports[id] = report
+        if id == visibleTabID, DeveloperSettings.enabled { changed(.developer) }
+    }
+}
+
 // MARK: - Engine events
 
 extension BrowserStore: MBWebViewDelegate {
@@ -1094,6 +1251,34 @@ extension BrowserStore: MBWebViewDelegate {
 
     private func publishBlockedCount() {
         visibleBlockedCount = visibleTabID.flatMap { blockedCounts[$0] } ?? 0
+    }
+
+    nonisolated func webView(_ view: MBWebView, didChangeConsoleErrors errors: UInt, warnings: UInt) {
+        MainActor.assumeIsolated {
+            guard isCurrent(view) else { return }
+            updateDevReport(view.tabID) {
+                $0.errors = Int(errors)
+                $0.warnings = Int(warnings)
+            }
+        }
+    }
+
+    nonisolated func webView(_ view: MBWebView, didFinishLoadWithStatus status: Int32, duration: TimeInterval) {
+        MainActor.assumeIsolated {
+            guard isCurrent(view) else { return }
+            updateDevReport(view.tabID) {
+                $0.status = Int(status)
+                $0.duration = duration
+            }
+        }
+    }
+
+    nonisolated func webViewDidStopPicking(_ view: MBWebView) {
+        MainActor.assumeIsolated {
+            guard isCurrent(view), devStates[view.tabID]?.picking == true else { return }
+            devStates[view.tabID]?.picking = false
+            if view.tabID == visibleTabID { changed(.developer) }
+        }
     }
 
     nonisolated func webViewDidClose(_ view: MBWebView) {

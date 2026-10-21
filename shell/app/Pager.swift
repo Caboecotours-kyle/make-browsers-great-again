@@ -215,6 +215,9 @@ final class PagerModel {
 /// views are throttled by the engine automatically.
 final class WebContainerView: NSView {
     private weak var current: MBWebView?
+    /// The size a tab's page shows at instead of filling the container (a
+    /// device preview in Developer Mode), or nil.
+    var viewport: ((MBWebView) -> NSSize?)?
 
     override var isFlipped: Bool { true }
 
@@ -233,6 +236,16 @@ final class WebContainerView: NSView {
             layer?.cornerRadius = newValue
             layer?.cornerCurve = .continuous
         }
+    }
+
+    override func layout() {
+        super.layout()
+        placeCurrent()
+    }
+
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        placeCurrent()
     }
 
     /// A one-pixel edge drawn above the page, or none.
@@ -260,10 +273,10 @@ final class WebContainerView: NSView {
             view.layer?.removeAnimation(forKey: "opacity")
             view.alphaValue = 1
             view.layer?.zPosition = 0
-            view.frame = bounds
             view.isHidden = false
         }
         current = view
+        placeCurrent()
         guard let previous else {
             // From an empty space: the page fades in over the empty field.
             if crossfade, let view, !Motion.reduced {
@@ -286,6 +299,51 @@ final class WebContainerView: NSView {
             previous.alphaValue = 1
             if previous !== self?.current { previous.isHidden = true }
         }
+    }
+}
+
+extension WebContainerView {
+    /// A device preview turned on or off: the page takes its new size and
+    /// fades in at it, rather than squeezing there.
+    func viewportChanged() {
+        placeCurrent()
+        guard let current, !Motion.reduced, window != nil else { return }
+        current.alphaValue = 0
+        Motion.animate(Motion.settle) { current.animator().alphaValue = 1 }
+    }
+
+    /// Fills the container with the visible page, or centres it at its
+    /// device size below the developer toolbar, on a quiet surround.
+    func placeCurrent() {
+        guard let current else { return }
+        guard let size = viewport?(current) else {
+            if current.frame != bounds { current.frame = bounds }
+            if current.layer?.cornerRadius != 0 { setPreview(current, radius: 0) }
+            return
+        }
+        let top = DevToolbarView.height, margin: CGFloat = 16
+        let width = min(size.width, bounds.width - 2 * margin)
+        let height = min(size.height, bounds.height - top - margin)
+        let frame = NSRect(x: ((bounds.width - width) / 2).rounded(), y: top, width: max(width, 0), height: max(height, 0))
+        if current.frame != frame { current.frame = frame }
+        setPreview(current, radius: min(size.width, size.height) < 500 ? 24 : 12)
+    }
+
+    private func setPreview(_ view: MBWebView, radius: CGFloat) {
+        let preview = radius > 0
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        view.layer?.cornerRadius = radius
+        view.layer?.cornerCurve = .continuous
+        view.layer?.masksToBounds = preview
+        view.layer?.borderWidth = preview ? 1 / (window?.backingScaleFactor ?? 2) : 0
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            view.layer?.borderColor = Theme.faint(0.18).cgColor
+            layer?.backgroundColor = preview
+                ? NSColor(name: nil) { $0.isDark ? NSColor(white: 0.12, alpha: 1) : NSColor(white: 0.9, alpha: 1) }.cgColor
+                : NSColor.white.cgColor
+        }
+        CATransaction.commit()
     }
 }
 

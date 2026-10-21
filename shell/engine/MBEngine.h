@@ -48,6 +48,19 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
 - (void)webView:(MBWebView*)view didChangeBlockedCount:(NSUInteger)count;
 /// The engine finished destroying the browser after -close.
 - (void)webViewDidClose:(MBWebView*)view;
+/// Console errors and warnings since the page started loading.
+- (void)webView:(MBWebView*)view
+    didChangeConsoleErrors:(NSUInteger)errors
+                  warnings:(NSUInteger)warnings;
+/// The page finished loading with an HTTP |status| (0 for none, or a
+/// negative network error code when it failed) |duration| seconds after
+/// navigation started.
+- (void)webView:(MBWebView*)view
+    didFinishLoadWithStatus:(int)status
+                   duration:(NSTimeInterval)duration;
+/// Picking an element ended: one was picked (and DevTools opened on it) or
+/// the person pressed Escape.
+- (void)webViewDidStopPicking:(MBWebView*)view;
 @end
 
 @interface MBEngine : NSObject
@@ -105,6 +118,30 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
 - (void)zoomOut;
 - (void)resetZoom;
 - (void)showDevTools;
+
+// Developer tools. Emulations last until changed or the tab closes.
+
+/// Reloads bypassing the cache.
+- (void)reloadIgnoringCache;
+/// Highlights elements under the pointer until one is clicked, then opens
+/// DevTools on it. NO cancels.
+- (void)setPicking:(BOOL)picking;
+/// Emulates a CSS media feature, e.g. "prefers-color-scheme" = "dark"; an
+/// empty value stops emulating it.
+- (void)emulateMediaFeature:(NSString*)name value:(NSString*)value;
+/// Makes the page think it runs on a phone or tablet (mobile viewport, touch
+/// and |userAgent|) at the view's size, or stops when |userAgent| is nil.
+- (void)emulateMobileWithUserAgent:(nullable NSString*)userAgent;
+- (void)setCacheDisabled:(BOOL)disabled;
+- (void)setScriptsDisabled:(BOOL)disabled;
+/// Slows the network to |latency| ms and |throughput| bytes per second each
+/// way; a negative throughput is offline, zero latency and throughput off.
+- (void)emulateNetworkWithLatency:(double)latency throughput:(double)throughput;
+/// Deletes the cookies, storage and caches of the page's origin, then
+/// reloads it.
+- (void)clearSiteDataAndReload;
+/// The whole page, not just what fits the view, as PNG; nil on failure.
+- (void)captureFullPage:(void (^)(NSData* _Nullable png))completion;
 /// Gives keyboard focus to the page.
 - (void)focusContent;
 /// Asks the page whether it is playing audible media. The answer arrives via

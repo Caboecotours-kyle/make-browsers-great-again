@@ -7,7 +7,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -42,6 +44,9 @@
 - (void)engineSetThemeColor:(NSString*)color;
 - (void)engineSetCapturing:(BOOL)capturing;
 - (void)engineSetBlockedCount:(NSUInteger)count;
+- (void)engineSetConsoleErrors:(NSUInteger)errors warnings:(NSUInteger)warnings;
+- (void)engineDidFinishLoad:(int)status duration:(NSTimeInterval)duration;
+- (void)engineDidStopPicking;
 @end
 
 namespace {
@@ -554,6 +559,14 @@ class AuxiliaryClient : public BaseClient, public CefLifeSpanHandler {
   IMPLEMENT_REFCOUNTING(AuxiliaryClient);
 };
 
+// A number from DevTools JSON, which writes whole numbers as integers.
+double Number(CefRefPtr<CefValue> value) {
+  if (!value) {
+    return 0;
+  }
+  return value->GetType() == VTYPE_INT ? value->GetInt() : value->GetDouble();
+}
+
 void ShowDevTools(CefRefPtr<CefBrowser> browser, const CefPoint& at) {
   CefWindowInfo info;
   info.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
@@ -797,10 +810,37 @@ class WebClient : public BaseClient,
       return true;
     }
     if (text.rfind(kMediaProbePrefix, 0) != 0) {
+      CountConsoleMessage(level);
       return false;
     }
     [view_ engineSetMediaPlaying:text.back() == '1'];
     return true;
+  }
+
+  // Counted for the developer toolbar; a page logging in a loop reports at
+  // most once per run-loop turn.
+  void CountConsoleMessage(cef_log_severity_t level) {
+    if (level == LOGSEVERITY_ERROR || level == LOGSEVERITY_FATAL) {
+      console_errors_++;
+    } else if (level == LOGSEVERITY_WARNING) {
+      console_warnings_++;
+    } else {
+      return;
+    }
+    ReportConsole();
+  }
+
+  void ReportConsole() {
+    if (console_report_pending_) {
+      return;
+    }
+    console_report_pending_ = true;
+    CefRefPtr<WebClient> client(this);
+    dispatch_async(dispatch_get_main_queue(), ^{
+      client->console_report_pending_ = false;
+      [client->view_ engineSetConsoleErrors:client->console_errors_
+                                   warnings:client->console_warnings_];
+    });
   }
 
   void OnMediaAccessChange(CefRefPtr<CefBrowser> browser,
@@ -819,6 +859,9 @@ class WebClient : public BaseClient,
     }
     blocked_ = 0;
     [view_ engineSetBlockedCount:0];
+    console_errors_ = 0;
+    console_warnings_ = 0;
+    ReportConsole();
     std::string url = frame->GetURL().ToString();
     if (DebugEvents()) {
       NSLog(@"load start %s after %.0f ms", url.c_str(),
@@ -836,10 +879,26 @@ class WebClient : public BaseClient,
                  int httpStatusCode) override {
     if (frame->IsMain()) {
       frame->ExecuteJavaScript(kThemeColorScript, "", 0);
+      // A failed load ends with the error page, which has no status.
+      [view_ engineDidFinishLoad:load_error_ != 0 ? load_error_ : httpStatusCode
+                        duration:CFAbsoluteTimeGetCurrent() - navigation_started_];
       if (DebugEvents()) {
         NSLog(@"load end %s (%d) after %.0f ms", frame->GetURL().ToString().c_str(),
               httpStatusCode, (CFAbsoluteTimeGetCurrent() - created_) * 1000);
       }
+    }
+  }
+
+  void OnLoadError(CefRefPtr<CefBrowser> browser,
+                   CefRefPtr<CefFrame> frame,
+                   ErrorCode errorCode,
+                   const CefString& errorText,
+                   const CefString& failedUrl) override {
+    // Aborted loads were replaced by another navigation.
+    if (frame->IsMain() && errorCode != ERR_ABORTED) {
+      load_error_ = errorCode;
+      [view_ engineDidFinishLoad:errorCode
+                        duration:CFAbsoluteTimeGetCurrent() - navigation_started_];
     }
   }
 
@@ -862,6 +921,8 @@ class WebClient : public BaseClient,
                       bool user_gesture,
                       bool is_redirect) override {
     if (frame->IsMain()) {
+      navigation_started_ = CFAbsoluteTimeGetCurrent();
+      load_error_ = 0;
       std::string url = request->GetURL().ToString();
       // The first load after a deferral already has its script.
       if (url == prepared_url_) {
@@ -939,6 +1000,18 @@ class WebClient : public BaseClient,
                               bool success,
                               const void* result,
                               size_t result_size) override {
+    auto reply = replies_.find(message_id);
+    if (reply != replies_.end()) {
+      Reply done = std::move(reply->second);
+      replies_.erase(reply);
+      CefRefPtr<CefValue> value =
+          success ? CefParseJSON(result, result_size, JSON_PARSER_RFC)
+                  : nullptr;
+      done(value && value->GetType() == VTYPE_DICTIONARY
+               ? value->GetDictionary()
+               : nullptr);
+      return;
+    }
     bool stale = stale_adds_.erase(message_id) > 0;
     if (DebugEvents()) {
       NSLog(@"devtools result %d success=%d: %.*s", message_id, success,
@@ -965,6 +1038,165 @@ class WebClient : public BaseClient,
       document_script_ = identifier;
       LoadDeferred(browser);
     }
+  }
+
+  void OnDevToolsEvent(CefRefPtr<CefBrowser> browser,
+                       const CefString& method,
+                       const void* params,
+                       size_t params_size) override {
+    std::string name = method.ToString();
+    if (name == "Overlay.inspectNodeRequested" && picking_) {
+      CefRefPtr<CefValue> value =
+          CefParseJSON(params, params_size, JSON_PARSER_RFC);
+      if (!value || value->GetType() != VTYPE_DICTIONARY) {
+        return;
+      }
+      CefRefPtr<CefDictionaryValue> args = CefDictionaryValue::Create();
+      args->SetInt("backendNodeId",
+                   int(Number(value->GetDictionary()->GetValue("backendNodeId"))));
+      SetPicking(browser, false);
+      // DevTools inspects whatever is at a point, so ask where the node is.
+      Call(browser, "DOM.getBoxModel", args,
+           [browser](CefRefPtr<CefDictionaryValue> result) {
+             CefPoint at;
+             CefRefPtr<CefListValue> quad =
+                 result && result->GetDictionary("model")
+                     ? result->GetDictionary("model")->GetList("border")
+                     : nullptr;
+             if (quad && quad->GetSize() == 8) {
+               // Page zoom scales CSS pixels; the point is in view points.
+               double zoom = pow(1.2, browser->GetHost()->GetZoomLevel());
+               auto corner = [&](size_t i) { return Number(quad->GetValue(i)); };
+               at = CefPoint(int((corner(0) + corner(4)) / 2 * zoom),
+                             int((corner(1) + corner(5)) / 2 * zoom));
+             }
+             ShowDevTools(browser, at);
+           });
+    } else if (name == "Overlay.inspectModeCanceled" && picking_) {
+      SetPicking(browser, false);
+    }
+  }
+
+  // DevTools protocol calls made on behalf of the developer toolbar.
+
+  using Reply = std::function<void(CefRefPtr<CefDictionaryValue>)>;
+
+  // Sends |method|; |done| gets the result, or null if it failed.
+  void Call(CefRefPtr<CefBrowser> browser,
+            const std::string& method,
+            CefRefPtr<CefDictionaryValue> params,
+            Reply done = nullptr) {
+    int id = browser->GetHost()->ExecuteDevToolsMethod(0, method, params);
+    if (id == 0) {
+      if (done) {
+        done(nullptr);
+      }
+    } else if (done) {
+      replies_[id] = std::move(done);
+    }
+  }
+
+  void SetPicking(CefRefPtr<CefBrowser> browser, bool picking) {
+    if (picking == picking_) {
+      return;
+    }
+    picking_ = picking;
+    if (picking) {
+      Call(browser, "DOM.enable", nullptr);
+      Call(browser, "Overlay.enable", nullptr);
+    }
+    CefRefPtr<CefDictionaryValue> args = CefDictionaryValue::Create();
+    args->SetString("mode", picking ? "searchForNode" : "none");
+    if (picking) {
+      // Chrome's own highlight colours.
+      auto rgba = [](int r, int g, int b, double a) {
+        CefRefPtr<CefDictionaryValue> c = CefDictionaryValue::Create();
+        c->SetInt("r", r);
+        c->SetInt("g", g);
+        c->SetInt("b", b);
+        c->SetDouble("a", a);
+        return c;
+      };
+      CefRefPtr<CefDictionaryValue> highlight = CefDictionaryValue::Create();
+      highlight->SetBool("showInfo", true);
+      highlight->SetBool("showStyles", true);
+      highlight->SetBool("showAccessibilityInfo", true);
+      highlight->SetDictionary("contentColor", rgba(111, 168, 220, 0.66));
+      highlight->SetDictionary("paddingColor", rgba(147, 196, 125, 0.55));
+      highlight->SetDictionary("borderColor", rgba(255, 229, 153, 0.66));
+      highlight->SetDictionary("marginColor", rgba(246, 178, 107, 0.66));
+      args->SetDictionary("highlightConfig", highlight);
+    }
+    Call(browser, "Overlay.setInspectMode", args);
+    if (!picking) {
+      Call(browser, "Overlay.disable", nullptr);
+      Call(browser, "DOM.disable", nullptr);
+      [view_ engineDidStopPicking];
+    }
+  }
+
+  // The Network domain reports every request once enabled, so it's on only
+  // while something needs it.
+  void SetNetworkOverrides(CefRefPtr<CefBrowser> browser,
+                           bool cache_disabled,
+                           double latency,
+                           double throughput) {
+    bool needed = cache_disabled || latency != 0 || throughput != 0;
+    if (needed && !network_enabled_) {
+      Call(browser, "Network.enable", nullptr);
+    }
+    CefRefPtr<CefDictionaryValue> cache = CefDictionaryValue::Create();
+    cache->SetBool("cacheDisabled", cache_disabled);
+    Call(browser, "Network.setCacheDisabled", cache);
+    CefRefPtr<CefDictionaryValue> conditions = CefDictionaryValue::Create();
+    conditions->SetBool("offline", throughput < 0);
+    conditions->SetDouble("latency", std::max(latency, 0.0));
+    conditions->SetDouble("downloadThroughput", throughput > 0 ? throughput : -1);
+    conditions->SetDouble("uploadThroughput", throughput > 0 ? throughput : -1);
+    Call(browser, "Network.emulateNetworkConditions", conditions);
+    if (!needed && network_enabled_) {
+      Call(browser, "Network.disable", nullptr);
+    }
+    network_enabled_ = needed;
+  }
+
+  void CaptureFullPage(CefRefPtr<CefBrowser> browser, void (^completion)(NSData*)) {
+    CefRefPtr<WebClient> client(this);
+    Call(browser, "Page.getLayoutMetrics", nullptr,
+         [client, browser, completion](CefRefPtr<CefDictionaryValue> metrics) {
+           CefRefPtr<CefDictionaryValue> size =
+               metrics ? metrics->GetDictionary("cssContentSize") : nullptr;
+           if (!size) {
+             completion(nil);
+             return;
+           }
+           CefRefPtr<CefDictionaryValue> clip = CefDictionaryValue::Create();
+           clip->SetDouble("x", 0);
+           clip->SetDouble("y", 0);
+           clip->SetDouble("width", Number(size->GetValue("width")));
+           // Beyond this a PNG gets too big to be useful.
+           clip->SetDouble("height",
+                           std::min(Number(size->GetValue("height")), 16384.0));
+           clip->SetDouble("scale", 1);
+           CefRefPtr<CefDictionaryValue> args = CefDictionaryValue::Create();
+           args->SetString("format", "png");
+           args->SetBool("captureBeyondViewport", true);
+           args->SetDictionary("clip", clip);
+           client->Call(browser, "Page.captureScreenshot", args,
+                        [completion](CefRefPtr<CefDictionaryValue> shot) {
+                          CefRefPtr<CefBinaryValue> png =
+                              shot ? CefBase64Decode(shot->GetString("data"))
+                                   : nullptr;
+                          if (!png || png->GetSize() == 0) {
+                            completion(nil);
+                            return;
+                          }
+                          NSMutableData* data =
+                              [NSMutableData dataWithLength:png->GetSize()];
+                          png->GetData(data.mutableBytes, data.length, 0);
+                          completion(data);
+                        });
+         });
   }
 
   CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
@@ -1073,6 +1305,16 @@ class WebClient : public BaseClient,
   // Requests blocked since the page started loading.
   std::atomic<NSUInteger> blocked_{0};
   std::atomic<bool> report_pending_{false};
+  // For the developer toolbar: console messages since the page started
+  // loading, and how the last navigation went.
+  NSUInteger console_errors_ = 0;
+  NSUInteger console_warnings_ = 0;
+  bool console_report_pending_ = false;
+  CFAbsoluteTime navigation_started_ = 0;
+  int load_error_ = 0;
+  std::map<int, Reply> replies_;
+  bool picking_ = false;
+  bool network_enabled_ = false;
 
   IMPLEMENT_REFCOUNTING(WebClient);
 };
@@ -1287,6 +1529,13 @@ class WebClient : public BaseClient,
   BOOL _capturing;
   BOOL _frozen;
   NSMutableArray<MBPermissionPrompt*>* _prompts;
+  // Developer toolbar emulations.
+  NSMutableDictionary<NSString*, NSString*>* _mediaFeatures;
+  NSString* _mobileUserAgent;
+  BOOL _scriptsDisabled;
+  BOOL _cacheDisabled;
+  double _latency;
+  double _throughput;
 }
 
 - (instancetype)initWithURL:(NSString*)url
@@ -1418,6 +1667,122 @@ class WebClient : public BaseClient,
   }
 }
 
+- (void)reloadIgnoringCache {
+  if (_browser) {
+    _browser->ReloadIgnoreCache();
+  }
+}
+
+- (void)setPicking:(BOOL)picking {
+  if (_browser) {
+    _client->SetPicking(_browser, picking);
+  }
+}
+
+- (void)emulateMediaFeature:(NSString*)name value:(NSString*)value {
+  if (!_mediaFeatures) {
+    _mediaFeatures = [NSMutableDictionary dictionary];
+  }
+  _mediaFeatures[name] = value.length > 0 ? value : nil;
+  if (!_browser) {
+    return;
+  }
+  // Each call replaces every emulated feature.
+  CefRefPtr<CefListValue> features = CefListValue::Create();
+  for (NSString* feature in _mediaFeatures) {
+    CefRefPtr<CefDictionaryValue> entry = CefDictionaryValue::Create();
+    entry->SetString("name", feature.UTF8String);
+    entry->SetString("value", _mediaFeatures[feature].UTF8String);
+    features->SetDictionary(features->GetSize(), entry);
+  }
+  CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+  params->SetList("features", features);
+  _client->Call(_browser, "Emulation.setEmulatedMedia", params);
+}
+
+- (void)emulateMobileWithUserAgent:(NSString*)userAgent {
+  _mobileUserAgent = [userAgent copy];
+  if (!_browser) {
+    return;
+  }
+  BOOL mobile = userAgent != nil;
+  if (mobile) {
+    // Zero sizes keep the view's own; only the mobile viewport changes.
+    CefRefPtr<CefDictionaryValue> metrics = CefDictionaryValue::Create();
+    metrics->SetInt("width", 0);
+    metrics->SetInt("height", 0);
+    metrics->SetDouble("deviceScaleFactor", 0);
+    metrics->SetBool("mobile", true);
+    _client->Call(_browser, "Emulation.setDeviceMetricsOverride", metrics);
+  } else {
+    _client->Call(_browser, "Emulation.clearDeviceMetricsOverride", nullptr);
+  }
+  CefRefPtr<CefDictionaryValue> touch = CefDictionaryValue::Create();
+  touch->SetBool("enabled", mobile);
+  touch->SetInt("maxTouchPoints", 5);
+  _client->Call(_browser, "Emulation.setTouchEmulationEnabled", touch);
+  CefRefPtr<CefDictionaryValue> agent = CefDictionaryValue::Create();
+  // An empty user agent goes back to the real one.
+  agent->SetString("userAgent", mobile ? userAgent.UTF8String : "");
+  _client->Call(_browser, "Emulation.setUserAgentOverride", agent);
+}
+
+- (void)setCacheDisabled:(BOOL)disabled {
+  _cacheDisabled = disabled;
+  if (_browser) {
+    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency, _throughput);
+  }
+}
+
+- (void)setScriptsDisabled:(BOOL)disabled {
+  _scriptsDisabled = disabled;
+  if (!_browser) {
+    return;
+  }
+  CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+  params->SetBool("value", disabled);
+  _client->Call(_browser, "Emulation.setScriptExecutionDisabled", params);
+}
+
+- (void)emulateNetworkWithLatency:(double)latency throughput:(double)throughput {
+  _latency = latency;
+  _throughput = throughput;
+  if (_browser) {
+    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency, _throughput);
+  }
+}
+
+- (void)clearSiteDataAndReload {
+  if (!_browser) {
+    return;
+  }
+  CefURLParts parts;
+  if (!CefParseURL(_browser->GetMainFrame()->GetURL(), parts)) {
+    return;
+  }
+  std::string origin = CefString(&parts.origin).ToString();
+  // The origin comes with a trailing slash the protocol doesn't accept.
+  if (!origin.empty() && origin.back() == '/') {
+    origin.pop_back();
+  }
+  CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+  params->SetString("origin", origin);
+  params->SetString("storageTypes", "all");
+  CefRefPtr<CefBrowser> browser = _browser;
+  _client->Call(_browser, "Storage.clearDataForOrigin", params,
+                [browser](CefRefPtr<CefDictionaryValue>) {
+                  browser->ReloadIgnoreCache();
+                });
+}
+
+- (void)captureFullPage:(void (^)(NSData* _Nullable))completion {
+  if (!_browser) {
+    completion(nil);
+    return;
+  }
+  _client->CaptureFullPage(_browser, completion);
+}
+
 - (void)focusContent {
   if (_browser) {
     _browser->GetHost()->SetFocus(true);
@@ -1495,6 +1860,7 @@ class WebClient : public BaseClient,
 
 - (void)engineDidCreateBrowser:(CefRefPtr<CefBrowser>)browser {
   _browser = browser;
+  [self applyEmulations];
   if (_closing) {
     _browser->GetHost()->CloseBrowser(true);
     [self scheduleCloseFallback];
@@ -1502,6 +1868,23 @@ class WebClient : public BaseClient,
     _client->CancelDeferredLoad();
     _browser->GetMainFrame()->LoadURL(_pendingURL.UTF8String);
     _pendingURL = nil;
+  }
+}
+
+// Emulations asked for before the browser existed.
+- (void)applyEmulations {
+  if (_mediaFeatures.count > 0) {
+    NSString* name = _mediaFeatures.allKeys.firstObject;
+    [self emulateMediaFeature:name value:_mediaFeatures[name]];
+  }
+  if (_mobileUserAgent) {
+    [self emulateMobileWithUserAgent:_mobileUserAgent];
+  }
+  if (_scriptsDisabled) {
+    [self setScriptsDisabled:YES];
+  }
+  if (_cacheDisabled || _latency != 0 || _throughput != 0) {
+    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency, _throughput);
   }
 }
 
@@ -1541,6 +1924,18 @@ class WebClient : public BaseClient,
 
 - (void)engineSetBlockedCount:(NSUInteger)count {
   [self.delegate webView:self didChangeBlockedCount:count];
+}
+
+- (void)engineSetConsoleErrors:(NSUInteger)errors warnings:(NSUInteger)warnings {
+  [self.delegate webView:self didChangeConsoleErrors:errors warnings:warnings];
+}
+
+- (void)engineDidFinishLoad:(int)status duration:(NSTimeInterval)duration {
+  [self.delegate webView:self didFinishLoadWithStatus:status duration:duration];
+}
+
+- (void)engineDidStopPicking {
+  [self.delegate webViewDidStopPicking:self];
 }
 
 - (void)engineSetCapturing:(BOOL)capturing {

@@ -12,6 +12,7 @@ final class RootView: NSView {
     private let card: PageCardView
     private let emptyHint: EmptySpaceHintView
     private let dropPreview = DropPreviewView()
+    private let devToolbar: DevToolbarView
     private let peek = PeekContainerView()
     private let smear = MotionSmearView()
     private let toast: ToastView
@@ -24,6 +25,7 @@ final class RootView: NSView {
         sidebar = SidebarView(store: store)
         card = PageCardView(container: store.webContainer)
         emptyHint = EmptySpaceHintView(store: store)
+        devToolbar = DevToolbarView(store: store)
         toast = ToastView(store: store)
         shownLayout = store.layout
         super.init(frame: NSRect(x: 0, y: 0, width: 1280, height: 820))
@@ -32,6 +34,7 @@ final class RootView: NSView {
         addSubview(card)
         card.addSubview(emptyHint)
         card.addSubview(dropPreview)
+        card.addSubview(devToolbar)
         emptyHint.autoresizingMask = [.width, .height]
         dropPreview.autoresizingMask = [.width, .height]
         dropPreview.isHidden = true
@@ -174,6 +177,9 @@ final class RootView: NSView {
         card.cornerRadius = max(store.windowRadius - (5 + 3 * panels), 6)
         emptyHint.frame = card.bounds
         dropPreview.frame = card.bounds
+        // The card isn't flipped: the strip runs along its top.
+        devToolbar.frame = NSRect(x: 0, y: card.bounds.height - DevToolbarView.height,
+                                  width: card.bounds.width, height: DevToolbarView.height)
         // Out of sight, the sidebar and rail stay attached but hidden:
         // attaching the sidebar again costs a couple of frames as it slides in.
         // The sidebar is either part of the layout, sliding in and out with
