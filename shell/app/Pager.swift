@@ -260,7 +260,7 @@ final class WebContainerView: NSView {
             view.layer?.removeAnimation(forKey: "opacity")
             view.alphaValue = 1
             view.layer?.zPosition = 0
-            if view.autoresizingMask.contains(.width) { view.frame = bounds }
+            view.frame = bounds
             view.isHidden = false
         }
         current = view
@@ -324,36 +324,6 @@ final class PageCardView: NSView {
         shadowLayer.isHidden = !isCard
         CATransaction.commit()
         container.cornerRadius = isCard ? cornerRadius : 0
-    }
-
-    private var pinned: NSSize?
-
-    /// For a change of size stepped frame by frame: the page takes the
-    /// larger of the card's sizes now and at `target` (or keeps a larger one
-    /// from a change still under way), so it lays out once rather than on
-    /// every frame, and moves with the card's leading edge, the part past
-    /// the card hidden. Leading, because until the engine has drawn the page
-    /// at a new size it shows the last picture from the view's top-left
-    /// corner: pinned to that corner, the picture stays where it was instead
-    /// of jumping sideways when the page grows or settles.
-    func beginResizing(toward target: NSRect) {
-        let size = NSSize(width: max(frame.width, target.width, pinned?.width ?? 0),
-                          height: max(frame.height, target.height, pinned?.height ?? 0))
-        pinned = size
-        for page in container.subviews {
-            page.autoresizingMask = [.maxXMargin, .maxYMargin]
-            page.frame = NSRect(x: 0, y: 0, width: size.width, height: size.height)
-        }
-    }
-
-    /// The page takes the card's size again.
-    func endResizing() {
-        guard pinned != nil else { return }
-        pinned = nil
-        for page in container.subviews {
-            page.autoresizingMask = [.width, .height]
-            page.frame = container.bounds
-        }
     }
 
     override func updateLayer() {

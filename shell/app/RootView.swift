@@ -207,7 +207,10 @@ final class RootView: NSView {
     }
 
     /// Switches layouts: the sidebar or rail slides while the page's card
-    /// follows its edge. The page itself lays out once, not on every frame.
+    /// follows its edge, the page reflowing with it frame by frame as in Arc.
+    /// (Laying it out only once left a visible jump to the new layout as the
+    /// slide ended; the engine lays a page out as fast as it can keep up, so
+    /// the slide itself stays smooth.)
     private func transitionLayout() {
         let new = store.layout
         guard new != shownLayout else { return }
@@ -226,7 +229,6 @@ final class RootView: NSView {
             finishLayoutMove()
             return
         }
-        card.beginResizing(toward: cardFrame(for: new))
         if !layoutTicker.isRunning { lastLayoutStep = nil }
         layoutTicker.start(on: self)
         needsLayout = true
@@ -249,7 +251,6 @@ final class RootView: NSView {
         layoutTicker.stop()
         needsLayout = true
         layoutSubtreeIfNeeded()
-        card.endResizing()
     }
 
     // MARK: - Peek
