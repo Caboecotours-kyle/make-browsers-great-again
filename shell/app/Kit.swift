@@ -31,6 +31,7 @@ class HoverView: FlippedView {
                                   owner: self, userInfo: nil)
         addTrackingArea(area)
         self.area = area
+        hovering = isUnderPointer
     }
 
     override func mouseEntered(with event: NSEvent) { hovering = true }
@@ -44,6 +45,20 @@ class HoverView: FlippedView {
     /// Fades the hover state in or out.
     func hoverChanged() {
         FillLayer.animated(Motion.quick) { updateLayer() }
+    }
+}
+
+extension NSView {
+    /// Whether the pointer is over this view, and not something above it, in
+    /// the key window. Tracking areas only report the pointer crossing them,
+    /// so when views move under a still pointer (a layout, a space switch)
+    /// hover is set from this instead; otherwise the view that moved away
+    /// stays lit and the one now under the pointer doesn't light up.
+    var isUnderPointer: Bool {
+        guard let window, window.isKeyWindow, let content = window.contentView else { return false }
+        let point = window.mouseLocationOutsideOfEventStream
+        guard visibleRect.contains(convert(point, from: nil)) else { return false }
+        return content.hitTest(content.superview?.convert(point, from: nil) ?? point)?.isDescendant(of: self) == true
     }
 }
 

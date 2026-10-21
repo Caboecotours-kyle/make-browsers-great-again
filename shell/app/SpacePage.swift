@@ -491,6 +491,7 @@ final class SidebarRowView: NSTableRowView {
                                   owner: self, userInfo: nil)
         addTrackingArea(area)
         self.area = area
+        setHovering(isUnderPointer)
     }
 
     override func mouseEntered(with event: NSEvent) { setHovering(true) }
@@ -499,6 +500,13 @@ final class SidebarRowView: NSTableRowView {
     override func prepareForReuse() {
         super.prepareForReuse()
         hovering = false
+    }
+
+    /// A cell reused from another row would otherwise keep that row's hover
+    /// (and show its close button here).
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        (subview as? HoverAware)?.setHovering(hovering)
     }
 
     private func setHovering(_ value: Bool) {

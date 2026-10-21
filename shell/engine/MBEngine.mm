@@ -498,6 +498,12 @@ class BaseClient : public CefClient,
       return false;
     }
     NSEvent* ns_event = (__bridge NSEvent*)os_event;
+    // Pressing a modifier alone (Cmd, Shift...) also arrives as a raw key
+    // down, with a flags-changed event that has no characters: asking it for
+    // them throws.
+    if (ns_event.type != NSEventTypeKeyDown) {
+      return false;
+    }
     return IsReservedShortcut(ns_event) &&
            [NSApp.mainMenu performKeyEquivalent:ns_event];
   }
