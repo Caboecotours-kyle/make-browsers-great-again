@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -205,14 +206,52 @@ bool IsReservedShortcut(NSEvent* event) {
   return false;
 }
 
+// MBGA_ENGINE_OMIT="enable-low-end-device-mode Prerender2" drops built-in
+// defaults by switch or feature name, for measuring what each one costs.
+bool Omitted(const std::string& name) {
+  static const std::set<std::string> omitted = [] {
+    std::set<std::string> names;
+    if (const char* env = getenv("MBGA_ENGINE_OMIT")) {
+      for (NSString* token in [@(env) componentsSeparatedByString:@" "]) {
+        if (token.length) {
+          names.insert(token.UTF8String);
+        }
+      }
+    }
+    return names;
+  }();
+  return omitted.count(name) > 0;
+}
+
 // Appends to a comma-separated switch such as --enable-features instead of
 // replacing what is already there.
 void AppendToListSwitch(CefRefPtr<CefCommandLine> command_line,
                         const std::string& name,
                         const std::string& items) {
   std::string value = command_line->GetSwitchValue(name);
-  value += (value.empty() ? "" : ",") + items;
-  command_line->AppendSwitchWithValue(name, value);
+  for (NSString* item in [@(items.c_str()) componentsSeparatedByString:@","]) {
+    // Feature parameters follow the name: "Feature:param/value".
+    NSString* feature = [item componentsSeparatedByString:@":"].firstObject;
+    if (!Omitted(feature.UTF8String)) {
+      value += (value.empty() ? "" : ",") + std::string(item.UTF8String);
+    }
+  }
+  if (!value.empty()) {
+    command_line->AppendSwitchWithValue(name, value);
+  }
+}
+
+void AppendDefaultSwitch(CefRefPtr<CefCommandLine> command_line,
+                         const std::string& name,
+                         const std::string& value = "") {
+  if (Omitted(name)) {
+    return;
+  }
+  if (value.empty()) {
+    command_line->AppendSwitch(name);
+  } else {
+    command_line->AppendSwitchWithValue(name, value);
+  }
 }
 
 // MBGA_ENGINE_SWITCHES="--foo --bar=baz" adds engine switches, for
@@ -258,16 +297,16 @@ class BrowserApp : public CefApp {
     // 50-tab workload; see bench/README.md for the numbers.
 
     // Process model. Tabs of the same site share one renderer.
-    command_line->AppendSwitch("process-per-site");
+    AppendDefaultSwitch(command_line, "process-per-site");
     if (!g_strict_site_isolation) {
       // Chrome on Android's model: sites share four renderers, while
       // sign-in origins and sites that send COOP headers stay isolated.
       // Strict isolation used ~30% more memory with 50 tabs.
       AppendToListSwitch(command_line, "disable-features", "SitePerProcess");
-      command_line->AppendSwitchWithValue("renderer-process-limit", "4");
+      AppendDefaultSwitch(command_line, "renderer-process-limit", "4");
       if (!g_isolated_origins.empty()) {
-        command_line->AppendSwitchWithValue("isolate-origins",
-                                            g_isolated_origins);
+        AppendDefaultSwitch(command_line, "isolate-origins",
+                            g_isolated_origins);
       }
     }
 
@@ -293,15 +332,15 @@ class BrowserApp : public CefApp {
     // HTTP/2 over TCP is as fast on wired and Wi-Fi networks.
     AppendToListSwitch(command_line, "enable-features",
                        "NetworkServiceInProcess2");
-    command_line->AppendSwitch("disable-quic");
+    AppendDefaultSwitch(command_line, "disable-quic");
     // No idle renderer kept warm for the next navigation, no speculative
     // prerendering, and no background fetching of optimization hints.
     AppendToListSwitch(command_line, "disable-features",
                        "SpareRendererForSitePerProcess,OptimizationHints,"
                        "AudioServiceOutOfProcess,Prerender2");
     // Smaller caches and heap budgets throughout Blink and V8.
-    command_line->AppendSwitch("enable-low-end-device-mode");
-    command_line->AppendSwitchWithValue("js-flags", "--optimize-for-size");
+    AppendDefaultSwitch(command_line, "enable-low-end-device-mode");
+    AppendDefaultSwitch(command_line, "js-flags", "--optimize-for-size");
 
     AppendSwitchesFromEnvironment(command_line);
 
