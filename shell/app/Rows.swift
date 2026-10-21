@@ -68,7 +68,10 @@ struct TabRow: View {
                 .buttonStyle(.plain)
                 .help(pinned ? "Unload tab" : "Close tab")
             } else if tab.audible {
-                Image(systemName: "speaker.wave.2.fill").font(.system(size: 10)).opacity(0.6)
+                Equalizer(playing: store.pausedMediaTab != tab.id)
+                    .frame(width: 12, height: 11)
+                    .opacity(0.6)
+                    .help("Playing")
             }
         }
         .padding(.leading, 10 + CGFloat(depth) * 14)

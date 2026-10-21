@@ -16,6 +16,36 @@ struct RGB: Equatable {
         self.b = b
     }
 
+    /// Parses "#rgb", "#rrggbb" and "rgb(a)(r, g, b[, a])" as engines report
+    /// them. Translucent colors are rejected: they don't describe the page.
+    init?(css: String) {
+        let s = css.trimmingCharacters(in: .whitespaces).lowercased()
+        if s.hasPrefix("#") {
+            var hex = String(s.dropFirst())
+            if hex.count == 3 { hex = hex.map { "\($0)\($0)" }.joined() }
+            guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return nil }
+            self.init(value)
+        } else if s.hasPrefix("rgb"), let open = s.firstIndex(of: "("), let close = s.lastIndex(of: ")") {
+            let parts = s[s.index(after: open)..<close].split(separator: ",").map {
+                Double($0.trimmingCharacters(in: .whitespaces)) ?? -1
+            }
+            guard parts.count >= 3, parts.prefix(3).allSatisfy({ (0...255).contains($0) }),
+                  parts.count == 3 || parts[3] >= 0.99
+            else { return nil }
+            self.init(r: parts[0] / 255, g: parts[1] / 255, b: parts[2] / 255)
+        } else {
+            return nil
+        }
+    }
+
+    /// Relative luminance, 0 (black) to 1 (white).
+    var luminance: Double { 0.2126 * r + 0.7152 * g + 0.0722 * b }
+
+    var hex: UInt32 {
+        let c = { (v: Double) in UInt32((min(max(v, 0), 1) * 255).rounded()) }
+        return c(r) << 16 | c(g) << 8 | c(b)
+    }
+
     func mixed(with other: RGB, _ t: Double) -> RGB {
         RGB(r: r + (other.r - r) * t, g: g + (other.g - g) * t, b: b + (other.b - b) * t)
     }
@@ -84,6 +114,8 @@ enum TintStyle: String, CaseIterable, Identifiable {
     case vivid, calm, neutral
 
     static let defaultsKey = "tintStyle"
+    /// The window takes the visible page's theme color instead of the space's.
+    static let matchPageKey = "matchPageColor"
 
     var id: String { rawValue }
 
@@ -133,6 +165,8 @@ struct SpaceBackdrop: View {
 
     var body: some View {
         BackdropGradient(position: pager.position, colors: colors)
+            // A page's color fades in rather than snapping on tab switches.
+            .animation(Motion.quick, value: colors)
     }
 }
 

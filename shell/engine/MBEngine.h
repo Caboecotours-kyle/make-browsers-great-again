@@ -35,6 +35,9 @@ typedef NSString* _Nonnull (^MBHidingCSS)(NSString* page);
                foreground:(BOOL)foreground;
 - (void)webView:(MBWebView*)view didChangeFullscreen:(BOOL)fullscreen;
 - (void)webViewRendererDidTerminate:(MBWebView*)view;
+/// The page's theme-color as "#rrggbb" or "rgba(r, g, b, a)", or an empty
+/// string when it has none. Reported when a page finishes loading.
+- (void)webView:(MBWebView*)view didChangeThemeColor:(NSString*)color;
 /// Requests blocked since the page started loading.
 - (void)webView:(MBWebView*)view didChangeBlockedCount:(NSUInteger)count;
 /// The engine finished destroying the browser after -close.

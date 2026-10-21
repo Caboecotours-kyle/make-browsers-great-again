@@ -46,9 +46,14 @@ struct MiniPlayer: View {
         HStack(spacing: 10) {
             FaviconImage(tab: tab, size: 20)
             VStack(alignment: .leading, spacing: 1) {
-                Text(tab.displayTitle)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(tab.displayTitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                    Equalizer(playing: !paused)
+                        .frame(width: 11, height: 10)
+                        .opacity(0.55)
+                }
                 Text(space.id == store.activeSpace.id ? tab.host : "\(space.icon) \(space.name)")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)

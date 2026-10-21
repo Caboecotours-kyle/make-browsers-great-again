@@ -390,9 +390,13 @@ struct CommandAction {
             CommandAction(id: "clear", title: "Clear Today Tabs", symbol: "archivebox", shortcut: "⇧⌘K", keywords: ["archive", "clean", "tidy"]) {
                 store.clearToday(store.activeSpace.id)
             },
-            CommandAction(id: "focus", title: store.sidebarVisible ? "Focus Mode" : "Show Sidebar", symbol: "sidebar.left",
+            CommandAction(id: "focus", title: store.layout == .focus ? "Leave Focus Mode" : "Focus Mode", symbol: "rectangle.inset.filled",
                           shortcut: "⌘S", keywords: ["hide", "sidebar", "zen"]) {
                 store.toggleSidebar()
+            },
+            CommandAction(id: "compact", title: store.layout == .compact ? "Full Sidebar" : "Compact Sidebar",
+                          symbol: "sidebar.squares.left", keywords: ["rail", "icons", "narrow", "layout"]) {
+                store.setLayout(store.layout == .compact ? .full : .compact)
             },
             CommandAction(id: "import", title: "Import from Another Browser…", symbol: "square.and.arrow.down", keywords: ["chrome", "arc", "safari"]) {
                 store.importSheet = ImportRequest(firstLaunch: false)
@@ -410,6 +414,11 @@ struct CommandAction {
             list.append(CommandAction(id: "reopen", title: "Reopen Closed Tab", symbol: "arrow.uturn.backward", shortcut: "⇧⌘T",
                                       keywords: ["undo", "restore"]) { store.undoClose() })
         }
+        let matchPage = UserDefaults.standard.bool(forKey: TintStyle.matchPageKey)
+        list.append(CommandAction(id: "match-page", title: matchPage ? "Use Space Colour" : "Match Page Colour",
+                                  symbol: "eyedropper", keywords: ["theme", "tint", "color", "colour"]) {
+            UserDefaults.standard.set(!matchPage, forKey: TintStyle.matchPageKey)
+        })
         for style in TintStyle.allCases {
             list.append(CommandAction(id: "tint-\(style.rawValue)", title: "Sidebar Colour: \(style.title)", symbol: "paintpalette",
                                       keywords: ["theme", "tint", "color", "appearance"]) {

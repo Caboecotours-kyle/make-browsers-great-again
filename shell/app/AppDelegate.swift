@@ -152,6 +152,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         UserDefaults.standard.set(style, forKey: TintStyle.defaultsKey)
     }
 
+    @objc func setLayout(_ sender: NSMenuItem) {
+        if let raw = sender.representedObject as? String, let layout = SidebarLayout(rawValue: raw) { store.setLayout(layout) }
+    }
+
+    @objc func toggleMatchPage(_ sender: Any?) {
+        let defaults = UserDefaults.standard
+        defaults.set(!defaults.bool(forKey: TintStyle.matchPageKey), forKey: TintStyle.matchPageKey)
+    }
+
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
         case #selector(undo(_:)), #selector(reopenClosedTab(_:)):
@@ -162,7 +171,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let current = UserDefaults.standard.string(forKey: TintStyle.defaultsKey) ?? TintStyle.calm.rawValue
             item.state = current == item.representedObject as? String ? .on : .off
         case #selector(toggleSidebar(_:)):
-            item.state = store.sidebarVisible ? .off : .on
+            item.state = store.layout == .focus ? .on : .off
+        case #selector(setLayout(_:)):
+            item.state = store.layout.rawValue == item.representedObject as? String ? .on : .off
+        case #selector(toggleMatchPage(_:)):
+            item.state = UserDefaults.standard.bool(forKey: TintStyle.matchPageKey) ? .on : .off
         case #selector(toggleBlockAds(_:)):
             item.state = store.blockAds ? .on : .off
         default:
@@ -230,11 +243,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
 
         main.addSubmenu("View") { m in
+            m.item("Full Sidebar", #selector(setLayout(_:)), "", target: self).representedObject = SidebarLayout.full.rawValue
+            m.item("Compact Sidebar", #selector(setLayout(_:)), "", target: self).representedObject = SidebarLayout.compact.rawValue
             m.item("Focus Mode", #selector(toggleSidebar(_:)), "s", target: self)
             m.addSubmenu("Sidebar Colour") { colours in
                 for style in TintStyle.allCases {
                     colours.item(style.title, #selector(setTintStyle(_:)), "", target: self).representedObject = style.rawValue
                 }
+                colours.addItem(.separator())
+                colours.item("Match Page Colour", #selector(toggleMatchPage(_:)), "", target: self)
             }
             m.addItem(.separator())
             m.item("Reload Page", #selector(reload(_:)), "r", target: self)

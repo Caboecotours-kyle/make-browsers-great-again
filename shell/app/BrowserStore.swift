@@ -8,6 +8,31 @@ struct NavState: Equatable {
     var canGoForward = false
 }
 
+/// How much of the sidebar shows: all of it, an icon rail, or nothing
+/// (Focus mode). In the last two the full sidebar slides out at the edge.
+enum SidebarLayout: String, CaseIterable, Identifiable {
+    case full, compact, focus
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .full: "Sidebar"
+        case .compact: "Compact"
+        case .focus: "Focus"
+        }
+    }
+
+    static let defaultsKey = "sidebarLayout"
+
+    static var saved: SidebarLayout {
+        let defaults = UserDefaults.standard
+        if let raw = defaults.string(forKey: defaultsKey), let layout = SidebarLayout(rawValue: raw) { return layout }
+        // Before layouts, a hidden sidebar was Focus mode.
+        return defaults.object(forKey: "sidebarVisible") as? Bool == false ? .focus : .full
+    }
+}
+
 enum CommandBarMode: Equatable {
     case newTab
     case editCurrent
@@ -51,14 +76,17 @@ final class BrowserStore: NSObject, ObservableObject {
     @Published var commandBar: CommandBarMode? {
         didSet { if commandBar != nil { releaseWebFocus() } }
     }
-    @Published var sidebarVisible = UserDefaults.standard.object(forKey: "sidebarVisible") as? Bool ?? true {
+    @Published var layout = SidebarLayout.saved {
         didSet {
-            UserDefaults.standard.set(sidebarVisible, forKey: "sidebarVisible")
+            UserDefaults.standard.set(layout.rawValue, forKey: SidebarLayout.defaultsKey)
+            if oldValue != .focus { layoutBeforeFocus = oldValue }
             sidebarPeek = false
             trafficLightsRevealed = false
             updateTrafficLights()
         }
     }
+    /// What Focus mode returns to.
+    private var layoutBeforeFocus = SidebarLayout.full
     /// Floating sidebar shown while hovering the left edge with the sidebar hidden.
     @Published var sidebarPeek = false {
         didSet { updateTrafficLights() }
@@ -88,6 +116,9 @@ final class BrowserStore: NSObject, ObservableObject {
     @Published private(set) var cleanupOffer: Int?
     /// Ads and trackers blocked on each loaded tab's current page.
     @Published private(set) var blockedCounts: [UInt64: Int] = [:]
+    /// Theme colors pages declared, by site, so a site that was put to sleep
+    /// keeps its color.
+    @Published private(set) var pageColors: [String: RGB] = [:]
 
     let pager = PagerModel()
     let webContainer = WebContainerView()
@@ -610,6 +641,21 @@ final class BrowserStore: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - Window color
+
+    /// Space colors for the window, with the active space's replaced by the
+    /// visible page's theme color when matching pages, unless that color
+    /// would make the sidebar hard to read in this appearance.
+    func tintColors(matchPage: Bool, dark: Bool) -> [UInt32] {
+        var colors = snapshot.spaces.map(\.color)
+        guard matchPage, colors.indices.contains(activeSpaceIndex),
+              let site = visibleTab?.site, let page = pageColors[site],
+              dark ? page.luminance <= 0.7 : page.luminance >= 0.2
+        else { return colors }
+        colors[activeSpaceIndex] = page.hex
+        return colors
+    }
+
     // MARK: - Ad blocking
 
     var blockAds: Bool { snapshot.blockAds }
@@ -647,12 +693,17 @@ final class BrowserStore: NSObject, ObservableObject {
 
     // MARK: - Window chrome
 
+    /// Focus mode on, or back to the layout before it.
     func toggleSidebar() {
-        withAnimation(Motion.glide) { sidebarVisible.toggle() }
+        setLayout(layout == .focus ? layoutBeforeFocus : .focus)
+    }
+
+    func setLayout(_ layout: SidebarLayout) {
+        withAnimation(Motion.glide) { self.layout = layout }
     }
 
     func updateTrafficLights() {
-        let hidden = (!sidebarVisible && !sidebarPeek && !trafficLightsRevealed) || contentFullscreen
+        let hidden = (layout == .focus && !sidebarPeek && !trafficLightsRevealed) || contentFullscreen
         for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             window?.standardWindowButton(kind)?.isHidden = hidden
         }
@@ -764,6 +815,14 @@ extension BrowserStore: MBWebViewDelegate {
                 core.setLive(id: view.tabID, live: false)
                 setNeedsRefresh()
             }
+        }
+    }
+
+    nonisolated func webView(_ view: MBWebView, didChangeThemeColor color: String) {
+        MainActor.assumeIsolated {
+            guard isCurrent(view), let site = core.tab(id: view.tabID)?.site else { return }
+            let parsed = RGB(css: color)
+            if pageColors[site] != parsed { pageColors[site] = parsed }
         }
     }
 

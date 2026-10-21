@@ -3,15 +3,16 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var store: BrowserStore
     @AppStorage("sidebarWidth") private var sidebarWidth: Double = 260
+    @AppStorage(TintStyle.matchPageKey) private var matchPage = false
     @Environment(\.colorScheme) private var colorScheme
 
     /// Space between the page and the window edge. Focus mode (sidebar
     /// hidden) keeps only a thin frame to drag the window by.
-    private var inset: CGFloat { store.sidebarVisible ? 8 : 5 }
+    private var inset: CGFloat { store.layout == .focus ? 5 : 8 }
 
     var body: some View {
         let chrome = !store.contentFullscreen
-        let colors = store.snapshot.spaces.map(\.color)
+        let colors = store.tintColors(matchPage: matchPage, dark: colorScheme == .dark)
         // The page's corners are concentric with the window's.
         let radius = chrome ? max(store.windowRadius - inset, 6) : 0
         ZStack(alignment: .topLeading) {
@@ -20,11 +21,14 @@ struct RootView: View {
                 .overlay(WindowDragArea())
 
             HStack(spacing: 0) {
-                if chrome && store.sidebarVisible {
+                if chrome && store.layout == .full {
                     Sidebar()
                         .frame(width: sidebarWidth)
                         .transition(.move(edge: .leading).combined(with: .opacity))
                     SidebarResizeHandle(width: $sidebarWidth)
+                } else if chrome && store.layout == .compact {
+                    SidebarRail()
+                        .transition(.move(edge: .leading).combined(with: .opacity))
                 }
                 WebArea(container: store.webContainer, cornerRadius: radius,
                         border: chrome ? (colorScheme == .dark ? .white.withAlphaComponent(0.1)
@@ -43,10 +47,10 @@ struct RootView: View {
                     }
                     .padding(.vertical, chrome ? inset : 0)
                     .padding(.trailing, chrome ? inset : 0)
-                    .padding(.leading, chrome && !store.sidebarVisible ? inset : 0)
+                    .padding(.leading, chrome && store.layout == .focus ? inset : 0)
             }
 
-            if chrome && !store.sidebarVisible {
+            if chrome && store.layout != .full {
                 SidebarPeek(width: sidebarWidth, colors: colors)
             }
 
@@ -54,7 +58,8 @@ struct RootView: View {
                 ToastView(toast: toast)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                     .padding(.bottom, 22)
-                    .padding(.leading, chrome && store.sidebarVisible ? sidebarWidth : 0)
+                    .padding(.leading, !chrome ? 0 : store.layout == .full ? sidebarWidth
+                             : store.layout == .compact ? SidebarRail.width : 0)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 

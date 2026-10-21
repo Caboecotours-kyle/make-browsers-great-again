@@ -69,7 +69,7 @@ final class SidebarReveal {
     }
 
     private func pointerMoved() {
-        guard let store, !store.sidebarVisible, !store.contentFullscreen else {
+        guard let store, store.layout != .full, !store.contentFullscreen else {
             cancelTimers()
             return
         }
@@ -94,7 +94,7 @@ final class SidebarReveal {
         } else {
             stop(&openTimer)
         }
-        if zone == .corner {
+        if zone == .corner && store.layout == .focus {
             stop(&lightsTimer)
             if !store.trafficLightsRevealed { store.trafficLightsRevealed = true }
         } else if store.trafficLightsRevealed {

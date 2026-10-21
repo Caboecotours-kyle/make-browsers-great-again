@@ -223,12 +223,11 @@ private struct StylePicker: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Layout").font(.system(size: 13, weight: .semibold))
                 HStack(spacing: 12) {
-                    choice("Sidebar", detail: "Tabs and spaces on the left", selected: store.sidebarVisible) {
-                        StylePreview(sidebar: true, style: style, color: color)
-                    } action: { store.sidebarVisible = true }
-                    choice("Focus", detail: "Just the page; the sidebar slides out at the edge", selected: !store.sidebarVisible) {
-                        StylePreview(sidebar: false, style: style, color: color)
-                    } action: { store.sidebarVisible = false }
+                    ForEach(SidebarLayout.allCases) { layout in
+                        choice(layout.title, detail: Self.detail(layout), selected: store.layout == layout) {
+                            StylePreview(layout: layout, style: style, color: color)
+                        } action: { store.setLayout(layout) }
+                    }
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
@@ -236,11 +235,19 @@ private struct StylePicker: View {
                 HStack(spacing: 12) {
                     ForEach(TintStyle.allCases) { option in
                         choice(option.title, detail: nil, selected: style == option) {
-                            StylePreview(sidebar: store.sidebarVisible, style: option, color: color)
+                            StylePreview(layout: store.layout, style: option, color: color)
                         } action: { style = option }
                     }
                 }
             }
+        }
+    }
+
+    private static func detail(_ layout: SidebarLayout) -> String {
+        switch layout {
+        case .full: "Tabs and spaces on the left"
+        case .compact: "Just the icons"
+        case .focus: "Just the page"
         }
     }
 
@@ -266,19 +273,20 @@ private struct StylePicker: View {
 
 /// A miniature MBGA window.
 private struct StylePreview: View {
-    let sidebar: Bool
+    let layout: SidebarLayout
     let style: TintStyle
     let color: UInt32
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let dark = colorScheme == .dark
+        let sidebar = layout != .focus
         let inset: CGFloat = sidebar ? 5 : 3
         ZStack(alignment: .topLeading) {
             LinearGradient(colors: Theme.gradient(for: RGB(color), dark: dark, active: true, style: style),
                            startPoint: .top, endPoint: .bottom)
             HStack(spacing: inset) {
-                if sidebar {
+                if layout == .full {
                     VStack(alignment: .leading, spacing: 4) {
                         Capsule().fill(.primary.opacity(0.15)).frame(height: 6)
                         ForEach(0..<4, id: \.self) { i in
@@ -288,6 +296,14 @@ private struct StylePreview: View {
                     .padding(.top, 12)
                     .padding(.leading, 6)
                     .frame(width: 40, alignment: .topLeading)
+                } else if layout == .compact {
+                    VStack(spacing: 4) {
+                        ForEach(0..<5, id: \.self) { i in
+                            RoundedRectangle(cornerRadius: 1.5).fill(.primary.opacity(i == 1 ? 0.3 : 0.14)).frame(width: 7, height: 7)
+                        }
+                    }
+                    .padding(.top, 12)
+                    .frame(width: 14, alignment: .top)
                 }
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .fill(.white)

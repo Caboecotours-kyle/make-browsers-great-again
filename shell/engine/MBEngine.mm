@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <map>
 #include <set>
 #include <string>
@@ -37,6 +38,7 @@
 - (void)engineWillCloseBrowser;
 - (void)engineDidCloseBrowser;
 - (void)engineSetMediaPlaying:(BOOL)playing;
+- (void)engineSetThemeColor:(NSString*)color;
 - (void)engineSetCapturing:(BOOL)capturing;
 - (void)engineSetBlockedCount:(NSUInteger)count;
 @end
@@ -106,6 +108,17 @@ const char* RequestKind(cef_resource_type_t type) {
 }
 
 constexpr char kMediaProbePrefix[] = "__mbga_media:";
+// Reports the page's theme-color (the first <meta name="theme-color"> whose
+// media query matches), normalized by a canvas to "#rrggbb" or "rgba(...)",
+// or nothing.
+constexpr char kThemePrefix[] = "__mbga_theme:";
+constexpr char kThemeColorScript[] =
+    "(function(){try{var c='';var ms=document.querySelectorAll("
+    "'meta[name=\"theme-color\"]');for(var i=0;i<ms.length;i++){var m=ms[i];"
+    "if(!m.media||matchMedia(m.media).matches){c=m.content;break;}}var v='';"
+    "if(c){var x=document.createElement('canvas').getContext('2d');"
+    "x.fillStyle='#010203';x.fillStyle=c;v=x.fillStyle;"
+    "if(v==='#010203')v='';}console.debug('__mbga_theme:'+v);}catch(e){}})();";
 constexpr char kMediaProbeScript[] =
     "(function(){try{var p=false;"
     "document.querySelectorAll('video,audio').forEach(function(m){"
@@ -704,6 +717,10 @@ class WebClient : public BaseClient,
                         const CefString& source,
                         int line) override {
     std::string text = message.ToString();
+    if (text.rfind(kThemePrefix, 0) == 0) {
+      [view_ engineSetThemeColor:@(text.c_str() + strlen(kThemePrefix))];
+      return true;
+    }
     if (text.rfind(kMediaProbePrefix, 0) != 0) {
       return false;
     }
@@ -741,6 +758,14 @@ class WebClient : public BaseClient,
     NSString* script =
         [NSString stringWithFormat:@(kInjectStyleScript), literal];
     frame->ExecuteJavaScript(script.UTF8String, "", 0);
+  }
+
+  void OnLoadEnd(CefRefPtr<CefBrowser> browser,
+                 CefRefPtr<CefFrame> frame,
+                 int httpStatusCode) override {
+    if (frame->IsMain()) {
+      frame->ExecuteJavaScript(kThemeColorScript, "", 0);
+    }
   }
 
   void OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
@@ -1293,6 +1318,10 @@ class WebClient : public BaseClient,
   if (wasBusy != (_mediaPlaying || _capturing)) {
     [self.delegate webView:self didChangeBusy:!wasBusy];
   }
+}
+
+- (void)engineSetThemeColor:(NSString*)color {
+  [self.delegate webView:self didChangeThemeColor:color];
 }
 
 - (void)engineSetBlockedCount:(NSUInteger)count {
