@@ -201,6 +201,10 @@ pub struct State {
     /// Closed tabs and folders that can be reopened, newest last.
     #[serde(skip)]
     pub closed: Vec<Closed>,
+    /// Tabs on screen outside the main window (little windows). Like the
+    /// visible tab, they are never put to sleep or frozen.
+    #[serde(skip)]
+    pub shown_elsewhere: Vec<Id>,
 }
 
 fn default_search_template() -> String {
@@ -238,6 +242,7 @@ impl State {
             block_ads: true,
             ads_allowed: Vec::new(),
             closed: Vec::new(),
+            shown_elsewhere: Vec::new(),
         };
         let profile = s.create_profile("Personal");
         let space = s.create_space("Home", "🏠", SPACE_COLORS[0], profile);
@@ -718,6 +723,22 @@ impl State {
         Some(space_id)
     }
 
+    /// Moves the main window off `id` (popped out into its own window) to
+    /// the tab Arc would show after closing it. Returns that tab.
+    pub fn step_away(&mut self, id: Id, now: u64) -> Option<Id> {
+        let container = self.locate(id)?;
+        let space = self.space(self.active_space)?;
+        if space.active_tab != Some(id) {
+            return None;
+        }
+        let next = self.next_after_close(id, container, now);
+        self.space_mut(self.active_space)?.active_tab = next;
+        if let Some(t) = next.and_then(|n| self.tabs.get_mut(&n)) {
+            t.last_active_ms = now;
+        }
+        next
+    }
+
     // -------------------------------------------------------------- tidying
 
     /// Today tabs of a space untouched for at least `hours`, except the
@@ -921,6 +942,7 @@ impl State {
         let after_ms = self.policy.freeze_after_secs * 1000;
         let today: Vec<Id> = self.spaces.iter().flat_map(|s| s.today.iter().copied()).collect();
         let keep_awake = &self.keep_awake;
+        let elsewhere = &self.shown_elsewhere;
         let mut frozen = Vec::new();
         for id in today {
             let Some(t) = self.tabs.get_mut(&id) else { continue };
@@ -928,6 +950,7 @@ impl State {
                 && !t.frozen
                 && !t.audible
                 && !keep_awake.contains(&site_of(&t.url))
+                && !elsewhere.contains(&id)
                 && Some(id) != visible
                 && now.saturating_sub(t.last_active_ms) >= after_ms
             {
@@ -1005,7 +1028,7 @@ impl State {
         let mut live: Vec<&Tab> = self
             .tabs
             .values()
-            .filter(|t| t.live && Some(t.id) != visible)
+            .filter(|t| t.live && Some(t.id) != visible && !self.shown_elsewhere.contains(&t.id))
             .collect();
         live.sort_by_key(|t| (t.last_active_ms, t.id));
 

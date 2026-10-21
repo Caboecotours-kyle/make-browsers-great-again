@@ -45,6 +45,12 @@ struct RootView: View {
                             EmptySpaceHint()
                         }
                     }
+                    .overlay {
+                        if let id = store.dragOverPage, let tab = store.core.tab(id: id) {
+                            LittleWindowDropPreview(tab: tab)
+                                .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                        }
+                    }
                     .padding(.vertical, chrome ? inset : 0)
                     .padding(.trailing, chrome ? inset : 0)
                     .padding(.leading, chrome && store.layout == .focus ? inset : 0)

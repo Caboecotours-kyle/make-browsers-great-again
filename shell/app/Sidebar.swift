@@ -178,7 +178,7 @@ private struct FavoriteTile: View {
             .simultaneousGesture(TapGesture().onEnded { store.select(tab.id, in: space.id) })
             .onHover { hovering = $0 }
             .help(tab.displayTitle)
-            .onDrag { store.dragProvider(for: tab.id, url: tab.url) }
+            .onDrag({ store.dragProvider(for: tab.id, url: tab.url) }, preview: { TabDragPreview(tab: tab) })
             .onDrop(of: [.sidebarItem, .url], delegate: ItemDropDelegate(
                 store: store, key: key, target: .favorites(profileId: space.profileId),
                 index: index, folderID: nil, horizontal: true, length: width))

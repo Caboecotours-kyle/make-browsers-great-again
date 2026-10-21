@@ -493,3 +493,21 @@ fn ad_settings_survive_a_restart() {
     assert!(reopened.tab(tab).unwrap().ads_allowed);
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn tabs_in_little_windows_stay_awake_and_the_main_window_moves_on() {
+    let mut s = State::new_default();
+    let sp = home(&s);
+    let a = s.open_tab(sp, "https://a.com", false, 1).unwrap();
+    let b = s.open_tab(sp, "https://b.com", true, 2).unwrap();
+    // today = [b, a], b visible
+    for id in [a, b] {
+        s.set_live(id, true);
+    }
+    assert_eq!(s.step_away(b, 3), Some(a));
+    assert_eq!(s.visible_tab(), Some(a));
+    s.shown_elsewhere.push(b);
+    assert!(s.collect_sleepers(10_000_000, Pressure::Critical).is_empty());
+    assert!(s.collect_freezers(10_000_000).is_empty());
+    assert_eq!(s.step_away(b, 4), None, "b is no longer the visible tab");
+}

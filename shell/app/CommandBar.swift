@@ -357,6 +357,10 @@ struct CommandAction {
                 CommandAction(id: "duplicate", title: "Duplicate Tab", symbol: "plus.square.on.square") {
                     store.duplicate(tab, in: space)
                 },
+                CommandAction(id: "little", title: "Open in Little Window", symbol: "macwindow.on.rectangle",
+                              keywords: ["pop", "out", "float", "window"]) {
+                    store.openInLittleWindow(tab.id)
+                },
                 CommandAction(id: "close", title: pinned ? "Unload Tab" : "Close Tab", symbol: "xmark", shortcut: "⌘W") {
                     store.close(tab.id)
                 },

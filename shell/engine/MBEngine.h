@@ -65,6 +65,9 @@ typedef NSString* _Nonnull (^MBHidingCSS)(NSString* page);
 /// Tears the engine down after the message loop returned.
 + (void)shutdown;
 
+/// Makes pages refuse dropped items, or accept them again.
++ (void)setRejectsDrops:(BOOL)reject;
+
 /// Turns on ad blocking. Call before the first web view is created.
 + (void)setRequestFilter:(MBRequestFilter)filter hidingCSS:(MBHidingCSS)css;
 

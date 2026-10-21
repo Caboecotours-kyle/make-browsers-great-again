@@ -59,6 +59,9 @@ std::string g_isolated_origins;
 // filter is called on the network thread.
 MBRequestFilter g_request_filter = nil;
 MBHidingCSS g_hiding_css = nil;
+// While a tab is dragged out of the sidebar, pages refuse drops so the drag
+// can end over a page (and pop the tab out) instead of navigating it.
+bool g_reject_drops = false;
 
 // Adds |css| to the page as early as possible: the document element may
 // not exist yet when a load starts.
@@ -621,7 +624,8 @@ class WebClient : public BaseClient,
                   public CefLoadHandler,
                   public CefRequestHandler,
                   public CefResourceRequestHandler,
-                  public CefContextMenuHandler {
+                  public CefContextMenuHandler,
+                  public CefDragHandler {
  public:
   explicit WebClient(MBWebView* view) : view_(view) {}
 
@@ -631,6 +635,15 @@ class WebClient : public BaseClient,
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
   CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override {
     return this;
+  }
+  CefRefPtr<CefDragHandler> GetDragHandler() override { return this; }
+
+  // CefDragHandler
+
+  bool OnDragEnter(CefRefPtr<CefBrowser> browser,
+                   CefRefPtr<CefDragData> dragData,
+                   DragOperationsMask mask) override {
+    return g_reject_drops;
   }
 
   // CefLifeSpanHandler
@@ -993,6 +1006,10 @@ class WebClient : public BaseClient,
 // --------------------------------------------------------------------- MBEngine
 
 @implementation MBEngine
+
++ (void)setRejectsDrops:(BOOL)reject {
+  g_reject_drops = reject;
+}
 
 + (void)setRequestFilter:(MBRequestFilter)filter hidingCSS:(MBHidingCSS)css {
   g_request_filter = filter;

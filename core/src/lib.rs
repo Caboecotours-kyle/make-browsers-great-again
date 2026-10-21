@@ -592,6 +592,21 @@ impl BrowserCore {
         self.mutate(|s, _| s.reopen_tab(id))
     }
 
+    /// Marks a tab as on screen in a window of its own, or back.
+    pub fn set_shown_elsewhere(&self, id: u64, shown: bool) {
+        self.mutate(|s, _| {
+            s.shown_elsewhere.retain(|t| *t != id);
+            if shown {
+                s.shown_elsewhere.push(id);
+            }
+        })
+    }
+
+    /// Selects another tab in the main window if `id` was on screen there.
+    pub fn step_away(&self, id: u64) -> Option<u64> {
+        self.mutate(|s, now| s.step_away(id, now))
+    }
+
     /// Tabs closed this session, most recent first.
     pub fn closed_tabs(&self, limit: u32) -> Vec<TabInfo> {
         let inner = self.lock();

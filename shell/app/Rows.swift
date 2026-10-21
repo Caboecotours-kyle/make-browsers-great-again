@@ -67,6 +67,11 @@ struct TabRow: View {
                 }
                 .buttonStyle(.plain)
                 .help(pinned ? "Unload tab" : "Close tab")
+            } else if store.isInLittleWindow(tab.id) {
+                Image(systemName: "macwindow")
+                    .font(.system(size: 10))
+                    .opacity(0.5)
+                    .help("Open in a little window")
             } else if tab.audible {
                 Equalizer(playing: store.pausedMediaTab != tab.id)
                     .frame(width: 12, height: 11)
@@ -85,7 +90,7 @@ struct TabRow: View {
         // A plain tap gesture loses quick clicks to the drag recognizer.
         .simultaneousGesture(TapGesture().onEnded { store.select(tab.id, in: space.id) })
         .onHover { hovering = $0 }
-        .onDrag { store.dragProvider(for: tab.id, url: tab.url) }
+        .onDrag({ store.dragProvider(for: tab.id, url: tab.url) }, preview: { TabDragPreview(tab: tab) })
         .onDrop(of: [.sidebarItem, .url], delegate: ItemDropDelegate(
             store: store, key: key, target: target, index: index, folderID: nil))
         .contextMenu { TabMenu(tab: tab, space: space) }
@@ -207,6 +212,9 @@ struct TabMenu: View {
         }
         Button("Copy Link") { store.copyLink(tab.url) }
         Button("Duplicate") { store.duplicate(tab, in: space) }
+        Button(store.isInLittleWindow(tab.id) ? "Show Little Window" : "Open in Little Window") {
+            store.openInLittleWindow(tab.id)
+        }
         Divider()
         if tab.live && !(favorite || pinned) {
             Button("Sleep Tab") { store.sleep(tab.id) }

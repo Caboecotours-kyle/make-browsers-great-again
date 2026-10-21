@@ -119,6 +119,8 @@ final class BrowserStore: NSObject, ObservableObject {
     /// Theme colors pages declared, by site, so a site that was put to sleep
     /// keeps its color.
     @Published private(set) var pageColors: [String: RGB] = [:]
+    /// The tab being dragged over the page, which would pop out on drop.
+    @Published private(set) var dragOverPage: UInt64?
 
     let pager = PagerModel()
     let webContainer = WebContainerView()
@@ -131,6 +133,8 @@ final class BrowserStore: NSObject, ObservableObject {
     private var refreshPending = false
     private var persistTimer: Timer?
     private var toastTimer: Timer?
+    private var dragTimer: Timer?
+    private var littleWindows: [UInt64: LittleWindow] = [:]
     private var enteredFullscreenForContent = false
     private var lastVisibleTab: UInt64?
 
@@ -235,6 +239,10 @@ final class BrowserStore: NSObject, ObservableObject {
 
     /// Destroys a tab's engine view, freeing its renderer.
     private func destroyView(_ id: UInt64) {
+        if let little = littleWindows.removeValue(forKey: id) {
+            core.setShownElsewhere(id: id, shown: false)
+            little.dismiss()
+        }
         guard let view = views.removeValue(forKey: id) else { return }
         navStates[id] = nil
         blockedCounts[id] = nil
@@ -269,6 +277,11 @@ final class BrowserStore: NSObject, ObservableObject {
     // MARK: - Tabs
 
     func select(_ tabID: UInt64, in spaceID: UInt64? = nil) {
+        // A tab in a little window comes back to the main window.
+        if let little = littleWindows[tabID] {
+            little.putBack()
+            return
+        }
         let spaceID = spaceID ?? activeSpace.id
         if spaceID != snapshot.activeSpace { core.setActiveSpace(id: spaceID) }
         core.activateTab(spaceId: spaceID, tabId: tabID)
@@ -598,6 +611,7 @@ final class BrowserStore: NSObject, ObservableObject {
 
     func dragProvider(for id: UInt64, url: String?) -> NSItemProvider {
         draggingItem = id
+        trackDrag(of: id)
         let provider = NSItemProvider()
         provider.registerDataRepresentation(forTypeIdentifier: UTType.sidebarItem.identifier, visibility: .ownProcess) { done in
             done(Data(String(id).utf8), nil)
@@ -632,6 +646,89 @@ final class BrowserStore: NSObject, ObservableObject {
             }
         }
         return true
+    }
+
+    /// Follows a drag out of the sidebar, which SwiftUI reports nothing
+    /// about: whether it is over the page (to show where a little window
+    /// would open) and where it ends. A tab let go over the page, which
+    /// refuses the drop, pops out into a little window. Runs only while
+    /// dragging.
+    private func trackDrag(of id: UInt64) {
+        MBEngine.setRejectsDrops(true)
+        dragTimer?.invalidate()
+        let isTab = core.tab(id: id) != nil
+        let timer = Timer(timeInterval: 1.0 / 15, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.dragTick(id, isTab: isTab) }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        dragTimer = timer
+    }
+
+    private func dragTick(_ id: UInt64, isTab: Bool) {
+        let point = NSEvent.mouseLocation
+        let overPage = isTab && pageFrameOnScreen?.contains(point) == true
+        if overPage != (dragOverPage != nil) {
+            withAnimation(Motion.settle) { dragOverPage = overPage ? id : nil }
+        }
+        guard NSEvent.pressedMouseButtons & 1 == 0 else { return }
+        dragTimer?.invalidate()
+        dragTimer = nil
+        // A drop in the sidebar is handled as the button comes up; give it a
+        // moment before deciding nothing took the tab.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.dragEnded(id, at: point, overPage: overPage)
+        }
+    }
+
+    private func dragEnded(_ id: UInt64, at point: NSPoint, overPage: Bool) {
+        MBEngine.setRejectsDrops(false)
+        withAnimation(Motion.quick) { dragOverPage = nil }
+        guard draggingItem == id else { return }
+        draggingItem = nil
+        if overPage { openInLittleWindow(id, near: point) }
+    }
+
+    /// The page area of the main window, in screen coordinates.
+    private var pageFrameOnScreen: NSRect? {
+        guard let window, webContainer.window === window else { return nil }
+        return window.convertToScreen(webContainer.convert(webContainer.bounds, to: nil))
+    }
+
+    // MARK: - Little windows
+
+    /// Pops a tab out into a window of its own, near `point` if given.
+    func openInLittleWindow(_ tabID: UInt64, near point: NSPoint? = nil) {
+        if let little = littleWindows[tabID] {
+            little.show()
+            return
+        }
+        guard let tab = core.tab(id: tabID) else { return }
+        if views[tabID] == nil { createView(for: tab) }
+        guard let view = views[tabID] else { return }
+        if core.thaw(id: tabID) { view.setFrozen(false) }
+        core.setShownElsewhere(id: tabID, shown: true)
+        _ = core.stepAway(id: tabID)
+        let little = LittleWindow(tabID: tabID, view: view, store: self, near: point)
+        littleWindows[tabID] = little
+        refresh()
+        little.show()
+    }
+
+    func isInLittleWindow(_ tabID: UInt64) -> Bool {
+        littleWindows[tabID] != nil
+    }
+
+    /// Called as a little window closes: its tab goes back to the main window.
+    func littleWindowClosed(_ tabID: UInt64, select: Bool) {
+        guard littleWindows.removeValue(forKey: tabID) != nil else { return }
+        core.setShownElsewhere(id: tabID, shown: false)
+        if let view = views[tabID] { webContainer.add(view) }
+        if select {
+            self.select(tabID)
+            window?.makeKeyAndOrderFront(nil)
+        } else {
+            refresh()
+        }
     }
 
     private func spaceID(of target: DropTarget) -> UInt64? {
@@ -791,7 +888,8 @@ extension BrowserStore: MBWebViewDelegate {
 
     nonisolated func webView(_ view: MBWebView, didChangeFullscreen fullscreen: Bool) {
         MainActor.assumeIsolated {
-            guard isCurrent(view), let window else { return }
+            // Pages in little windows use their own window's full screen.
+            guard isCurrent(view), let window, view.window === window else { return }
             contentFullscreen = fullscreen
             let windowFullscreen = window.styleMask.contains(.fullScreen)
             if fullscreen && !windowFullscreen {

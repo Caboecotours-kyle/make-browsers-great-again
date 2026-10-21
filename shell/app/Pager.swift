@@ -153,7 +153,9 @@ final class WebContainerView: NSView {
 
     func show(_ view: MBWebView?) {
         guard view !== current else { return }
-        current?.isHidden = true
+        // A view moved to a little window is no longer this container's.
+        if current?.superview === self { current?.isHidden = true }
+        let view = view?.superview === self ? view : nil
         view?.frame = bounds
         view?.isHidden = false
         current = view
