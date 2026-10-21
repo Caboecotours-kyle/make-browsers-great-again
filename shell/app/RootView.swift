@@ -13,6 +13,8 @@ final class RootView: NSView {
     private let emptyHint: EmptySpaceHintView
     private let dropPreview = DropPreviewView()
     private let devToolbar: DevToolbarView
+    private let inspector: InspectorView
+    private let inspectorHandle = InspectorResizeHandle()
     private let agentGlow = AgentGlowView()
     private let peek = PeekContainerView()
     private let smear = MotionSmearView()
@@ -27,12 +29,17 @@ final class RootView: NSView {
         card = PageCardView(container: store.webContainer)
         emptyHint = EmptySpaceHintView(store: store)
         devToolbar = DevToolbarView(store: store)
+        inspector = InspectorView(store: store)
         toast = ToastView(store: store)
         shownLayout = store.layout
         super.init(frame: NSRect(x: 0, y: 0, width: 1280, height: 820))
         wantsLayer = true
         addSubview(backdrop)
+        addSubview(inspector)
+        addSubview(inspectorHandle)
         addSubview(card)
+        inspector.isHidden = !store.inspectorOpen
+        inspectorHandle.onDrag = { [weak self] x in self?.resizeInspector(to: x) }
         card.addSubview(emptyHint)
         card.addSubview(dropPreview)
         card.addSubview(devToolbar)
@@ -92,6 +99,8 @@ final class RootView: NSView {
             agentGlow.setActive(store.agentActingOnVisibleTab)
         case .dragOverPage:
             updateDropPreview()
+        case .inspector:
+            transitionInspector()
         case .chrome:
             // Into and out of page full screen (a video), the card grows to
             // the window's edges and back.
@@ -190,6 +199,7 @@ final class RootView: NSView {
         agentGlow.cornerRadius = card.isCard ? card.cornerRadius : 0
         devToolbar.frame = NSRect(x: 0, y: card.bounds.height - DevToolbarView.height,
                                   width: page.width > 0 ? page.width : card.bounds.width, height: DevToolbarView.height)
+        layoutInspector()
         // Out of sight, the sidebar and rail stay attached but hidden:
         // attaching the sidebar again costs a couple of frames as it slides in.
         // The sidebar is either part of the layout, sliding in and out with
@@ -245,6 +255,8 @@ final class RootView: NSView {
 
     /// How far the floating sidebar is in while it peeks over the page.
     private lazy var peekSpring = Spring(0, response: Motion.peekResponse)
+    /// How far the inspector is in on the right.
+    private lazy var inspectorSpring = Spring(store.inspectorOpen ? 1 : 0)
     private var sidebarShown: CGFloat { sidebarSpring.value }
     private var railShown: CGFloat { railSpring.value }
 
@@ -255,7 +267,8 @@ final class RootView: NSView {
         let panels = min(sidebar + rail, 1)
         let inset = 5 + 3 * panels
         let leading = sidebar * (sidebarWidth + 8) + rail * SidebarRail.width + (1 - panels) * 5
-        return NSRect(x: leading, y: inset, width: max(bounds.width - leading - inset, 0),
+        let trailing = inspectorSpring.value * (inspectorWidth + 8)
+        return NSRect(x: leading, y: inset, width: max(bounds.width - leading - inset - trailing, 0),
                       height: max(bounds.height - inset * 2, 0))
     }
 
@@ -295,7 +308,8 @@ final class RootView: NSView {
         sidebarSpring.step(dt)
         railSpring.step(dt)
         peekSpring.step(dt)
-        if sidebarSpring.isSettled, railSpring.isSettled, peekSpring.isSettled {
+        inspectorSpring.step(dt)
+        if sidebarSpring.isSettled, railSpring.isSettled, peekSpring.isSettled, inspectorSpring.isSettled {
             finishLayoutMove()
         } else {
             needsLayout = true
@@ -307,6 +321,48 @@ final class RootView: NSView {
         layoutTicker.stop()
         needsLayout = true
         layoutSubtreeIfNeeded()
+    }
+
+    // MARK: - Inspector
+
+    /// The inspector's width, leaving the page at least a phone's.
+    private var inspectorWidth: CGFloat {
+        min(InspectorSettings.width, max(bounds.width - 420, InspectorSettings.minWidth))
+    }
+
+    /// The inspector rides in from the right edge as the page makes room.
+    private func layoutInspector() {
+        let shown = inspectorSpring.value
+        let width = inspectorWidth
+        let visible = chrome && shown > 0.001
+        inspector.isHidden = !visible
+        inspectorHandle.isHidden = !visible || shown < 1
+        guard visible else { return }
+        let inset: CGFloat = 8
+        let x = bounds.width - inset - shown * width + (1 - shown) * inset
+        inspector.frame = NSRect(x: x.rounded(), y: 0, width: width, height: bounds.height)
+        inspector.alphaValue = min(shown * 1.5, 1)
+        inspector.cornerRadius = card.cornerRadius
+        inspectorHandle.frame = NSRect(x: card.frame.maxX, y: 0, width: 8, height: bounds.height)
+    }
+
+    private func transitionInspector() {
+        inspectorSpring.target = store.inspectorOpen ? 1 : 0
+        if store.inspectorOpen { inspector.update() }
+        guard chrome, !Motion.reduced, window != nil else {
+            inspectorSpring.settle()
+            finishLayoutMove()
+            return
+        }
+        if !layoutTicker.isRunning { lastLayoutStep = nil }
+        layoutTicker.start(on: self)
+        needsLayout = true
+    }
+
+    private func resizeInspector(to x: CGFloat) {
+        let width = bounds.width - 8 - x - 8
+        UserDefaults.standard.set(Double(max(width, InspectorSettings.minWidth)), forKey: InspectorSettings.widthKey)
+        needsLayout = true
     }
 
     // MARK: - Peek

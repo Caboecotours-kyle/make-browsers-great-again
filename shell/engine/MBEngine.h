@@ -74,6 +74,12 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
 - (void)webView:(MBWebView*)view
     didObserveNetworkEvent:(NSString*)method
                     params:(NSDictionary*)params;
+/// Any DevTools event of the page while -forwardsDevToolsEvents is on.
+- (void)webView:(MBWebView*)view
+    didReceiveDevToolsEvent:(NSString*)method
+                     params:(NSDictionary*)params;
+/// The element picked while -picksForInspector is on.
+- (void)webView:(MBWebView*)view didPickNode:(NSInteger)backendNodeId;
 @end
 
 /// A cookie to set, e.g. one imported from another browser. Times are
@@ -209,6 +215,12 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
 @property(nonatomic, readonly) NSDictionary<NSString*, NSString*>* frameSessions;
 /// Reports the page's network requests through the delegate.
 @property(nonatomic) BOOL recordsNetwork;
+/// Sends every DevTools event of the page to the delegate, for the
+/// shell's own developer tools; the Network domain stays on meanwhile.
+@property(nonatomic) BOOL forwardsDevToolsEvents;
+/// Picking an element reports it to the delegate rather than opening
+/// DevTools, and leaves the DOM and Overlay domains on.
+@property(nonatomic) BOOL picksForInspector;
 /// Gives keyboard focus to the page.
 - (void)focusContent;
 /// Asks the page whether it is playing audible media. The answer arrives via

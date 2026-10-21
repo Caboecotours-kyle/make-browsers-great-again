@@ -313,10 +313,13 @@ private final class SettingsPaneController: NSViewController {
             guard let position else { return }
             UserDefaults.standard.set(anchors[position.selectedSegment].rawValue, forKey: DeveloperSettings.anchorKey)
         }
-        let devTools = popUp(["Beside the page", "In a separate window"]) { i in
-            UserDefaults.standard.set(i == 1, forKey: DeveloperSettings.devToolsInWindowKey)
+        let devTools = popUp(["MBGA's sidebar", "Chrome DevTools beside the page", "Chrome DevTools in a window"]) { i in
+            UserDefaults.standard.set(i > 0, forKey: DeveloperSettings.chromeDevToolsKey)
+            if i > 0 { UserDefaults.standard.set(i == 2, forKey: DeveloperSettings.devToolsInWindowKey) }
         }
-        refreshers.append { devTools.selectItem(at: DeveloperSettings.docksDevTools ? 0 : 1) }
+        refreshers.append {
+            devTools.selectItem(at: !DeveloperSettings.usesChromeDevTools ? 0 : DeveloperSettings.docksDevTools ? 1 : 2)
+        }
         let dependents: [NSControl] = [everywhere, collapses, position]
         refreshers.append {
             let on = DeveloperSettings.enabled
@@ -334,8 +337,8 @@ private final class SettingsPaneController: NSViewController {
             [label("Toolbar:"), collapses],
             [label("Position:"), position],
             [NSGridCell.emptyContentView, caption("You can also drag the toolbar along the top of the page.")],
-            [label("Developer tools open:"), devTools],
-            [NSGridCell.emptyContentView, caption("Beside the page, each tab keeps its own; drag the edge to resize. ⌥⌘I opens and closes them.")],
+            [label("Developer tools:"), devTools],
+            [NSGridCell.emptyContentView, caption("MBGA's sidebar sits right of the page with Elements, Console, Network, Sources, Application and Performance, following whichever tab you're on. Chrome's DevTools stay in its ⋯ menu. ⌥⌘I opens and closes them; drag the edge to resize.")],
         ]
     }
 

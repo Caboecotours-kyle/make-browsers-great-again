@@ -254,6 +254,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func zoomOut(_ sender: Any?) { store.zoomOut() }
     @objc func resetZoom(_ sender: Any?) { store.resetZoom() }
     @objc func developerTools(_ sender: Any?) { store.showDevTools() }
+    @objc func javaScriptConsole(_ sender: Any?) { store.openDevTools() }
+    @objc func chromeDevTools(_ sender: Any?) { store.openChromeDevTools() }
     @objc func goBack(_ sender: Any?) { store.goBack() }
     @objc func goForward(_ sender: Any?) { store.goForward() }
     @objc func copyURL(_ sender: Any?) { store.copyVisibleURL() }
@@ -408,6 +410,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             m.item("Actual Size", #selector(resetZoom(_:)), "0", target: self)
             m.addItem(.separator())
             m.item("Developer Tools", #selector(developerTools(_:)), "i", [.command, .option], target: self)
+            m.item("JavaScript Console", #selector(javaScriptConsole(_:)), "j", [.command, .option], target: self)
+            m.item("Chrome DevTools", #selector(chromeDevTools(_:)), "i", [.command, .option, .shift], target: self)
             m.addItem(.separator())
             m.item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control], target: nil)
         }

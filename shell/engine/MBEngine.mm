@@ -54,6 +54,8 @@
 - (void)engineFrameAttached:(NSString*)frame session:(NSString*)session;
 - (void)engineFrameDetached:(NSString*)session;
 - (void)engineNetworkEvent:(NSString*)method params:(NSDictionary*)params;
+- (void)engineDevToolsEvent:(NSString*)method params:(NSDictionary*)params;
+- (void)engineDidPickNode:(int)backendNodeId;
 @end
 
 namespace {
@@ -1219,12 +1221,22 @@ class WebClient : public BaseClient,
   }
 
   void SetRecordingNetwork(bool recording) { recording_network_ = recording; }
+  void SetForwardingEvents(bool forwarding) { forwarding_ = forwarding; }
+  void SetPicksForInspector(bool picks) { inspector_picks_ = picks; }
 
   void OnDevToolsEvent(CefRefPtr<CefBrowser> browser,
                        const CefString& method,
                        const void* params,
                        size_t params_size) override {
     std::string name = method.ToString();
+    if (forwarding_) {
+      NSData* data = [NSData dataWithBytesNoCopy:const_cast<void*>(params)
+                                          length:params_size
+                                    freeWhenDone:NO];
+      id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+      [view_ engineDevToolsEvent:@(name.c_str())
+                          params:[object isKindOfClass:NSDictionary.class] ? object : @{}];
+    }
     if (name.rfind("Target.", 0) == 0 || (recording_network_ && name.rfind("Network.", 0) == 0)) {
       NSData* data = [NSData dataWithBytesNoCopy:const_cast<void*>(params)
                                           length:params_size
@@ -1243,6 +1255,10 @@ class WebClient : public BaseClient,
       args->SetInt("backendNodeId",
                    int(Number(value->GetDictionary()->GetValue("backendNodeId"))));
       SetPicking(browser, false);
+      if (inspector_picks_) {
+        [view_ engineDidPickNode:args->GetInt("backendNodeId")];
+        return;
+      }
       // DevTools inspects whatever is at a point, so ask where the node is.
       __weak MBWebView* weak_view = view_;
       Call(browser, "DOM.getBoxModel", args,
@@ -1340,8 +1356,11 @@ class WebClient : public BaseClient,
     }
     Call(browser, "Overlay.setInspectMode", args);
     if (!picking) {
-      Call(browser, "Overlay.disable", nullptr);
-      Call(browser, "DOM.disable", nullptr);
+      // The inspector keeps using them.
+      if (!forwarding_) {
+        Call(browser, "Overlay.disable", nullptr);
+        Call(browser, "DOM.disable", nullptr);
+      }
       [view_ engineDidStopPicking];
     }
   }
@@ -1352,7 +1371,7 @@ class WebClient : public BaseClient,
                            bool cache_disabled,
                            double latency,
                            double throughput) {
-    bool needed = cache_disabled || latency != 0 || throughput != 0 || recording_network_;
+    bool needed = cache_disabled || latency != 0 || throughput != 0 || recording_network_ || forwarding_;
     if (needed && !network_enabled_) {
       Call(browser, "Network.enable", nullptr);
     }
@@ -1530,6 +1549,9 @@ class WebClient : public BaseClient,
   // sent to frames' sessions (ids far above ExecuteDevToolsMethod's).
   bool following_frames_ = false;
   bool recording_network_ = false;
+  // Every event goes to the shell's inspector, which also picks elements.
+  bool forwarding_ = false;
+  bool inspector_picks_ = false;
   std::map<int, RawReply> session_replies_;
   int next_session_message_ = 1000000000;
   bool network_enabled_ = false;
@@ -1916,6 +1938,10 @@ class CookieKeys : public CefCookieVisitor {
   NSMutableDictionary<NSString*, NSString*>* _mediaFeatures;
   NSMutableDictionary<NSString*, NSString*>* _frameSessions;
   BOOL _followsFrames;
+  BOOL _forwardsDevToolsEvents;
+  BOOL _picksForInspector;
+  // DevTools commands sent before the browser existed, sent once it does.
+  NSMutableArray<dispatch_block_t>* _pendingCommands;
   NSString* _mobileUserAgent;
   BOOL _scriptsDisabled;
   BOOL _cacheDisabled;
@@ -2208,7 +2234,13 @@ class CookieKeys : public CefCookieVisitor {
                      params:(NSString*)params
                  completion:(void (^)(NSString*, NSString*))completion {
   if (!_browser) {
-    completion(nil, @"the page isn't loaded");
+    [self waitForBrowser:^(BOOL ready) {
+      if (ready) {
+        [self sendDevToolsCommand:method params:params completion:completion];
+      } else {
+        completion(nil, @"the page isn't loaded");
+      }
+    }];
     return;
   }
   _client->CallRaw(_browser, method.UTF8String, params.UTF8String ?: "",
@@ -2238,7 +2270,13 @@ class CookieKeys : public CefCookieVisitor {
     return;
   }
   if (!_browser) {
-    completion(nil, @"the page isn't loaded");
+    [self waitForBrowser:^(BOOL ready) {
+      if (ready) {
+        [self sendDevToolsCommand:method params:params session:session completion:completion];
+      } else {
+        completion(nil, @"the page isn't loaded");
+      }
+    }];
     return;
   }
   _client->CallInSession(_browser, method.UTF8String, params.UTF8String ?: "", session.UTF8String,
@@ -2256,6 +2294,20 @@ class CookieKeys : public CefCookieVisitor {
                                                ? error[@"message"]
                                                : text);
                          });
+}
+
+// Runs |then| once the browser exists (YES), or at once if it never will.
+- (void)waitForBrowser:(void (^)(BOOL ready))then {
+  if (_closing) {
+    then(NO);
+    return;
+  }
+  if (!_pendingCommands) {
+    _pendingCommands = [NSMutableArray array];
+  }
+  [_pendingCommands addObject:^{
+    then(YES);
+  }];
 }
 
 - (void)attachToFrames {
@@ -2293,6 +2345,38 @@ class CookieKeys : public CefCookieVisitor {
 
 - (void)engineNetworkEvent:(NSString*)method params:(NSDictionary*)params {
   [self.delegate webView:self didObserveNetworkEvent:method params:params];
+}
+
+- (BOOL)forwardsDevToolsEvents {
+  return _forwardsDevToolsEvents;
+}
+
+- (void)setForwardsDevToolsEvents:(BOOL)forwards {
+  if (_forwardsDevToolsEvents == forwards) {
+    return;
+  }
+  _forwardsDevToolsEvents = forwards;
+  if (_browser) {
+    _client->SetForwardingEvents(forwards);
+    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency, _throughput);
+  }
+}
+
+- (BOOL)picksForInspector {
+  return _picksForInspector;
+}
+
+- (void)setPicksForInspector:(BOOL)picks {
+  _picksForInspector = picks;
+  _client->SetPicksForInspector(picks);
+}
+
+- (void)engineDevToolsEvent:(NSString*)method params:(NSDictionary*)params {
+  [self.delegate webView:self didReceiveDevToolsEvent:method params:params];
+}
+
+- (void)engineDidPickNode:(int)backendNodeId {
+  [self.delegate webView:self didPickNode:backendNodeId];
 }
 
 - (void)focusContent {
@@ -2373,6 +2457,11 @@ class CookieKeys : public CefCookieVisitor {
 - (void)engineDidCreateBrowser:(CefRefPtr<CefBrowser>)browser {
   _browser = browser;
   [self applyEmulations];
+  NSArray<dispatch_block_t>* pending = _pendingCommands;
+  _pendingCommands = nil;
+  for (dispatch_block_t command in pending) {
+    command();
+  }
   if (_closing) {
     _browser->GetHost()->CloseBrowser(true);
     [self scheduleCloseFallback];
@@ -2388,8 +2477,11 @@ class CookieKeys : public CefCookieVisitor {
   if (_followsFrames) {
     _client->FollowFrames(_browser);
   }
-  if (_recordsNetwork) {
-    _client->SetRecordingNetwork(true);
+  if (_forwardsDevToolsEvents) {
+    _client->SetForwardingEvents(true);
+  }
+  if (_recordsNetwork || _forwardsDevToolsEvents) {
+    _client->SetRecordingNetwork(_recordsNetwork);
     _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency, _throughput);
   }
   if (_mediaFeatures.count > 0) {
@@ -2412,6 +2504,12 @@ class CookieKeys : public CefCookieVisitor {
     NSLog(@"tab %llu: DoClose / teardown", _tabID);
   }
   _closing = YES;
+  // Commands waiting for a browser that won't come fail now.
+  NSArray<dispatch_block_t>* pending = _pendingCommands;
+  _pendingCommands = nil;
+  for (dispatch_block_t command in pending) {
+    command();
+  }
   // Removing the engine's view destroys the browser (see DoClose).
   dispatch_async(dispatch_get_main_queue(), ^{
     for (NSView* subview in [self.subviews copy]) {

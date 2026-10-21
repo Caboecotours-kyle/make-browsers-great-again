@@ -121,6 +121,8 @@ final class AgentCommands {
         case "back", "forward", "reload": return try await navigate(command, args)
         case "goto", "navigate": return try await goto(args)
         case "run": return try await runScript(args)
+        case "cdp" where AgentSettings.debug: return try await rawCommand(args)
+        case "inspector" where AgentSettings.debug: return try await inspectorCommand(args)
         default: throw AgentError("Unknown command \"\(command)\". Run `mbga help`.")
         }
     }
@@ -281,6 +283,51 @@ final class AgentCommands {
         if let exception = result["exceptionDetails"] as? [String: Any] { throw AgentError(Self.describe(exception)) }
         let value = (result["result"] as? [String: Any])?["value"]
         return Self.json(value)
+    }
+
+    /// `cdp <method> [json]`, in test copies only: a raw DevTools command,
+    /// for checking what the inspector sends.
+    private func rawCommand(_ args: AgentArguments) async throws -> String {
+        guard let method = args[0] else { throw AgentError("Usage: mbga cdp <method> [json]") }
+        let view = try await page(try target(args))
+        let params = args.words.count > 1
+            ? (try? JSONSerialization.jsonObject(with: Data(args.words.dropFirst().joined(separator: " ").utf8))) as? [String: Any]
+            : nil
+        return Self.json(try await cdp(view, method, params, timeout: args.int("timeout").map(Double.init) ?? 5))
+    }
+
+    /// `inspector <panel|eval|select|source|row> [arg]`, in test copies
+    /// only: drives the inspector sidebar on the visible tab.
+    private func inspectorCommand(_ args: AgentArguments) async throws -> String {
+        let action = args[0] ?? ""
+        let rest = args.words.dropFirst().joined(separator: " ")
+        if let panel = InspectorPanelKind(rawValue: action) {
+            store.showInspector(panel)
+            return "showing \(panel.rawValue)"
+        }
+        guard let session = store.inspectorSession else { throw AgentError("The inspector isn't open on a tab.") }
+        switch action {
+        case "eval":
+            store.showInspector(.console)
+            session.model(ConsoleModel.self).evaluate(rest)
+        case "select":
+            store.showInspector(.elements)
+            let model = session.model(ElementsModel.self)
+            guard let document = model.document else { throw AgentError("No document yet.") }
+            let found = try await session.send("DOM.querySelector", ["nodeId": document.id, "selector": rest])
+            let described = try await session.send("DOM.describeNode", ["nodeId": found.int("nodeId") ?? 0])
+            model.reveal(backendNodeID: described.obj("node")?.int("backendNodeId") ?? 0)
+        case "source":
+            let parts = rest.split(separator: " ")
+            session.revealSource(url: parts.first.map(String.init) ?? "", line: parts.count > 1 ? Int(parts[1]) ?? 0 : 0)
+        case "row":
+            NotificationCenter.default.post(name: InspectorView.debugRow, object: nil, userInfo: ["row": Int(rest) ?? 0])
+        case "close":
+            store.closeInspector()
+        default:
+            throw AgentError("Unknown inspector action.")
+        }
+        return "ok"
     }
 
     private func console(_ args: AgentArguments) throws -> String {

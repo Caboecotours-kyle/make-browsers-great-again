@@ -66,6 +66,8 @@ enum StoreChange {
     case developer
     /// An agent started or stopped acting on the visible tab.
     case agent
+    /// The inspector opened, closed, changed panel or follows another tab.
+    case inspector
 }
 
 /// A network request, kept for agents (`mbga network`).
@@ -183,6 +185,17 @@ final class BrowserStore: NSObject {
     private var devReports: [UInt64: DevPageReport] = [:]
     /// Tabs whose developer toolbar was shown or hidden by hand (⇧⌘D).
     private var devToolbarOverrides: [UInt64: Bool] = [:]
+    /// The inspector sidebar is out.
+    private(set) var inspectorOpen = InspectorSettings.debugPanel != nil
+    /// The inspector panel shown.
+    var inspectorPanel = InspectorSettings.debugPanel ?? InspectorSettings.panel {
+        didSet {
+            if InspectorSettings.debugPanel == nil { UserDefaults.standard.set(inspectorPanel.rawValue, forKey: InspectorSettings.panelKey) }
+            if inspectorPanel != oldValue { changed(.inspector) }
+        }
+    }
+    /// The inspector's connections to the tabs it showed while open.
+    private var inspectorSessions: [UInt64: InspectorSession] = [:]
     /// Opens Settings, at a pane if given.
     var openSettings: ((SettingsPane?) -> Void)?
     /// Agents' preferences, kept in the data folder.
@@ -348,6 +361,10 @@ final class BrowserStore: NSObject {
             lastVisibleTab = visible
             changed(.developer)
             changed(.agent)
+            syncInspector()
+        } else if inspectorOpen, let id = visible, views[id] != nil, inspectorSessions[id] == nil {
+            // Its page woke again.
+            syncInspector()
         }
     }
 
@@ -376,6 +393,7 @@ final class BrowserStore: NSObject {
         devReports[id] = nil
         consoleLogs[id] = nil
         networkLogs[id] = nil
+        inspectorSessions.removeValue(forKey: id)?.stop()
         devStates[id]?.picking = false
         if pausedMediaTab == id { pausedMediaTab = nil }
         view.isHidden = true
@@ -616,16 +634,77 @@ final class BrowserStore: NSObject {
     func zoomIn() { visibleView?.zoomIn() }
     func zoomOut() { visibleView?.zoomOut() }
     func resetZoom() { visibleView?.resetZoom() }
-    /// ⌥⌘I: opens DevTools, or closes it if docked and open.
+    /// ⌥⌘I: opens the developer tools, or closes them.
     func showDevTools() {
+        guard DeveloperSettings.usesChromeDevTools else { return toggleInspector() }
         guard let view = visibleView else { return }
         if view.devToolsWindow != nil { view.closeDevTools() } else { view.showDevTools() }
     }
 
-    /// Opens DevTools, or brings it forward.
-    func openDevTools() { visibleView?.showDevTools() }
+    /// Opens the developer tools at the console, or brings them forward.
+    func openDevTools() {
+        guard DeveloperSettings.usesChromeDevTools else { return showInspector(.console) }
+        visibleView?.showDevTools()
+    }
 
-    var visibleDevToolsOpen: Bool { visibleView?.devToolsWindow != nil }
+    /// Chrome's own DevTools, whichever tools are chosen.
+    func openChromeDevTools() { visibleView?.showDevTools() }
+
+    var visibleDevToolsOpen: Bool {
+        DeveloperSettings.usesChromeDevTools ? visibleView?.devToolsWindow != nil : inspectorOpen
+    }
+
+    // MARK: - Inspector
+
+    func toggleInspector() {
+        if inspectorOpen { closeInspector() } else { showInspector(nil) }
+    }
+
+    /// Opens the inspector, at `panel` if given.
+    func showInspector(_ panel: InspectorPanelKind?) {
+        if let panel { inspectorPanel = panel }
+        guard !inspectorOpen else { return }
+        inspectorOpen = true
+        syncInspector(force: true)
+    }
+
+    func closeInspector() {
+        guard inspectorOpen else { return }
+        inspectorOpen = false
+        if visibleDevState.picking { togglePicking() }
+        for session in inspectorSessions.values { session.stop() }
+        inspectorSessions = [:]
+        changed(.inspector)
+        changed(.developer)
+    }
+
+    /// The visible tab's session while the inspector is open.
+    var inspectorSession: InspectorSession? {
+        guard inspectorOpen, let id = visibleTabID else { return nil }
+        return inspectorSessions[id]
+    }
+
+    /// Follows the visible tab with the inspector.
+    private func syncInspector(force: Bool = false) {
+        guard inspectorOpen else { return }
+        if let id = visibleTabID, let view = views[id], inspectorSessions[id] == nil {
+            let session = InspectorSession(view: view)
+            session.showPanel = { [weak self] panel in self?.inspectorPanel = panel }
+            session.openTab = { [weak self] url in
+                guard let self else { return }
+                _ = core.openTab(spaceId: space(owning: id)?.id ?? activeSpace.id, url: url, activate: false)
+                refresh()
+            }
+            session.developerState = { [weak self] in self?.devStates[id] ?? DevTabState() }
+            session.updateDeveloperState = { [weak self] change in
+                guard let self, visibleTabID == id else { return }
+                updateDev(change)
+            }
+            inspectorSessions[id] = session
+        }
+        changed(.inspector)
+        if force { changed(.developer) }
+    }
 
     func reloadIgnoringCache() { visibleView?.reloadIgnoringCache() }
 
@@ -1503,6 +1582,20 @@ extension BrowserStore: MBWebViewDelegate {
         MainActor.assumeIsolated {
             guard isCurrent(view), let request = params["requestId"] as? String else { return }
             recordNetwork(view.tabID, method, request, params)
+        }
+    }
+
+    nonisolated func webView(_ view: MBWebView, didReceiveDevToolsEvent method: String, params: [AnyHashable: Any]) {
+        MainActor.assumeIsolated {
+            guard isCurrent(view), let session = inspectorSessions[view.tabID] else { return }
+            session.receive(method, params as? JSON ?? [:])
+        }
+    }
+
+    nonisolated func webView(_ view: MBWebView, didPickNode backendNodeId: Int) {
+        MainActor.assumeIsolated {
+            guard isCurrent(view), let session = inspectorSessions[view.tabID] else { return }
+            session.revealNode(backendNodeID: backendNodeId)
         }
     }
 

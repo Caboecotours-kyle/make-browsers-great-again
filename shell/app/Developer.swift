@@ -24,6 +24,8 @@ enum DeveloperSettings {
     static let devToolsInWindowKey = "devToolsInWindow"
     /// The docked DevTools panel's width.
     static let devToolsWidthKey = "devToolsWidth"
+    /// ⌥⌘I opens Chrome's DevTools rather than MBGA's inspector sidebar.
+    static let chromeDevToolsKey = "useChromeDevTools"
 
     /// MBGA_DEBUG_DEVELOPER=1 (or =expanded, never shrinking) turns
     /// Developer Mode on in a test copy without saving it: the preferences
@@ -36,6 +38,7 @@ enum DeveloperSettings {
         debug == "expanded" ? false : UserDefaults.standard.object(forKey: collapsesKey) as? Bool ?? true
     }
     static var docksDevTools: Bool { !UserDefaults.standard.bool(forKey: devToolsInWindowKey) }
+    static var usesChromeDevTools: Bool { UserDefaults.standard.bool(forKey: chromeDevToolsKey) }
     static var anchor: DevToolbarAnchor {
         UserDefaults.standard.string(forKey: anchorKey).flatMap(DevToolbarAnchor.init) ?? .center
     }

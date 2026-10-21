@@ -611,6 +611,18 @@ struct CommandAction {
                 CommandAction(id: "devtools", title: "Developer Tools", symbol: "hammer", shortcut: "⌥⌘I", keywords: ["inspect", "console"]) {
                     store.showDevTools()
                 },
+                CommandAction(id: "console", title: "JavaScript Console", symbol: "terminal", shortcut: "⌥⌘J",
+                              keywords: ["devtools", "js", "log"]) {
+                    store.openDevTools()
+                },
+                CommandAction(id: "network-panel", title: "Network Requests", symbol: "arrow.up.arrow.down",
+                              keywords: ["devtools", "requests", "fetch", "xhr"]) {
+                    store.showInspector(.network)
+                },
+                CommandAction(id: "chrome-devtools", title: "Chrome DevTools", symbol: "wrench.and.screwdriver", shortcut: "⇧⌥⌘I",
+                              keywords: ["inspect", "devtools"]) {
+                    store.openChromeDevTools()
+                },
             ]
             if let site = tab.site, store.blockAds {
                 list.append(CommandAction(id: "ads", title: tab.adsAllowed ? "Block Ads on \(site)" : "Allow Ads on \(site)",
