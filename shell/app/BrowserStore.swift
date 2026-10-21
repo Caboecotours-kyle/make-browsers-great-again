@@ -22,7 +22,9 @@ enum SidebarLayout: String, CaseIterable {
     static let defaultsKey = "sidebarLayout"
     /// MBGA_DEBUG_LAYOUTS cycles layouts for captures; that must not change
     /// the layout saved for real use (the preferences are shared).
-    static let debugCycling = ProcessInfo.processInfo.environment["MBGA_DEBUG_LAYOUTS"]?.isEmpty == false
+    static let debugCycling = ["MBGA_DEBUG_LAYOUTS", "MBGA_DEBUG_PEEK"].contains {
+        ProcessInfo.processInfo.environment[$0]?.isEmpty == false
+    }
 
     static var saved: SidebarLayout {
         let defaults = UserDefaults.standard

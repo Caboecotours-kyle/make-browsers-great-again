@@ -187,6 +187,9 @@ enum Motion {
     static let reflow = Curve(duration: 0.3 * slow, timing: CAMediaTimingFunction(name: .easeInEaseOut))
     /// How long a spring takes to (nearly) settle.
     static let springResponse = 0.3 * slow
+    /// The sidebar peeking over the page: a little slower than a layout
+    /// change, so it glides in rather than snapping open.
+    static let peekResponse = 0.38 * slow
     /// A page giving way to another space's.
     static let fade = Curve(duration: 0.22 * slow, timing: CAMediaTimingFunction(name: .easeInEaseOut))
 

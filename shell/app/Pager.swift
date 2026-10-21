@@ -308,11 +308,12 @@ final class PageCardView: NSView {
     override var wantsUpdateLayer: Bool { true }
 
     /// Card corners and edge, or none for full screen.
+    // Set on every layout pass, so only a real change redraws.
     var isCard = true {
-        didSet { needsDisplay = true; needsLayout = true }
+        didSet { if isCard != oldValue { needsDisplay = true; needsLayout = true } }
     }
     var cornerRadius: CGFloat = 8 {
-        didSet { needsDisplay = true; needsLayout = true }
+        didSet { if cornerRadius != oldValue { needsDisplay = true; needsLayout = true } }
     }
 
     override func layout() {
@@ -321,6 +322,10 @@ final class PageCardView: NSView {
         CATransaction.setDisableActions(true)
         shadowLayer.frame = bounds
         shadowLayer.cornerRadius = isCard ? cornerRadius : 0
+        // A shadow without a path is worked out from the layer's pixels
+        // again whenever the card changes size: every frame of ⌘S.
+        shadowLayer.shadowPath = CGPath(roundedRect: bounds, cornerWidth: shadowLayer.cornerRadius,
+                                        cornerHeight: shadowLayer.cornerRadius, transform: nil)
         shadowLayer.isHidden = !isCard
         CATransaction.commit()
         container.cornerRadius = isCard ? cornerRadius : 0

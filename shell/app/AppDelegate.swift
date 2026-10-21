@@ -51,6 +51,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
             RunLoop.main.add(timer, forMode: .common)
         }
+        // MBGA_DEBUG_PEEK=<seconds> shows the sidebar peeking over the page
+        // in Focus mode, then not, that often, for captures of the slide.
+        if let every = ProcessInfo.processInfo.environment["MBGA_DEBUG_PEEK"], !every.isEmpty {
+            store.setLayout(.focus)
+            let timer = Timer(timeInterval: Double(every) ?? 2, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let store = self?.store else { return }
+                    store.sidebarPeek.toggle()
+                }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+        }
         if core.needsOnboarding() {
             store.importSheet = ImportRequest(firstLaunch: true)
         } else if store.visibleTabID == nil || CommandBarView.debugPreset != nil {

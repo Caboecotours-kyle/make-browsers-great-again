@@ -34,16 +34,15 @@ final class RootView: NSView {
         emptyHint.autoresizingMask = [.width, .height]
         dropPreview.autoresizingMask = [.width, .height]
         dropPreview.isHidden = true
-        addSubview(handle)
+        // The peek card sits right under the sidebar, which never leaves this
+        // view: moving it into the peek redrew it all as it slid in.
         addSubview(peek)
         peek.isHidden = true
+        addSubview(sidebar)
+        addSubview(handle)
         addSubview(toast)
         toast.isHidden = true
-        if store.layout == .full {
-            addSubview(sidebar, positioned: .above, relativeTo: card)
-        } else if store.layout == .compact {
-            addSubview(rail, positioned: .above, relativeTo: card)
-        }
+        if store.layout == .compact { addSubview(rail, positioned: .above, relativeTo: card) }
         handle.onResize = { [weak self] in self?.needsLayout = true }
 
         store.observe(self) { [weak self] change in self?.handle(change) }
@@ -159,12 +158,21 @@ final class RootView: NSView {
         dropPreview.frame = card.bounds
         // Out of sight, the sidebar and rail stay attached but hidden:
         // attaching the sidebar again costs a couple of frames as it slides in.
-        if sidebar.superview === self {
-            let shown = sidebarShown
+        // The sidebar is either part of the layout, sliding in and out with
+        // it, or floating on the peek card; hidden, it waits at the peek's
+        // size so the peek doesn't make it lay out again.
+        let shown = sidebarShown, peeking = peekSpring.value
+        if shownLayout == .full || shown > 0.001 {
             sidebar.frame = NSRect(x: -sidebarWidth * (1 - shown), y: 0, width: sidebarWidth, height: bounds.height)
             sidebar.alphaValue = shown
             sidebar.isHidden = !chrome || shown == 0
+        } else {
+            sidebar.frame = peekFrame(at: peeking)
+            sidebar.alphaValue = 1
+            sidebar.isHidden = !chrome || peeking == 0
         }
+        peek.isHidden = !chrome || peeking == 0 || shownLayout == .full
+        if !peek.isHidden { peek.frame = peekFrame(at: peeking) }
         if rail.superview === self {
             let shown = railShown
             rail.frame = NSRect(x: -SidebarRail.width * (1 - shown), y: 0, width: SidebarRail.width, height: bounds.height)
@@ -173,10 +181,6 @@ final class RootView: NSView {
         }
         handle.isHidden = !(chrome && shownLayout == .full)
         handle.frame = NSRect(x: sidebarWidth, y: 0, width: 8, height: bounds.height)
-        if !peek.isHidden { peek.frame = peekFrame(shown: true) }
-        if peek.isHidden == false || sidebar.superview === peek {
-            sidebar.frame = peek.bounds
-        }
         layoutToast()
         commandBar?.frame = bounds
     }
@@ -192,6 +196,8 @@ final class RootView: NSView {
     private lazy var layoutTicker = FrameTicker("layout") { [weak self] time in self?.stepLayout(at: time) }
     private var lastLayoutStep: CFTimeInterval?
 
+    /// How far the floating sidebar is in while it peeks over the page.
+    private lazy var peekSpring = Spring(0, response: Motion.peekResponse)
     private var sidebarShown: CGFloat { sidebarSpring.value }
     private var railShown: CGFloat { railSpring.value }
 
@@ -215,14 +221,16 @@ final class RootView: NSView {
         let new = store.layout
         guard new != shownLayout else { return }
         shownLayout = new
-        if new == .full, sidebar.superview !== self {
-            // From the peek card, if it was there.
-            sidebar.removeFromSuperview()
-            addSubview(sidebar, positioned: .above, relativeTo: card)
-        }
         if new == .compact, rail.superview !== self { addSubview(rail, positioned: .above, relativeTo: card) }
         sidebarSpring.target = new == .full ? 1 : 0
         railSpring.target = new == .compact ? 1 : 0
+        // Pinned while it peeks (⌘S with the sidebar out): it carries on
+        // from where the peek has it instead of sliding in from the edge.
+        if new == .full, peekSpring.value > sidebarSpring.value {
+            sidebarSpring.value = peekSpring.value
+            sidebarSpring.velocity = peekSpring.velocity
+        }
+        if new == .full { peekSpring.settle() }
         guard chrome, !Motion.reduced, window != nil else {
             sidebarSpring.settle()
             railSpring.settle()
@@ -239,7 +247,8 @@ final class RootView: NSView {
         lastLayoutStep = time
         sidebarSpring.step(dt)
         railSpring.step(dt)
-        if sidebarSpring.isSettled, railSpring.isSettled {
+        peekSpring.step(dt)
+        if sidebarSpring.isSettled, railSpring.isSettled, peekSpring.isSettled {
             finishLayoutMove()
         } else {
             needsLayout = true
@@ -255,42 +264,26 @@ final class RootView: NSView {
 
     // MARK: - Peek
 
-    private func peekFrame(shown: Bool) -> NSRect {
+    /// The floating sidebar `p` of the way in (0: just past the left edge).
+    private func peekFrame(at p: CGFloat) -> NSRect {
         let width = sidebarWidth
-        return NSRect(x: shown ? 6 : -width - 12, y: 6, width: width, height: max(bounds.height - 12, 0))
+        let hidden = -width - 12, shown: CGFloat = 6
+        return NSRect(x: hidden + (shown - hidden) * p, y: 6, width: width, height: max(bounds.height - 12, 0))
     }
 
-    /// With the sidebar hidden, it slides in over the page as a floating card.
+    /// With the sidebar hidden, it slides in over the page as a floating
+    /// card, by a spring: a quick move away turns it around smoothly.
     private func updatePeek() {
-        if store.sidebarPeek {
-            peek.cornerRadius = max(store.windowRadius - 6, 8)
-            if sidebar.superview !== peek {
-                sidebar.removeFromSuperview()
-                peek.addSubview(sidebar)
-                sidebar.alphaValue = 1
-                sidebar.isHidden = false
-            }
-            peek.frame = peekFrame(shown: false)
-            sidebar.frame = peek.bounds
-            sidebar.autoresizingMask = [.height]
-            peek.isHidden = false
-            addSubview(peek, positioned: .above, relativeTo: nil)
-            if let commandBar { addSubview(commandBar, positioned: .above, relativeTo: nil) }
-            // Slides rather than resizes, so the sidebar's layout never reflows.
-            Motion.animate(Motion.foldOut) { peek.animator().frame = peekFrame(shown: true) }
-        } else if !peek.isHidden {
-            Motion.animate(Motion.foldIn) { peek.animator().frame = peekFrame(shown: false) } completion: { [weak self] in
-                guard let self, !store.sidebarPeek else { return }
-                peek.isHidden = true
-                if sidebar.superview === peek {
-                    sidebar.removeFromSuperview()
-                    sidebar.autoresizingMask = []
-                    // Back in the window, hidden unless the layout shows it.
-                    addSubview(sidebar, positioned: .above, relativeTo: card)
-                }
-                needsLayout = true
-            }
+        peek.cornerRadius = max(store.windowRadius - 6, 8)
+        peekSpring.target = store.sidebarPeek ? 1 : 0
+        guard chrome, !Motion.reduced, window != nil else {
+            peekSpring.settle()
+            needsLayout = true
+            return
         }
+        if !layoutTicker.isRunning { lastLayoutStep = nil }
+        layoutTicker.start(on: self)
+        needsLayout = true
     }
 
     // MARK: - Overlays
@@ -431,6 +424,12 @@ final class PeekContainerView: FlippedView {
     override func layout() {
         super.layout()
         backdrop.frame = bounds
+        // From a path: worked out from the sidebar's pixels, the shadow cost
+        // a full redraw on every frame of the slide.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+        CATransaction.commit()
     }
 
     override func updateLayer() {
