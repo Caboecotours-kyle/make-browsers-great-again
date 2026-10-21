@@ -877,36 +877,52 @@ final class BrowserStore: NSObject {
     /// Shows or hides the traffic lights, fading them in Focus mode so they
     /// don't pop. Hidden buttons are also made unclickable.
     private var lightsOffset = CGSize.zero
-    private var lightsResizeObserver: NSObjectProtocol?
+    private var lightsNativeX: [NSWindow.ButtonType: CGFloat] = [:]
+    private var lightsObservers: [NSObjectProtocol] = []
+    private var placingLights = false
+    /// Where the traffic lights' centres sit below the top of the window (or
+    /// of the peek card): the middle of the sidebar's toolbar row, so they
+    /// line up with its buttons. AppKit's place, for a plain title bar, is
+    /// about 5 points higher.
+    static let trafficLightsCenterY: CGFloat = 21
 
-    /// Moves the traffic lights by `offset` from where AppKit puts them, so
-    /// they ride on the peek card with the sidebar's toolbar instead of
-    /// staying in the window's corner.
+    /// Places the traffic lights on the sidebar's toolbar row, `offset` from
+    /// the window's corner: the peek card's corner while the sidebar peeks.
     func offsetTrafficLights(_ offset: CGSize) {
-        guard let window else { return }
-        if lightsResizeObserver == nil {
-            // AppKit puts the buttons back in place when it lays out the
-            // title bar (a resize): the offset has to be applied again.
-            lightsResizeObserver = NotificationCenter.default.addObserver(
-                forName: NSWindow.didResizeNotification, object: window, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    let wanted = self.lightsOffset
-                    self.lightsOffset = .zero
-                    self.offsetTrafficLights(wanted)
-                }
+        lightsOffset = offset
+        placeTrafficLights()
+    }
+
+    private func placeTrafficLights() {
+        guard let window, !placingLights else { return }
+        let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        let buttons = types.compactMap { type in window.standardWindowButton(type).map { (type, $0) } }
+        if lightsNativeX.isEmpty {
+            for (type, button) in buttons { lightsNativeX[type] = button.frame.minX }
+            // AppKit lays the title bar out again now and then (showing the
+            // window, a resize, becoming key) and puts the buttons back in
+            // its place; put them back in ours.
+            for (_, button) in buttons {
+                button.postsFrameChangedNotifications = true
+                lightsObservers.append(NotificationCenter.default.addObserver(
+                    forName: NSView.frameDidChangeNotification, object: button, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.placeTrafficLights() }
+                })
             }
         }
-        guard offset != lightsOffset else { return }
-        let dx = offset.width - lightsOffset.width, dy = offset.height - lightsOffset.height
-        lightsOffset = offset
-        for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            guard let button = window.standardWindowButton(type) else { continue }
-            var origin = button.frame.origin
-            origin.x += dx
-            // The title bar isn't flipped: down is negative.
-            origin.y += (button.superview?.isFlipped == true) ? dy : -dy
-            button.setFrameOrigin(origin)
+        placingLights = true
+        defer { placingLights = false }
+        for (type, button) in buttons {
+            guard let x = lightsNativeX[type], let container = button.superview else { continue }
+            // How far the container's top is below the window's top.
+            let top = container.isFlipped ? 0 : container.bounds.height
+            let topInWindow = container.convert(NSPoint(x: 0, y: top), to: nil).y
+            let inset = (window.contentView?.bounds.height ?? topInWindow) - topInWindow
+            let centerFromTop = Self.trafficLightsCenterY + lightsOffset.height - inset
+            let y = container.isFlipped ? centerFromTop - button.frame.height / 2
+                : container.bounds.height - centerFromTop - button.frame.height / 2
+            let origin = NSPoint(x: x + lightsOffset.width, y: y.rounded())
+            if button.frame.origin != origin { button.setFrameOrigin(origin) }
         }
     }
 
