@@ -448,10 +448,10 @@ fn blocker_cancels_matching_requests_except_on_allowed_sites() {
     assert!(b.should_block("https://ads.example.net/banner.js", page, "script"));
     assert!(b.should_block("https://tracker.example.org/p.gif", page, "image"));
     assert!(!b.should_block("https://cdn.example.com/app.js", page, "script"));
-    assert!(b.hiding_css(page).contains(".ad-slot{display:none!important}"));
+    assert!(b.page_script(page).contains(".ad-slot{display:none!important}"));
     b.allowed.insert("news.example.com".into());
     assert!(!b.should_block("https://ads.example.net/banner.js", page, "script"));
-    assert!(b.hiding_css(page).is_empty());
+    assert!(b.page_script(page).is_empty());
     b.allowed.clear();
     b.enabled = false;
     assert!(!b.should_block("https://ads.example.net/banner.js", page, "script"));
@@ -463,10 +463,11 @@ fn blocker_compiles_lists_once_and_loads_the_cache() {
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join(blocker::LISTS[0].0), "||ads.example.net^\n").unwrap();
     let mut first = blocker::Blocker::new(true, []);
+    assert!(!first.load_cached(&dir), "nothing compiled yet");
     assert!(first.load(&dir));
     assert!(dir.join("engine.dat").exists());
     let mut cached = blocker::Blocker::new(true, []);
-    assert!(cached.load(&dir));
+    assert!(cached.load_cached(&dir));
     assert!(cached.should_block("https://ads.example.net/x.js", "https://a.com/", "script"));
     let _ = fs::remove_dir_all(dir);
 }
@@ -510,4 +511,40 @@ fn tabs_in_little_windows_stay_awake_and_the_main_window_moves_on() {
     assert!(s.collect_sleepers(10_000_000, Pressure::Critical).is_empty());
     assert!(s.collect_freezers(10_000_000).is_empty());
     assert_eq!(s.step_away(b, 4), None, "b is no longer the visible tab");
+}
+
+#[test]
+fn generic_hiding_rules_follow_the_names_a_page_reports() {
+    let b = blocker::Blocker::from_rules("##.generic-ad\n###top-banner\n@@||quiet.example^$generichide\n");
+    let page = "https://news.example.com/";
+    assert!(b.page_script(page).contains("__mbga_cosmetic"), "the collector runs");
+    // A line break inside a JavaScript string would void the whole script.
+    assert!(!b.page_script(page).contains("'\n'"));
+    let reply = b.cosmetic_reply(page, r#"{"c":["generic-ad","story"],"i":["top-banner"]}"#);
+    assert!(reply.contains(".generic-ad{display:none!important}"));
+    assert!(reply.contains("#top-banner{display:none!important}"));
+    assert!(b.cosmetic_reply(page, r#"{"c":["story"],"i":[]}"#).is_empty());
+    assert!(b.cosmetic_reply(page, "not json").is_empty());
+    // $generichide: no collector, no generic rules.
+    assert!(!b.page_script("https://quiet.example/").contains("__mbga_cosmetic"));
+    assert!(b.cosmetic_reply("https://quiet.example/", r#"{"c":["generic-ad"]}"#).is_empty());
+}
+
+#[test]
+fn scriptlets_and_user_rules_come_from_the_filter_directory() {
+    let dir = std::path::PathBuf::from(temp_dir("scriptlets"));
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join(blocker::SCRIPTLETS.0),
+        "/// set-constant.js\n/// alias set.js\n(function() {\nwindow['{{1}}'] = '{{2}}' === 'true';\n})();\n\n",
+    )
+    .unwrap();
+    fs::write(dir.join(blocker::USER_RULES), "news.example.com##+js(set, mbgaFlag, true)\n||ads.example.net^\n").unwrap();
+    let mut b = blocker::Blocker::new(true, []);
+    assert!(b.load(&dir), "user rules alone are enough");
+    let script = b.page_script("https://news.example.com/");
+    assert!(script.contains("mbgaFlag"), "{script}");
+    assert!(b.should_block("https://ads.example.net/a.js", "https://news.example.com/", "script"));
+    assert!(!b.page_script("https://other.example.com/").contains("mbgaFlag"));
+    let _ = fs::remove_dir_all(dir);
 }

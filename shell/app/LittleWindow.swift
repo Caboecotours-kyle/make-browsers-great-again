@@ -48,13 +48,40 @@ final class LittleWindow: NSObject, NSWindowDelegate {
     }
 
     func show() {
+        guard !window.isVisible, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+        // Grows out of where it was opened.
+        let frame = window.frame
+        window.setFrame(frame.insetBy(dx: frame.width * 0.06, dy: frame.height * 0.06), display: false)
+        window.alphaValue = 0
         window.makeKeyAndOrderFront(nil)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            window.animator().setFrame(frame, display: true)
+            window.animator().alphaValue = 1
+        }
     }
 
     /// Closes the window and selects the tab in the main window.
     func putBack() {
         returnToSidebar = true
-        window.close()
+        fadeOutAndClose()
+    }
+
+    private func fadeOutAndClose() {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            window.close()
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            window.animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated { self?.window.close() }
+        }
     }
 
     /// Closes the window when its tab goes away; the store has the view.

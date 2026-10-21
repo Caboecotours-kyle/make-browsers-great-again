@@ -12,16 +12,30 @@ enum AdBlocking {
     nonisolated static func install(core: BrowserCore) {
         MBEngine.setRequestFilter({ url, page, kind in
             core.shouldBlock(url: url, page: page, kind: kind)
-        }, hidingCSS: { page in
-            core.hidingCss(page: page)
+        }, pageScript: { page in
+            core.pageScript(page: page)
+        }, pageReply: { page, report in
+            core.cosmeticReply(page: page, report: report)
         })
     }
 
-    /// Loads the lists downloaded before, then refreshes stale ones in the
-    /// background and reloads the engine if any changed.
-    nonisolated static func updateLists(core: BrowserCore) {
+    /// Reloads the engine, for after editing My Filters.
+    nonisolated static func reload(core: BrowserCore) async -> Bool {
+        await Task.detached(priority: .userInitiated) { core.loadFilters() }.value
+    }
+
+    /// Loads the compiled engine if it is up to date (tens of milliseconds),
+    /// so the first pages after launch are filtered too. Call before the
+    /// first web view is created.
+    nonisolated static func loadCached(core: BrowserCore) -> Bool {
+        core.loadCachedFilters()
+    }
+
+    /// Compiles the lists if the cache wasn't usable, then refreshes stale
+    /// lists in the background and reloads the engine if any changed.
+    nonisolated static func updateLists(core: BrowserCore, loaded: Bool) {
         Task.detached(priority: .utility) {
-            _ = core.loadFilters()
+            if !loaded { _ = core.loadFilters() }
             let dir = URL(fileURLWithPath: core.filterDir(), isDirectory: true)
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             var changed = false

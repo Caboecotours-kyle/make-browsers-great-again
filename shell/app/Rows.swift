@@ -90,6 +90,7 @@ struct TabRow: View {
         // A plain tap gesture loses quick clicks to the drag recognizer.
         .simultaneousGesture(TapGesture().onEnded { store.select(tab.id, in: space.id) })
         .onHover { hovering = $0 }
+        .animation(Motion.quick, value: hovering)
         .onDrag({ store.dragProvider(for: tab.id, url: tab.url) }, preview: { TabDragPreview(tab: tab) })
         .onDrop(of: [.sidebarItem, .url], delegate: ItemDropDelegate(
             store: store, key: key, target: target, index: index, folderID: nil))
@@ -162,6 +163,7 @@ struct FolderRow: View {
             if !renaming { store.setFolder(row.id, expanded: !row.expanded) }
         })
         .onHover { hovering = $0 }
+        .animation(Motion.quick, value: hovering)
         .onDrag { store.dragProvider(for: row.id, url: nil) }
         .onDrop(of: [.sidebarItem, .url], delegate: ItemDropDelegate(
             store: store, key: key, target: .pinned(spaceId: space.id, folderId: row.parentId),

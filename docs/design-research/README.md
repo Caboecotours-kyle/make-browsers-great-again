@@ -100,17 +100,17 @@ Items 1–8 are a polish pass of a few hundred lines in `Theme.swift`,
 
 ### Status (2026-10-21)
 
-Built: items 1–13 and 15, plus ad and tracker blocking (dealbreaker 1)
-and the Vivid / Calm / Neutral color setting.
+Built: all 15 items, plus ad and tracker blocking (dealbreaker 1), the
+Vivid / Calm / Neutral color setting, Match Page Colour and the Compact rail.
 
-Not yet built:
-- **Item 14:** a dragged row staying centred under the cursor and turning
-  into a window preview. Only the haptic tick is in.
-- **Page-derived tint:** the window and toolbar taking the page's
-  `theme-color`. Favorites sample their icon's color instead.
-- **Equaliser:** the mini player has no animated equaliser, to save power.
-- **Compact mode:** hiding the sidebar is Focus mode; there is no separate
-  compact layout.
+How some of it differs from the research:
+- **Item 14:** tabs drag as a compact pill, and dropping one on the page
+  opens it in a little window, with a preview while dragging over the
+  page. The pill isn't re-centred under the cursor.
+- **Mini player equaliser:** drawn by Core Animation in the render server,
+  so it costs the app no work per frame.
+- **Ad blocker scriptlets:** come from uBlock Origin 1.48, the last release
+  in the format Brave's engine reads.
 
 ## Avoid
 

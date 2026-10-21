@@ -114,8 +114,12 @@ final class BrowserStore: NSObject, ObservableObject {
     /// Number of old Today tabs in the active space, when MBGA should offer
     /// to tidy them up.
     @Published private(set) var cleanupOffer: Int?
-    /// Ads and trackers blocked on each loaded tab's current page.
-    @Published private(set) var blockedCounts: [UInt64: Int] = [:]
+    /// Ads and trackers blocked on the visible tab's page.
+    @Published private(set) var visibleBlockedCount = 0
+    /// The same for every loaded tab; not published, so a loading page
+    /// doesn't redraw the window on every blocked request.
+    private var blockedCounts: [UInt64: Int] = [:]
+    private var blockedCountTimer: Timer?
     /// Theme colors pages declared, by site, so a site that was put to sleep
     /// keeps its color.
     @Published private(set) var pageColors: [String: RGB] = [:]
@@ -218,6 +222,7 @@ final class BrowserStore: NSObject, ObservableObject {
         }
         webContainer.show(visible.flatMap { views[$0] })
         nav = visible.flatMap { navStates[$0] } ?? NavState()
+        publishBlockedCount()
         // A tab left playing should show the mini player right away rather
         // than at the next idle check.
         if lastVisibleTab != visible {
@@ -388,7 +393,8 @@ final class BrowserStore: NSObject, ObservableObject {
     func clearToday(_ spaceID: UInt64) {
         let closed = core.clearToday(spaceId: spaceID)
         destroyViews(closed)
-        refresh()
+        // The tabs drop away toward Clear.
+        withAnimation(Motion.settle) { refresh() }
         if !closed.isEmpty {
             showToast(Toast(message: closed.count == 1 ? "Archived 1 tab" : "Archived \(closed.count) tabs",
                             symbol: "archivebox", undoable: true))
@@ -409,14 +415,14 @@ final class BrowserStore: NSObject, ObservableObject {
         }
         let count = Int(core.idleTodayCount(spaceId: activeSpace.id, hours: Self.cleanupOfferHours))
         let offer = count >= 5 ? count : nil
-        if offer != cleanupOffer { cleanupOffer = offer }
+        if offer != cleanupOffer { withAnimation(Motion.settle) { cleanupOffer = offer } }
     }
 
     enum CleanupAnswer { case notNow, once, daily }
 
     func answerCleanup(_ answer: CleanupAnswer) {
         core.answerCleanup()
-        cleanupOffer = nil
+        withAnimation(Motion.settle) { cleanupOffer = nil }
         if answer == .daily { core.setArchiveAfterHours(hours: 24) }
         if answer != .notNow {
             let archived = core.archiveIdle(spaceId: activeSpace.id, hours: Self.cleanupOfferHours)
@@ -799,10 +805,29 @@ final class BrowserStore: NSObject, ObservableObject {
         withAnimation(Motion.glide) { self.layout = layout }
     }
 
+    /// Shows or hides the traffic lights, fading them in Focus mode so they
+    /// don't pop. Hidden buttons are also made unclickable.
     func updateTrafficLights() {
         let hidden = (layout == .focus && !sidebarPeek && !trafficLightsRevealed) || contentFullscreen
-        for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            window?.standardWindowButton(kind)?.isHidden = hidden
+        let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
+            .compactMap { window?.standardWindowButton($0) }
+        let animate = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && !contentFullscreen
+        if !hidden {
+            for button in buttons where button.isHidden {
+                button.alphaValue = animate ? 0 : 1
+                button.isHidden = false
+            }
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = animate ? 0.14 : 0
+            for button in buttons { button.animator().alphaValue = hidden ? 0 : 1 }
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                // Still meant to be hidden once the fade is over?
+                guard let self, hidden, (self.layout == .focus && !self.sidebarPeek && !self.trafficLightsRevealed)
+                    || self.contentFullscreen else { return }
+                for button in buttons { button.isHidden = true }
+            }
         }
     }
 
@@ -926,8 +951,27 @@ extension BrowserStore: MBWebViewDelegate {
 
     nonisolated func webView(_ view: MBWebView, didChangeBlockedCount count: UInt) {
         MainActor.assumeIsolated {
-            guard isCurrent(view), blockedCounts[view.tabID] != Int(count) else { return }
+            guard isCurrent(view) else { return }
             blockedCounts[view.tabID] = Int(count)
+            guard view.tabID == visibleTabID else { return }
+            // A new page starts at zero right away; increases are batched.
+            if count == 0 {
+                publishBlockedCount()
+            } else if blockedCountTimer?.isValid != true {
+                let timer = Timer(timeInterval: 0.25, repeats: false) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.publishBlockedCount() }
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                blockedCountTimer = timer
+            }
+        }
+    }
+
+    private func publishBlockedCount() {
+        let count = visibleTabID.flatMap { blockedCounts[$0] } ?? 0
+        // Counts roll up; a new page resets without fuss.
+        if count != visibleBlockedCount {
+            withAnimation(count > visibleBlockedCount ? Motion.quick : nil) { visibleBlockedCount = count }
         }
     }
 

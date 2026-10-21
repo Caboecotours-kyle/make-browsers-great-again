@@ -9,6 +9,7 @@ struct CommandBar: View {
 
     @State private var text = ""
     @State private var selection = 0
+    @State private var shown = false
     @FocusState private var focused: Bool
     @Environment(\.colorScheme) private var colorScheme
 
@@ -110,7 +111,7 @@ struct CommandBar: View {
         let items = sections.flatMap(\.items)
         let dark = colorScheme == .dark
         ZStack(alignment: .top) {
-            Color.black.opacity(0.12)
+            Color.black.opacity(shown ? 0.12 : 0)
                 .contentShape(Rectangle())
                 .onTapGesture { close() }
 
@@ -171,9 +172,13 @@ struct CommandBar: View {
             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(.primary.opacity(dark ? 0.14 : 0.1), lineWidth: 0.5))
             .shadow(color: .black.opacity(dark ? 0.5 : 0.22), radius: 32, y: 14)
+            // Eases in fast enough to feel instant.
+            .scaleEffect(shown ? 1 : 0.97, anchor: .top)
+            .opacity(shown ? 1 : 0)
             .padding(.top, 110)
         }
         .onAppear {
+            withAnimation(Motion.quick) { shown = true }
             if mode == .editCurrent { text = store.visibleTab?.url ?? "" }
             if mode == .newTab, let preset = Self.debugPreset { text = preset }
             focused = true
@@ -408,6 +413,19 @@ struct CommandAction {
             CommandAction(id: "block-ads", title: store.blockAds ? "Turn Off Ad Blocking" : "Block Ads and Trackers",
                           symbol: "shield", keywords: ["adblock", "trackers", "privacy"]) {
                 store.setBlockAds(!store.blockAds)
+            },
+            CommandAction(id: "my-filters", title: "Edit My Filters…", symbol: "line.3.horizontal.decrease.circle",
+                          keywords: ["adblock", "rules", "custom", "block"]) {
+                NSWorkspace.shared.open(URL(fileURLWithPath: store.core.userFiltersPath()))
+            },
+            CommandAction(id: "reload-filters", title: "Reload Filters", symbol: "arrow.triangle.2.circlepath",
+                          keywords: ["adblock", "rules", "lists"]) {
+                Task {
+                    let loaded = await AdBlocking.reload(core: store.core)
+                    store.showToast(Toast(message: loaded ? "Filters reloaded" : "Ad blocking is off",
+                                          symbol: "shield.lefthalf.filled"))
+                    if loaded { store.reload() }
+                }
             },
             CommandAction(id: "clear-history", title: "Clear History", symbol: "clock.arrow.circlepath", keywords: ["forget", "privacy"]) {
                 store.core.clearHistory()

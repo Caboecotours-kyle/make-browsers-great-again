@@ -734,11 +734,31 @@ impl BrowserCore {
         self.lock().data_dir.join("filters").to_string_lossy().into_owned()
     }
 
+    /// Filter lists and the scriptlets they use, for the shell to download.
     pub fn filter_lists(&self) -> Vec<FilterList> {
         blocker::LISTS
             .iter()
+            .chain([&blocker::SCRIPTLETS])
             .map(|(file_name, url)| FilterList { file_name: file_name.to_string(), url: url.to_string() })
             .collect()
+    }
+
+    /// The person's own rules file, created with a short guide if missing.
+    pub fn user_filters_path(&self) -> String {
+        let dir = PathBuf::from(self.filter_dir());
+        let path = dir.join(blocker::USER_RULES);
+        if !path.exists() {
+            let _ = fs::create_dir_all(&dir);
+            let _ = fs::write(
+                &path,
+                "! My filters, in Adblock Plus / uBlock Origin syntax. Examples:\n\
+                 !   ||ads.example.com^           block a domain\n\
+                 !   example.com##.promo          hide elements on a site\n\
+                 !   @@||example.com^$document    turn blocking off for a site\n\
+                 ! Choose Reload Filters in the command bar after editing.\n",
+            );
+        }
+        path.to_string_lossy().into_owned()
     }
 
     /// Loads the blocking engine from the downloaded lists (compiling and
@@ -746,19 +766,13 @@ impl BrowserCore {
     /// main thread. False if blocking is off or no list has been downloaded
     /// yet; with blocking off the engine stays out of memory.
     pub fn load_filters(&self) -> bool {
-        if !self.blocker.read().unwrap_or_else(|e| e.into_inner()).enabled {
-            return false;
-        }
-        let dir = PathBuf::from(self.filter_dir());
-        let mut fresh = blocker::Blocker::default();
-        if !fresh.load(&dir) {
-            return false;
-        }
-        let mut blocker = self.blocker.write().unwrap_or_else(|e| e.into_inner());
-        fresh.enabled = blocker.enabled;
-        fresh.allowed = std::mem::take(&mut blocker.allowed);
-        *blocker = fresh;
-        true
+        self.load_filters_from_disk(true)
+    }
+
+    /// Loads the engine only from an up-to-date compiled cache, which takes
+    /// tens of milliseconds: call it before the first page loads.
+    pub fn load_cached_filters(&self) -> bool {
+        self.load_filters_from_disk(false)
     }
 
     /// Whether the engine should cancel a request for `url` made by the
@@ -767,9 +781,16 @@ impl BrowserCore {
         self.blocker.read().unwrap_or_else(|e| e.into_inner()).should_block(&url, &page, &kind)
     }
 
-    /// CSS that hides the ad slots of the page at `page`, or "".
-    pub fn hiding_css(&self, page: String) -> String {
-        self.blocker.read().unwrap_or_else(|e| e.into_inner()).hiding_css(&page)
+    /// The script to run in `page` as it starts loading: hiding rules,
+    /// scriptlets and the class/id collector. "" when blocking is off.
+    pub fn page_script(&self, page: String) -> String {
+        self.blocker.read().unwrap_or_else(|e| e.into_inner()).page_script(&page)
+    }
+
+    /// A script adding the generic hiding rules for the class and id names
+    /// a page reported, or "".
+    pub fn cosmetic_reply(&self, page: String, report: String) -> String {
+        self.blocker.read().unwrap_or_else(|e| e.into_inner()).cosmetic_reply(&page, &report)
     }
 
     /// Turning blocking off frees the engine; after turning it on, call
@@ -951,6 +972,25 @@ impl BrowserCore {
 }
 
 impl BrowserCore {
+    /// Builds a new engine (compiling the lists if allowed and needed) and
+    /// swaps it in. Nothing loads while blocking is off.
+    fn load_filters_from_disk(&self, compile: bool) -> bool {
+        if !self.blocker.read().unwrap_or_else(|e| e.into_inner()).enabled {
+            return false;
+        }
+        let dir = PathBuf::from(self.filter_dir());
+        let mut fresh = blocker::Blocker::default();
+        let loaded = if compile { fresh.load(&dir) } else { fresh.load_cached(&dir) };
+        if !loaded {
+            return false;
+        }
+        let mut blocker = self.blocker.write().unwrap_or_else(|e| e.into_inner());
+        fresh.enabled = blocker.enabled;
+        fresh.allowed = std::mem::take(&mut blocker.allowed);
+        *blocker = fresh;
+        true
+    }
+
     fn space_of(&self, tab_id: u64) -> Option<u64> {
         let inner = self.lock();
         match inner.state.locate(tab_id)? {

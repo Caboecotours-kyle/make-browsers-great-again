@@ -17,6 +17,7 @@
 #include "include/cef_application_mac.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
+#include "include/cef_parser.h"
 #include "include/cef_request_context.h"
 #include "include/wrapper/cef_library_loader.h"
 
@@ -58,19 +59,14 @@ std::string g_isolated_origins;
 // Ad blocking, set once before the first browser is created. The request
 // filter is called on the network thread.
 MBRequestFilter g_request_filter = nil;
-MBHidingCSS g_hiding_css = nil;
+MBPageScript g_page_script = nil;
+MBPageReply g_page_reply = nil;
 // While a tab is dragged out of the sidebar, pages refuse drops so the drag
 // can end over a page (and pop the tab out) instead of navigating it.
 bool g_reject_drops = false;
 
-// Adds |css| to the page as early as possible: the document element may
-// not exist yet when a load starts.
-constexpr char kInjectStyleScript[] =
-    "(function(c){function add(){var r=document.documentElement;if(!r)return "
-    "false;var s=document.createElement('style');s.textContent=c;"
-    "r.appendChild(s);return true;}if(!add()){new MutationObserver("
-    "function(_,o){if(add())o.disconnect();}).observe(document,"
-    "{childList:true});}})(%@);";
+// Page scripts report the class and id names they see with this prefix.
+constexpr char kCosmeticPrefix[] = "__mbga_cosmetic:";
 
 // The request type names filter lists use, or nullptr for top-level pages,
 // which are never blocked.
@@ -625,9 +621,16 @@ class WebClient : public BaseClient,
                   public CefRequestHandler,
                   public CefResourceRequestHandler,
                   public CefContextMenuHandler,
-                  public CefDragHandler {
+                  public CefDragHandler,
+                  public CefDevToolsMessageObserver {
  public:
   explicit WebClient(MBWebView* view) : view_(view) {}
+
+  // A new tab's first page waits until its page script is registered, so
+  // scriptlets run before the page's own scripts even on a fast load. The
+  // browser starts on about:blank meanwhile.
+  void DeferFirstLoad(const std::string& url) { deferred_url_ = url; }
+  void CancelDeferredLoad() { deferred_url_.clear(); }
 
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
@@ -681,7 +684,43 @@ class WebClient : public BaseClient,
   }
 
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
+    devtools_ = browser->GetHost()->AddDevToolsMessageObserver(this);
+    if (g_page_script) {
+      // Scripts for new documents only run with the Page domain enabled.
+      browser->GetHost()->ExecuteDevToolsMethod(0, "Page.enable", nullptr);
+    }
     [view_ engineDidCreateBrowser:browser];
+    if (deferred_url_.empty()) {
+      return;
+    }
+    if (!PrepareNewDocument(browser, deferred_url_)) {
+      LoadDeferred(browser);
+      return;
+    }
+    // Don't wait forever if DevTools never answers.
+    CefRefPtr<WebClient> client(this);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 500 * NSEC_PER_MSEC),
+                   dispatch_get_main_queue(), ^{
+                     client->LoadDeferred(browser);
+                   });
+  }
+
+  void LoadDeferred(CefRefPtr<CefBrowser> browser) {
+    if (deferred_url_.empty()) {
+      return;
+    }
+    prepared_url_ = deferred_url_;
+    deferred_url_.clear();
+    // Replacing the blank page keeps it out of the tab's history.
+    NSData* json = [NSJSONSerialization
+        dataWithJSONObject:@[ @(prepared_url_.c_str()) ]
+                   options:0
+                     error:nil];
+    NSString* array = [[NSString alloc] initWithData:json
+                                            encoding:NSUTF8StringEncoding];
+    NSString* script =
+        [NSString stringWithFormat:@"location.replace(%@[0])", array];
+    browser->GetMainFrame()->ExecuteJavaScript(script.UTF8String, "", 0);
   }
 
   bool DoClose(CefRefPtr<CefBrowser> browser) override {
@@ -701,7 +740,8 @@ class WebClient : public BaseClient,
   void OnAddressChange(CefRefPtr<CefBrowser> browser,
                        CefRefPtr<CefFrame> frame,
                        const CefString& url) override {
-    if (frame->IsMain()) {
+    // The about:blank a new tab waits on is nobody's business.
+    if (frame->IsMain() && deferred_url_.empty()) {
       MBWebView* view = view_;
       [view.delegate webView:view didChangeURL:ToNS(url)];
     }
@@ -709,6 +749,9 @@ class WebClient : public BaseClient,
 
   void OnTitleChange(CefRefPtr<CefBrowser> browser,
                      const CefString& title) override {
+    if (!deferred_url_.empty()) {
+      return;
+    }
     MBWebView* view = view_;
     [view.delegate webView:view didChangeTitle:ToNS(title)];
   }
@@ -730,6 +773,17 @@ class WebClient : public BaseClient,
                         const CefString& source,
                         int line) override {
     std::string text = message.ToString();
+    if (text.rfind(kCosmeticPrefix, 0) == 0) {
+      CefRefPtr<CefFrame> main = browser->GetMainFrame();
+      NSString* reply =
+          g_page_reply ? g_page_reply(ToNS(main->GetURL()),
+                                      @(text.c_str() + strlen(kCosmeticPrefix)))
+                       : nil;
+      if (reply.length > 0) {
+        main->ExecuteJavaScript(reply.UTF8String, "", 0);
+      }
+      return true;
+    }
     if (text.rfind(kThemePrefix, 0) == 0) {
       [view_ engineSetThemeColor:@(text.c_str() + strlen(kThemePrefix))];
       return true;
@@ -757,20 +811,12 @@ class WebClient : public BaseClient,
     }
     blocked_ = 0;
     [view_ engineSetBlockedCount:0];
-    NSString* css = g_hiding_css ? g_hiding_css(ToNS(frame->GetURL())) : nil;
-    if (css.length == 0) {
-      return;
+    std::string url = frame->GetURL().ToString();
+    bool web = url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0;
+    NSString* script = g_page_script && web ? g_page_script(@(url.c_str())) : nil;
+    if (script.length > 0) {
+      frame->ExecuteJavaScript(script.UTF8String, "", 0);
     }
-    NSData* json = [NSJSONSerialization dataWithJSONObject:@[ css ]
-                                                   options:0
-                                                     error:nil];
-    NSString* array = [[NSString alloc] initWithData:json
-                                            encoding:NSUTF8StringEncoding];
-    NSString* literal =
-        [array substringWithRange:NSMakeRange(1, array.length - 2)];
-    NSString* script =
-        [NSString stringWithFormat:@(kInjectStyleScript), literal];
-    frame->ExecuteJavaScript(script.UTF8String, "", 0);
   }
 
   void OnLoadEnd(CefRefPtr<CefBrowser> browser,
@@ -793,6 +839,117 @@ class WebClient : public BaseClient,
   }
 
   // CefRequestHandler
+
+  bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
+                      CefRefPtr<CefFrame> frame,
+                      CefRefPtr<CefRequest> request,
+                      bool user_gesture,
+                      bool is_redirect) override {
+    if (frame->IsMain()) {
+      std::string url = request->GetURL().ToString();
+      // The first load after a deferral already has its script.
+      if (url == prepared_url_) {
+        prepared_url_.clear();
+      } else if (deferred_url_.empty()) {
+        PrepareNewDocument(browser, url);
+      }
+    }
+    return false;
+  }
+
+  // Registers the page script for the document the main frame is about to
+  // load, so it runs before the page's own scripts (scriptlets must). The
+  // previous page's script is unregistered; the load-start injection stays
+  // as a fallback, and the script runs once per document either way.
+  // Returns true if a script was sent for registration.
+  bool PrepareNewDocument(CefRefPtr<CefBrowser> browser, const CefString& url) {
+    CefURLParts parts;
+    if (!g_page_script || !CefParseURL(url, parts)) {
+      return false;
+    }
+    std::string scheme = CefString(&parts.scheme).ToString();
+    if (scheme != "http" && scheme != "https") {
+      return false;
+    }
+    CefRefPtr<CefBrowserHost> host = browser->GetHost();
+    RemoveDocumentScript(host, document_script_);
+    document_script_.clear();
+    if (pending_add_ != 0) {
+      stale_adds_.insert(pending_add_);
+      pending_add_ = 0;
+    }
+    NSString* script = g_page_script(ToNS(url));
+    if (script.length == 0) {
+      return false;
+    }
+    // Only in the top frame of the page it was made for: a script left over
+    // from a quick second navigation must not run elsewhere.
+    NSData* host_json = [NSJSONSerialization
+        dataWithJSONObject:@[ ToNS(CefString(&parts.host)) ]
+                   options:0
+                     error:nil];
+    NSString* host_array = [[NSString alloc] initWithData:host_json
+                                                 encoding:NSUTF8StringEncoding];
+    NSString* guarded = [NSString
+        stringWithFormat:@"if(window===window.top&&location.hostname===%@[0]){%@}",
+                         host_array, script];
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetString("source", guarded.UTF8String);
+    pending_add_ = host->ExecuteDevToolsMethod(
+        0, "Page.addScriptToEvaluateOnNewDocument", params);
+    if (DebugEvents()) {
+      NSLog(@"page script for %s registered as message %d (%lu bytes)",
+            url.ToString().c_str(), pending_add_,
+            (unsigned long)script.length);
+    }
+    return pending_add_ != 0;
+  }
+
+  void RemoveDocumentScript(CefRefPtr<CefBrowserHost> host,
+                            const std::string& identifier) {
+    if (identifier.empty()) {
+      return;
+    }
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetString("identifier", identifier);
+    host->ExecuteDevToolsMethod(0, "Page.removeScriptToEvaluateOnNewDocument",
+                                params);
+  }
+
+  // CefDevToolsMessageObserver
+
+  void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser,
+                              int message_id,
+                              bool success,
+                              const void* result,
+                              size_t result_size) override {
+    bool stale = stale_adds_.erase(message_id) > 0;
+    if (DebugEvents()) {
+      NSLog(@"devtools result %d success=%d: %.*s", message_id, success,
+            (int)result_size, (const char*)result);
+    }
+    if (!stale && message_id == pending_add_ && !success) {
+      pending_add_ = 0;
+      LoadDeferred(browser);
+      return;
+    }
+    if (!success || (!stale && message_id != pending_add_)) {
+      return;
+    }
+    CefRefPtr<CefValue> value =
+        CefParseJSON(result, result_size, JSON_PARSER_RFC);
+    std::string identifier =
+        value && value->GetType() == VTYPE_DICTIONARY
+            ? value->GetDictionary()->GetString("identifier").ToString()
+            : "";
+    if (stale) {
+      RemoveDocumentScript(browser->GetHost(), identifier);
+    } else {
+      pending_add_ = 0;
+      document_script_ = identifier;
+      LoadDeferred(browser);
+    }
+  }
 
   CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
       CefRefPtr<CefBrowser> browser,
@@ -887,6 +1044,14 @@ class WebClient : public BaseClient,
 
  private:
   __weak MBWebView* view_;
+  // Keeps the DevTools observer registered.
+  CefRefPtr<CefRegistration> devtools_;
+  // The page script registered for new documents, and requests in flight.
+  std::string document_script_;
+  std::string deferred_url_;
+  std::string prepared_url_;
+  int pending_add_ = 0;
+  std::set<int> stale_adds_;
   // Requests blocked since the page started loading.
   std::atomic<NSUInteger> blocked_{0};
   std::atomic<bool> report_pending_{false};
@@ -1011,9 +1176,12 @@ class WebClient : public BaseClient,
   g_reject_drops = reject;
 }
 
-+ (void)setRequestFilter:(MBRequestFilter)filter hidingCSS:(MBHidingCSS)css {
++ (void)setRequestFilter:(MBRequestFilter)filter
+               pageScript:(MBPageScript)script
+                pageReply:(MBPageReply)reply {
   g_request_filter = filter;
-  g_hiding_css = css;
+  g_page_script = script;
+  g_page_reply = reply;
 }
 
 + (BOOL)startWithArgc:(int)argc
@@ -1120,7 +1288,12 @@ class WebClient : public BaseClient,
 
   [g_views addObject:self];
   g_browser_count++;
-  if (!CefBrowserHost::CreateBrowser(info, _client, url.UTF8String, settings,
+  std::string start = url.UTF8String;
+  if (g_page_script && ([url hasPrefix:@"https://"] || [url hasPrefix:@"http://"])) {
+    _client->DeferFirstLoad(start);
+    start = "about:blank";
+  }
+  if (!CefBrowserHost::CreateBrowser(info, _client, start, settings,
                                      nullptr,
                                      ContextForPath(profilePath.UTF8String))) {
     _closing = YES;
@@ -1302,6 +1475,7 @@ class WebClient : public BaseClient,
     _browser->GetHost()->CloseBrowser(true);
     [self scheduleCloseFallback];
   } else if (_pendingURL) {
+    _client->CancelDeferredLoad();
     _browser->GetMainFrame()->LoadURL(_pendingURL.UTF8String);
     _pendingURL = nil;
   }

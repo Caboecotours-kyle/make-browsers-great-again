@@ -15,8 +15,11 @@ NS_ASSUME_NONNULL_BEGIN
 /// tab's top-level page; |kind| is the filter-list request type ("script",
 /// "image", "subdocument", ...). Called on the network thread.
 typedef BOOL (^MBRequestFilter)(NSString* url, NSString* page, NSString* kind);
-/// CSS to inject into |page| when it starts loading, or an empty string.
-typedef NSString* _Nonnull (^MBHidingCSS)(NSString* page);
+/// JavaScript to run in |page| as it starts loading, or an empty string.
+typedef NSString* _Nonnull (^MBPageScript)(NSString* page);
+/// JavaScript to run in |page| in reply to a report its page script sent,
+/// or an empty string.
+typedef NSString* _Nonnull (^MBPageReply)(NSString* page, NSString* report);
 
 /// Engine events for one tab. Always delivered on the main thread.
 @protocol MBWebViewDelegate <NSObject>
@@ -69,7 +72,9 @@ typedef NSString* _Nonnull (^MBHidingCSS)(NSString* page);
 + (void)setRejectsDrops:(BOOL)reject;
 
 /// Turns on ad blocking. Call before the first web view is created.
-+ (void)setRequestFilter:(MBRequestFilter)filter hidingCSS:(MBHidingCSS)css;
++ (void)setRequestFilter:(MBRequestFilter)filter
+               pageScript:(MBPageScript)script
+                pageReply:(MBPageReply)reply;
 
 @end
 

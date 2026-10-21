@@ -25,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         NSApp.mainMenu = buildMainMenu()
         AdBlocking.install(core: core)
-        AdBlocking.updateLists(core: core)
+        AdBlocking.updateLists(core: core, loaded: AdBlocking.loadCached(core: core))
         let window = makeWindow()
         self.window = window
         store.window = window
@@ -148,6 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func selectTab(_ sender: NSMenuItem) { store.selectTab(at: sender.tag) }
     @objc func reopenClosedTab(_ sender: Any?) { store.undoClose() }
     @objc func toggleBlockAds(_ sender: Any?) { store.setBlockAds(!store.blockAds) }
+    @objc func editFilters(_ sender: Any?) { NSWorkspace.shared.open(URL(fileURLWithPath: core.userFiltersPath())) }
     /// Edit ▸ Undo reaches the app only when no page or text field took it;
     /// then it undoes the last closed tab, cleared list or deleted folder.
     @objc func undo(_ sender: Any?) { store.undoClose() }
@@ -212,6 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             m.addItem(withTitle: "About MBGA", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
             m.addItem(.separator())
             m.item("Block Ads and Trackers", #selector(toggleBlockAds(_:)), "", [], target: self)
+            m.item("Edit My Filters…", #selector(editFilters(_:)), "", [], target: self)
             let isolation = m.item("Strict Site Isolation", #selector(toggleStrictSiteIsolation(_:)), "", [], target: self)
             isolation.state = store.strictSiteIsolation ? .on : .off
             m.addItem(.separator())

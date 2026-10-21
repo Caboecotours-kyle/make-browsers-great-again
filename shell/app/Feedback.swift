@@ -86,6 +86,7 @@ struct MiniPlayer: View {
             .fill(Theme.controlFill(dark: colorScheme == .dark, hovering: hovering)))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        .animation(Motion.quick, value: hovering)
         .onTapGesture { store.select(tab.id, in: space.id) }
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }

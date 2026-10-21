@@ -78,6 +78,7 @@ private struct RailTab: View {
             .contentShape(Rectangle())
             .onTapGesture { store.select(tab.id, in: space.id) }
             .onHover { hovering = $0 }
+            .animation(Motion.quick, value: hovering)
             .help(tab.displayTitle)
             .contextMenu { TabMenu(tab: tab, space: space) }
     }

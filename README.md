@@ -41,26 +41,33 @@ events back. Nothing in the UI layer keeps browser state of its own.
   a space, run a command ("pin", "clear", "focus", "new space"…), or reopen a
   closed tab. Pages you visit often come first (a small local history, which
   Clear History in the bar forgets). ⌘↩ always searches the web.
-- **Focus mode** (⌘S): the sidebar hides and the page fills the window but
-  for a thin frame. Resting the pointer at the left edge slides the sidebar
-  out over the page; the traffic lights appear at the top-left corner.
+- **Layouts**: the full sidebar, a Compact rail of favicons, or Focus mode
+  (⌘S), where the page fills the window but for a thin frame. In the last
+  two, resting the pointer at the left edge slides the sidebar out over the
+  page; in Focus the traffic lights appear at the top-left corner.
+- **Little windows**: drag a tab from the sidebar onto the page (or choose
+  Open in Little Window) to give it a small window of its own. It stays in
+  its space and never sleeps while open; Open in Sidebar puts it back.
 - **Undo**: closing a Today tab, Clear and deleting a folder can be undone
   with ⌘Z (when no page or text field takes it), ⇧⌘T or the toast's Undo.
 - **Tidying up**: when old Today tabs pile up, MBGA offers once to archive
   those untouched for 12 hours, now or every day (Tabs ▸ Archive Unused
   Today Tabs). Archived tabs can always be reopened.
-- **Ad and tracker blocking**: EasyList and EasyPrivacy, matched by Brave's
-  engine in the Rust core, cancel requests before they load and hide ad slots.
-  The lists refresh every few days; the address field shows how much was
-  blocked. Turn it off per site from the tab's menu, or entirely from the MBGA
-  menu.
-- **Media**: a tab playing sound out of sight shows a mini player at the
-  bottom of the sidebar. Right-click a tab to keep its site awake (never
+- **Ad and tracker blocking**: EasyList, EasyPrivacy and uBlock Origin's
+  filter and privacy lists, matched by Brave's engine in the Rust core,
+  cancel requests before they load. Pages also get hiding rules (site-
+  specific, and generic ones for the class and id names a page uses) and
+  uBlock Origin's scriptlets. The lists refresh every few days; the address
+  field shows how much was blocked. Add your own rules with MBGA ▸ Edit My
+  Filters…, turn blocking off per site from the tab's menu, or entirely from
+  the MBGA menu.
+- **Media**: a tab playing sound shows an equaliser, and out of sight a mini
+  player at the bottom of the sidebar. Right-click a tab to keep its site awake (never
   slept or frozen) or to put it to sleep now.
 - **Look**: the page sits in a card whose corners follow the window's; space
   colors are a calm wash that fades when the window is inactive (View ▸
-  Sidebar Colour: Vivid, Calm or Neutral); the selected favorite lights up in
-  its site's color. The welcome sheet ends with a choice of layout and color.
+  Sidebar Colour: Vivid, Calm or Neutral, or Match Page Colour to take each
+  site's theme color); the selected favorite lights up in its site's color. The welcome sheet ends with a choice of layout and color.
 - **Import from other browsers**: at first launch (and from File ▸ Import from
   Another Browser…) MBGA lists the browsers it finds on the Mac and what each
   would bring. From Arc it takes spaces with their icons, colors and profiles,
@@ -149,5 +156,5 @@ keychain.
   and Safari.
 - Further Arc features: split view, Peek, Little Arc, Boosts, link routing to
   spaces, the archive/library view, and multi-color gradient themes.
-- Generic cosmetic filtering and scriptlets in the ad blocker (only network
-  rules and site-specific hiding rules apply), and sync.
+- Scriptlets newer than uBlock Origin 1.48 (the last release in the format
+  the engine reads), redirect resources (such rules just block), and sync.

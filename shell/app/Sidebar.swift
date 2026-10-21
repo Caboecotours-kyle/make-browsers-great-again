@@ -9,12 +9,14 @@ struct Sidebar: View {
             AddressPill()
             FavoritesGrid(space: store.activeSpace)
             SpacePager(pager: store.pager)
-            if let media = store.mediaTab {
-                MiniPlayer(tab: media.tab, space: media.space)
+            VStack(spacing: 0) {
+                if let media = store.mediaTab {
+                    MiniPlayer(tab: media.tab, space: media.space)
+                }
             }
+            .animation(Motion.settle, value: store.mediaTab?.tab.id)
             SidebarBottomBar()
         }
-        .animation(Motion.settle, value: store.mediaTab?.tab.id)
         .padding(.horizontal, 10)
         .padding(.bottom, 8)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
@@ -45,6 +47,7 @@ struct SidebarIconButton: View {
         .opacity(disabled ? 0.35 : 0.8)
         .disabled(disabled)
         .onHover { hovering = $0 }
+        .animation(Motion.quick, value: hovering)
     }
 }
 
@@ -89,11 +92,12 @@ private struct AddressPill: View {
                 if store.nav.isLoading {
                     ProgressView().controlSize(.mini)
                 }
-                if let tab, let blocked = store.blockedCounts[tab.id], blocked > 0 {
+                if tab != nil, case let blocked = store.visibleBlockedCount, blocked > 0 {
                     // What the blocker kept off this page, quietly.
                     HStack(spacing: 3) {
                         Image(systemName: "shield.lefthalf.filled").font(.system(size: 10))
                         Text("\(blocked)").font(.system(size: 11, weight: .medium).monospacedDigit())
+                            .contentTransition(.numericText(value: Double(blocked)))
                     }
                     .opacity(0.5)
                     .help("\(blocked) ads and trackers blocked on this page")
@@ -109,6 +113,7 @@ private struct AddressPill: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .animation(Motion.quick, value: hovering)
     }
 }
 
@@ -177,6 +182,7 @@ private struct FavoriteTile: View {
             // A plain tap gesture loses quick clicks to the drag recognizer.
             .simultaneousGesture(TapGesture().onEnded { store.select(tab.id, in: space.id) })
             .onHover { hovering = $0 }
+            .animation(Motion.quick, value: hovering)
             .help(tab.displayTitle)
             .onDrag({ store.dragProvider(for: tab.id, url: tab.url) }, preview: { TabDragPreview(tab: tab) })
             .onDrop(of: [.sidebarItem, .url], delegate: ItemDropDelegate(
@@ -342,6 +348,7 @@ private struct NewTabRow: View {
             .fill(hovering ? Theme.hoverFill(dark: colorScheme == .dark) : .clear))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        .animation(Motion.quick, value: hovering)
         .onTapGesture {
             store.activateSpace(space.id)
             store.commandBar = .newTab
@@ -423,8 +430,10 @@ private struct SpaceDot: View {
                       : hovering ? Theme.hoverFill(dark: colorScheme == .dark) : .clear)
         )
         .opacity(active ? 1 : 0.45)
+        .animation(Motion.quick, value: active)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        .animation(Motion.quick, value: hovering)
         .onTapGesture { store.activateSpace(space.id) }
         .help(space.name)
         .onDrop(of: [.sidebarItem, .url], delegate: ItemDropDelegate(
