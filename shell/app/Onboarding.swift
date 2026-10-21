@@ -353,7 +353,7 @@ private final class SourceRow: NSView {
         text.spacing = 2
         if let error = source.error {
             text.addArrangedSubview(Label.make(error, size: 11, color: .secondaryLabelColor))
-        } else if source.profiles.count == 1 {
+        } else if source.profiles.count == 1, !describe(source.profiles[0]).isEmpty {
             text.addArrangedSubview(Label.make(describe(source.profiles[0]), size: 11, color: .secondaryLabelColor))
         }
         let spacer = NSView()
@@ -379,8 +379,11 @@ private final class SourceRow: NSView {
         if source.profiles.count > 1 {
             for profile in source.profiles {
                 let label = Label.make(profileLabel(profile), size: 12, weight: .medium)
-                let detail = Label.make(describe(profile), size: 11, color: .secondaryLabelColor)
-                let labels = NSStackView(views: [label, detail])
+                let description = describe(profile)
+                let labels = NSStackView(views: [label])
+                if !description.isEmpty {
+                    labels.addArrangedSubview(Label.make(description, size: 11, color: .secondaryLabelColor))
+                }
                 labels.orientation = .vertical
                 labels.alignment = .leading
                 labels.spacing = 1
@@ -408,7 +411,8 @@ private final class SourceRow: NSView {
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.5).cgColor
+        // A quiet card, a few percent of the text color in either appearance.
+        layer?.backgroundColor = Theme.faint(effectiveAppearance.isDark ? 0.06 : 0.04).cgColor
     }
 
     private func checkbox(_ profile: ImportProfileInfo, selected: Set<String>) -> NSButton {
