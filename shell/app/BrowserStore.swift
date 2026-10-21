@@ -1,6 +1,4 @@
 import AppKit
-import SwiftUI
-import UniformTypeIdentifiers
 
 struct NavState: Equatable {
     var isLoading = false
@@ -10,10 +8,8 @@ struct NavState: Equatable {
 
 /// How much of the sidebar shows: all of it, an icon rail, or nothing
 /// (Focus mode). In the last two the full sidebar slides out at the edge.
-enum SidebarLayout: String, CaseIterable, Identifiable {
+enum SidebarLayout: String, CaseIterable {
     case full, compact, focus
-
-    var id: String { rawValue }
 
     var title: String {
         switch self {
@@ -38,15 +34,6 @@ enum CommandBarMode: Equatable {
     case editCurrent
 }
 
-enum DropEdge: Equatable {
-    case before, after, into
-}
-
-struct DropIndicator: Equatable {
-    let key: String
-    let edge: DropEdge
-}
-
 /// A brief note at the bottom of the window, optionally offering Undo.
 struct Toast: Identifiable, Equatable {
     let id = UUID()
@@ -55,89 +42,150 @@ struct Toast: Identifiable, Equatable {
     var undoable = false
 }
 
-struct SpaceEditorRequest: Identifiable {
-    let id = UUID()
-    /// nil creates a new space.
-    let spaceID: UInt64?
+extension NSPasteboard.PasteboardType {
+    /// A tab or folder dragged within the sidebar; the data is its id.
+    static let sidebarItem = NSPasteboard.PasteboardType("dev.mbga.browser.sidebar-item")
 }
 
-extension UTType {
-    static let sidebarItem = UTType(exportedAs: "dev.mbga.browser.sidebar-item")
+/// What part of the store changed, so each view redraws only its part.
+enum StoreChange {
+    case snapshot, nav, layout, peek, commandBar, toast, media, cleanup, blocked
+    case pageColors, dragOverPage, drag, renaming, spaceEditor, importSheet, chrome
 }
 
 /// The shell's single source of UI state. Browser data lives in the Rust core;
 /// this class mirrors it as a snapshot, owns the engine views of loaded tabs
-/// and turns user intents into core calls.
+/// and turns user intents into core calls. Views observe it for the kinds of
+/// change they show.
 @MainActor
-final class BrowserStore: NSObject, ObservableObject {
+final class BrowserStore: NSObject {
     let core: BrowserCore
-    @Published private(set) var snapshot: Snapshot
-    @Published private(set) var nav = NavState()
-    @Published var commandBar: CommandBarMode? {
-        didSet { if commandBar != nil { releaseWebFocus() } }
+    private(set) var snapshot: Snapshot {
+        didSet { changed(.snapshot) }
     }
-    @Published var layout = SidebarLayout.saved {
+    /// How views should animate the snapshot change being reported, if at
+    /// all (tidying up, folders opening). Most changes are instant.
+    private(set) var snapshotAnimation: Motion.Curve?
+    private(set) var nav = NavState() {
+        didSet { if nav != oldValue { changed(.nav) } }
+    }
+    var commandBar: CommandBarMode? {
+        didSet {
+            if commandBar != nil { releaseWebFocus() }
+            if commandBar != oldValue { changed(.commandBar) }
+        }
+    }
+    private(set) var layout = SidebarLayout.saved {
         didSet {
             UserDefaults.standard.set(layout.rawValue, forKey: SidebarLayout.defaultsKey)
             if oldValue != .focus { layoutBeforeFocus = oldValue }
             sidebarPeek = false
             trafficLightsRevealed = false
             updateTrafficLights()
+            changed(.layout)
         }
     }
     /// What Focus mode returns to.
     private var layoutBeforeFocus = SidebarLayout.full
     /// Floating sidebar shown while hovering the left edge with the sidebar hidden.
-    @Published var sidebarPeek = false {
-        didSet { updateTrafficLights() }
+    var sidebarPeek = false {
+        didSet {
+            guard sidebarPeek != oldValue else { return }
+            updateTrafficLights()
+            changed(.peek)
+        }
     }
     /// In Focus mode the traffic lights appear only while the pointer is in
     /// the window's top-left corner.
-    @Published var trafficLightsRevealed = false {
-        didSet { updateTrafficLights() }
+    var trafficLightsRevealed = false {
+        didSet { if trafficLightsRevealed != oldValue { updateTrafficLights() } }
     }
-    @Published var spaceEditor: SpaceEditorRequest?
-    @Published var importSheet: ImportRequest? {
-        didSet { if importSheet != nil { releaseWebFocus() } }
+    var spaceEditor: SpaceEditorRequest? {
+        didSet { changed(.spaceEditor) }
     }
-    @Published var renamingFolder: UInt64? {
-        didSet { if renamingFolder != nil { releaseWebFocus() } }
+    var importSheet: ImportRequest? {
+        didSet {
+            if importSheet != nil { releaseWebFocus() }
+            changed(.importSheet)
+        }
     }
-    @Published var dropIndicator: DropIndicator?
-    @Published private(set) var contentFullscreen = false
+    var renamingFolder: UInt64? {
+        didSet {
+            if renamingFolder != nil { releaseWebFocus() }
+            if renamingFolder != oldValue { changed(.renaming) }
+        }
+    }
+    private(set) var contentFullscreen = false {
+        didSet { changed(.chrome) }
+    }
     /// The window's corner radius, which the page's corners follow.
-    @Published var windowRadius: CGFloat = 10
-    @Published private(set) var toast: Toast?
+    var windowRadius: CGFloat = 10 {
+        didSet { changed(.chrome) }
+    }
+    private(set) var toast: Toast? {
+        didSet { changed(.toast) }
+    }
     /// A tab whose media was paused from the mini player; it keeps the
     /// player showing so it can be resumed.
-    @Published private(set) var pausedMediaTab: UInt64?
+    private(set) var pausedMediaTab: UInt64? {
+        didSet { changed(.media) }
+    }
     /// Number of old Today tabs in the active space, when MBGA should offer
     /// to tidy them up.
-    @Published private(set) var cleanupOffer: Int?
+    private(set) var cleanupOffer: Int? {
+        didSet { if cleanupOffer != oldValue { changed(.cleanup) } }
+    }
     /// Ads and trackers blocked on the visible tab's page.
-    @Published private(set) var visibleBlockedCount = 0
-    /// The same for every loaded tab; not published, so a loading page
-    /// doesn't redraw the window on every blocked request.
+    private(set) var visibleBlockedCount = 0 {
+        didSet { if visibleBlockedCount != oldValue { changed(.blocked) } }
+    }
+    /// The same for every loaded tab, reported to views only for the visible
+    /// tab, so a loading page doesn't redraw on every blocked request.
     private var blockedCounts: [UInt64: Int] = [:]
     private var blockedCountTimer: Timer?
     /// Theme colors pages declared, by site, so a site that was put to sleep
     /// keeps its color.
-    @Published private(set) var pageColors: [String: RGB] = [:]
+    private(set) var pageColors: [String: RGB] = [:] {
+        didSet { changed(.pageColors) }
+    }
     /// The tab being dragged over the page, which would pop out on drop.
-    @Published private(set) var dragOverPage: UInt64?
+    private(set) var dragOverPage: UInt64? {
+        didSet { if dragOverPage != oldValue { changed(.dragOverPage) } }
+    }
+
+    private struct Observer {
+        weak var owner: AnyObject?
+        let handle: @MainActor (StoreChange) -> Void
+    }
+    private var observers: [Observer] = []
+
+    /// Calls `handle` with every change for as long as `owner` lives.
+    func observe(_ owner: AnyObject, _ handle: @escaping @MainActor (StoreChange) -> Void) {
+        observers.append(Observer(owner: owner, handle: handle))
+    }
+
+    private func changed(_ change: StoreChange) {
+        observers.removeAll { $0.owner == nil }
+        for observer in observers where observer.owner != nil {
+            observer.handle(change)
+        }
+    }
 
     let pager = PagerModel()
     let webContainer = WebContainerView()
     weak var window: NSWindow?
-    /// Tab or folder being dragged inside the sidebar.
-    private(set) var draggingItem: UInt64?
+    /// Tab or folder being dragged out of the sidebar.
+    private(set) var draggingItem: UInt64? {
+        didSet { if (draggingItem == nil) != (oldValue == nil) { changed(.drag) } }
+    }
+
+    var isDragging: Bool { draggingItem != nil }
 
     private var views: [UInt64: MBWebView] = [:]
     private var navStates: [UInt64: NavState] = [:]
     private var refreshPending = false
     private var persistTimer: Timer?
     private var toastTimer: Timer?
-    private var dragTimer: Timer?
     private var littleWindows: [UInt64: LittleWindow] = [:]
     private var enteredFullscreenForContent = false
     private var lastVisibleTab: UInt64?
@@ -147,7 +195,7 @@ final class BrowserStore: NSObject, ObservableObject {
         snapshot = core.snapshot()
         super.init()
         pager.pageCount = snapshot.spaces.count
-        pager.position = CGFloat(activeSpaceIndex)
+        pager.setPosition(CGFloat(activeSpaceIndex), animated: false)
         pager.onSettle = { [weak self] index in
             guard let self, snapshot.spaces.indices.contains(index) else { return }
             activateSpace(snapshot.spaces[index].id)
@@ -201,11 +249,15 @@ final class BrowserStore: NSObject, ObservableObject {
     }
 
     /// Pulls a new snapshot if the core changed and makes the visible tab live.
-    func refresh() {
+    /// Views animate the change along `animation` if given.
+    func refresh(animation: Motion.Curve? = nil) {
         refreshPending = false
         if core.revision() != snapshot.revision {
-            snapshot = core.snapshot()
-            pager.pageCount = snapshot.spaces.count
+            let next = core.snapshot()
+            pager.pageCount = next.spaces.count
+            snapshotAnimation = animation
+            snapshot = next
+            snapshotAnimation = nil
             pager.show(activeSpaceIndex, animated: true)
             schedulePersist()
         }
@@ -261,7 +313,7 @@ final class BrowserStore: NSObject, ObservableObject {
     }
 
     /// The page keeps keyboard focus until something else takes first
-    /// responder; SwiftUI focus alone does not move it.
+    /// responder.
     private func releaseWebFocus() {
         window?.makeFirstResponder(nil)
     }
@@ -394,7 +446,7 @@ final class BrowserStore: NSObject, ObservableObject {
         let closed = core.clearToday(spaceId: spaceID)
         destroyViews(closed)
         // The tabs drop away toward Clear.
-        withAnimation(Motion.settle) { refresh() }
+        refresh(animation: Motion.settle)
         if !closed.isEmpty {
             showToast(Toast(message: closed.count == 1 ? "Archived 1 tab" : "Archived \(closed.count) tabs",
                             symbol: "archivebox", undoable: true))
@@ -415,20 +467,20 @@ final class BrowserStore: NSObject, ObservableObject {
         }
         let count = Int(core.idleTodayCount(spaceId: activeSpace.id, hours: Self.cleanupOfferHours))
         let offer = count >= 5 ? count : nil
-        if offer != cleanupOffer { withAnimation(Motion.settle) { cleanupOffer = offer } }
+        if offer != cleanupOffer { cleanupOffer = offer }
     }
 
     enum CleanupAnswer { case notNow, once, daily }
 
     func answerCleanup(_ answer: CleanupAnswer) {
         core.answerCleanup()
-        withAnimation(Motion.settle) { cleanupOffer = nil }
+        cleanupOffer = nil
         if answer == .daily { core.setArchiveAfterHours(hours: 24) }
         if answer != .notNow {
             let archived = core.archiveIdle(spaceId: activeSpace.id, hours: Self.cleanupOfferHours)
             destroyViews(archived)
             // The first tidy-up is shown: the tabs drop away toward Clear.
-            withAnimation(Motion.settle) { refresh() }
+            refresh(animation: Motion.settle)
             showToast(Toast(message: "Archived \(archived.count) tabs", symbol: "archivebox", undoable: true))
         } else {
             refresh()
@@ -448,12 +500,12 @@ final class BrowserStore: NSObject, ObservableObject {
     // MARK: - Toasts
 
     func showToast(_ toast: Toast, duration: TimeInterval = 4) {
-        withAnimation(Motion.settle) { self.toast = toast }
+        self.toast = toast
         toastTimer?.invalidate()
         let timer = Timer(timeInterval: duration, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.toast?.id == toast.id else { return }
-                withAnimation(Motion.quick) { self.toast = nil }
+                self.toast = nil
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -461,7 +513,7 @@ final class BrowserStore: NSObject, ObservableObject {
     }
 
     func dismissToast() {
-        withAnimation(Motion.quick) { toast = nil }
+        toast = nil
     }
 
     func selectTab(at index: Int) {
@@ -603,7 +655,7 @@ final class BrowserStore: NSObject, ObservableObject {
 
     func setFolder(_ id: UInt64, expanded: Bool) {
         core.setFolderExpanded(id: id, expanded: expanded)
-        withAnimation(Motion.quick) { refresh() }
+        refresh(animation: Motion.quick)
     }
 
     func deleteFolder(_ id: UInt64) {
@@ -615,83 +667,46 @@ final class BrowserStore: NSObject, ObservableObject {
 
     // MARK: - Drag and drop
 
-    func dragProvider(for id: UInt64, url: String?) -> NSItemProvider {
+    /// A tab or folder started being dragged out of the sidebar. Pages
+    /// refuse drops meanwhile, so letting go over one pops the tab out
+    /// instead of navigating the page to it.
+    func beginDrag(_ id: UInt64) {
         draggingItem = id
-        trackDrag(of: id)
-        let provider = NSItemProvider()
-        provider.registerDataRepresentation(forTypeIdentifier: UTType.sidebarItem.identifier, visibility: .ownProcess) { done in
-            done(Data(String(id).utf8), nil)
-            return nil
-        }
-        // Dragging a tab out of the browser hands its URL to the other app.
-        if let url, let value = URL(string: url) {
-            provider.registerObject(value as NSURL, visibility: .all)
-        }
-        return provider
-    }
-
-    func performDrop(_ info: DropInfo, target: DropTarget, index: Int) -> Bool {
-        dropIndicator = nil
-        // Rows that move under the pointer can report one more hover after
-        // the drop; clear the indicator again once that has happened.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.dropIndicator = nil }
-        if info.hasItemsConforming(to: [.sidebarItem]), let id = draggingItem {
-            draggingItem = nil
-            move(id, to: target, index: index)
-            return true
-        }
-        // A link dragged in from a page or another app opens as a new tab here.
-        guard let provider = info.itemProviders(for: [.url]).first else { return false }
-        _ = provider.loadObject(ofClass: NSURL.self) { object, _ in
-            guard let url = (object as? URL)?.absoluteString else { return }
-            DispatchQueue.main.async { [weak self] in
-                guard let self, let space = spaceID(of: target),
-                      let id = core.openTab(spaceId: space, url: url, activate: false)
-                else { return }
-                move(id, to: target, index: index)
-            }
-        }
-        return true
-    }
-
-    /// Follows a drag out of the sidebar, which SwiftUI reports nothing
-    /// about: whether it is over the page (to show where a little window
-    /// would open) and where it ends. A tab let go over the page, which
-    /// refuses the drop, pops out into a little window. Runs only while
-    /// dragging.
-    private func trackDrag(of id: UInt64) {
         MBEngine.setRejectsDrops(true)
-        dragTimer?.invalidate()
-        let isTab = core.tab(id: id) != nil
-        let timer = Timer(timeInterval: 1.0 / 15, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.dragTick(id, isTab: isTab) }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        dragTimer = timer
     }
 
-    private func dragTick(_ id: UInt64, isTab: Bool) {
-        let point = NSEvent.mouseLocation
-        let overPage = isTab && pageFrameOnScreen?.contains(point) == true
-        if overPage != (dragOverPage != nil) {
-            withAnimation(Motion.settle) { dragOverPage = overPage ? id : nil }
-        }
-        guard NSEvent.pressedMouseButtons & 1 == 0 else { return }
-        dragTimer?.invalidate()
-        dragTimer = nil
-        // A drop in the sidebar is handled as the button comes up; give it a
-        // moment before deciding nothing took the tab.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            self?.dragEnded(id, at: point, overPage: overPage)
-        }
+    /// Follows the drag (screen coordinates): over the page, the window
+    /// shows where a little window would open.
+    func dragMoved(to point: NSPoint) {
+        guard let id = draggingItem else { return }
+        let overPage = core.tab(id: id) != nil && pageFrameOnScreen?.contains(point) == true
+        dragOverPage = overPage ? id : nil
     }
 
-    private func dragEnded(_ id: UInt64, at point: NSPoint, overPage: Bool) {
+    /// The drag ended at `point`; `accepted` if something took the item. A
+    /// tab let go over the page opens in a little window.
+    func endDrag(at point: NSPoint, accepted: Bool) {
         MBEngine.setRejectsDrops(false)
-        withAnimation(Motion.quick) { dragOverPage = nil }
-        guard draggingItem == id else { return }
+        let id = draggingItem
         draggingItem = nil
-        if overPage { openInLittleWindow(id, near: point) }
+        let overPage = dragOverPage != nil
+        dragOverPage = nil
+        if let id, !accepted, overPage, core.tab(id: id) != nil {
+            openInLittleWindow(id, near: point)
+        }
+    }
+
+    /// A sidebar item dropped on a target.
+    func drop(_ id: UInt64, on target: DropTarget, index: Int) {
+        move(id, to: target, index: index)
+    }
+
+    /// A link dragged in from a page or another app opens as a tab there.
+    func dropURL(_ url: String, on target: DropTarget, index: Int) {
+        guard let space = spaceID(of: target),
+              let id = core.openTab(spaceId: space, url: url, activate: false)
+        else { return }
+        move(id, to: target, index: index)
     }
 
     /// The page area of the main window, in screen coordinates.
@@ -802,7 +817,7 @@ final class BrowserStore: NSObject, ObservableObject {
     }
 
     func setLayout(_ layout: SidebarLayout) {
-        withAnimation(Motion.glide) { self.layout = layout }
+        self.layout = layout
     }
 
     /// Shows or hides the traffic lights, fading them in Focus mode so they
@@ -968,11 +983,7 @@ extension BrowserStore: MBWebViewDelegate {
     }
 
     private func publishBlockedCount() {
-        let count = visibleTabID.flatMap { blockedCounts[$0] } ?? 0
-        // Counts roll up; a new page resets without fuss.
-        if count != visibleBlockedCount {
-            withAnimation(count > visibleBlockedCount ? Motion.quick : nil) { visibleBlockedCount = count }
-        }
+        visibleBlockedCount = visibleTabID.flatMap { blockedCounts[$0] } ?? 0
     }
 
     nonisolated func webViewDidClose(_ view: MBWebView) {

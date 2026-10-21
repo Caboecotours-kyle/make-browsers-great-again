@@ -1,136 +1,346 @@
-import SwiftUI
+import AppKit
 
-/// A brief pill at the bottom of the page: "Archived 6 tabs · Undo".
-struct ToastView: View {
-    @EnvironmentObject private var store: BrowserStore
-    let toast: Toast
-    @Environment(\.colorScheme) private var colorScheme
+/// A brief pill at the bottom of the page: "Archived 6 tabs · Undo ⌘Z".
+@MainActor
+final class ToastView: FlippedView {
+    private let store: BrowserStore
+    private let fill = FillLayer()
+    private let icon = NSImageView()
+    private let message = Label.make(size: 13, weight: .medium)
+    private let divider = CALayer()
+    private let undo = NSButton()
+    private let shortcut = Label.make("⌘Z", size: 11, color: .tertiaryLabelColor)
+    private var undoable = false
 
-    var body: some View {
-        let dark = colorScheme == .dark
-        HStack(spacing: 8) {
-            Image(systemName: toast.symbol)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Text(toast.message)
-                .font(.system(size: 13, weight: .medium))
-            if toast.undoable {
-                Divider().frame(height: 14)
-                Button("Undo") { store.undoClose() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                Text("⌘Z").font(.system(size: 11)).foregroundStyle(.tertiary)
-            }
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 36)
-        .background(Capsule().fill(dark ? Color(white: 0.2) : .white))
-        .overlay(Capsule().strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
-        .shadow(color: .black.opacity(dark ? 0.4 : 0.14), radius: 14, y: 6)
-        .onTapGesture { store.dismissToast() }
+    init(store: BrowserStore) {
+        self.store = store
+        super.init(frame: .zero)
+        wantsLayer = true
+        fill.cornerRadius = 18
+        layer?.addSublayer(fill)
+        layer?.addSublayer(divider)
+        icon.contentTintColor = .secondaryLabelColor
+        undo.isBordered = false
+        undo.attributedTitle = NSAttributedString(string: "Undo", attributes: [
+            .font: Theme.font(13, .semibold), .foregroundColor: NSColor.controlAccentColor,
+        ])
+        undo.onAction { store.undoClose() }
+        for view in [icon, message, undo, shortcut] as [NSView] { addSubview(view) }
     }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    func configure(_ toast: Toast) {
+        icon.image = .symbol(toast.symbol, size: 12, weight: .semibold)
+        message.stringValue = toast.message
+        undoable = toast.undoable
+        undo.isHidden = !undoable
+        shortcut.isHidden = !undoable
+        divider.isHidden = !undoable
+        needsLayout = true
+    }
+
+    var preferredWidth: CGFloat {
+        28 + 14 + message.textWidth + (undoable ? 20 + 40 + 6 + 22 : 0)
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fill.frame = bounds
+        var x: CGFloat = 14
+        icon.frame = NSRect(x: x, y: bounds.midY - 7, width: 14, height: 14)
+        x += 22
+        let width = message.textWidth
+        message.frame = NSRect(x: x, y: bounds.midY - 8, width: width, height: 16)
+        x += width + 10
+        divider.frame = NSRect(x: x, y: bounds.midY - 7, width: 1, height: 14)
+        x += 10
+        undo.frame = NSRect(x: x, y: bounds.midY - 9, width: 40, height: 18)
+        x += 44
+        shortcut.frame = NSRect(x: x, y: bounds.midY - 7, width: 22, height: 14)
+        CATransaction.commit()
+    }
+
+    override func updateLayer() {
+        let dark = effectiveAppearance.isDark
+        fill.paint(fill: Theme.toastFill, border: Theme.faint(0.1), in: effectiveAppearance)
+        fill.borderWidth = 0.5
+        fill.shadowColor = NSColor.black.withAlphaComponent(dark ? 0.4 : 0.14).cgColor
+        fill.shadowOpacity = 1
+        fill.shadowRadius = 14
+        fill.shadowOffset = CGSize(width: 0, height: -6)
+        divider.backgroundColor = Theme.faint(0.15).cgColor
+    }
+
+    override func mouseUp(with event: NSEvent) { store.dismissToast() }
+    override func mouseDown(with event: NSEvent) {}
 }
 
 /// Media playing in a tab you're not looking at, at the bottom of the
 /// sidebar: what's playing, play/pause, and a click jumps back to it.
-struct MiniPlayer: View {
-    @EnvironmentObject private var store: BrowserStore
-    let tab: TabInfo
-    let space: SpaceInfo
-    @State private var hovering = false
-    @Environment(\.colorScheme) private var colorScheme
+@MainActor
+final class MiniPlayerView: HoverView {
+    private let store: BrowserStore
+    private let fill = FillLayer()
+    private let icon = NSImageView()
+    private let title = Label.make(size: 12, weight: .medium)
+    private let equalizer = EqualizerView()
+    private let subtitle = Label.make(size: 11, color: .secondaryLabelColor)
+    private let playPause = NSButton()
+    private let hide = NSButton()
+    private var media: (tab: TabInfo, space: SpaceInfo)?
 
-    var body: some View {
-        let paused = store.pausedMediaTab == tab.id
-        HStack(spacing: 10) {
-            FaviconImage(tab: tab, size: 20)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
-                    Text(tab.displayTitle)
-                        .font(.system(size: 12, weight: .medium))
-                        .lineLimit(1)
-                    Equalizer(playing: !paused)
-                        .frame(width: 11, height: 10)
-                        .opacity(0.55)
-                }
-                Text(space.id == store.activeSpace.id ? tab.host : "\(space.icon) \(space.name)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            Button { store.toggleMedia(tab.id) } label: {
-                Image(systemName: paused ? "play.fill" : "pause.fill")
-                    .font(.system(size: 12))
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(paused ? "Play" : "Pause")
-            if paused && hovering {
-                Button { store.dismissMedia() } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .frame(width: 18, height: 26)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Hide")
-            }
+    init(store: BrowserStore) {
+        self.store = store
+        super.init(frame: .zero)
+        fill.cornerRadius = 10
+        layer?.addSublayer(fill)
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        equalizer.alphaValue = 0.55
+        for button in [playPause, hide] {
+            button.isBordered = false
+            button.bezelStyle = .regularSquare
+            button.contentTintColor = .labelColor
         }
-        .padding(.leading, 10)
-        .padding(.trailing, 6)
-        .frame(height: 46)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(Theme.controlFill(dark: colorScheme == .dark, hovering: hovering)))
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .animation(Motion.quick, value: hovering)
-        .onTapGesture { store.select(tab.id, in: space.id) }
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        playPause.onAction { [weak self] in
+            guard let self, let media else { return }
+            store.toggleMedia(media.tab.id)
+        }
+        hide.image = .symbol("xmark", size: 9, weight: .bold)
+        hide.toolTip = "Hide"
+        hide.onAction { store.dismissMedia() }
+        for view in [icon, title, equalizer, subtitle, playPause, hide] as [NSView] { addSubview(view) }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    private var paused: Bool { media.map { store.pausedMediaTab == $0.tab.id } ?? false }
+
+    func update(_ media: (tab: TabInfo, space: SpaceInfo)?) {
+        guard let media else { return }
+        self.media = media
+        icon.image = FaviconCache.shared.image(for: media.tab)
+        title.stringValue = media.tab.displayTitle
+        subtitle.stringValue = media.space.id == store.activeSpace.id ? media.tab.host : "\(media.space.icon) \(media.space.name)"
+        playPause.image = .symbol(paused ? "play.fill" : "pause.fill", size: 12, weight: .regular)
+        playPause.toolTip = paused ? "Play" : "Pause"
+        equalizer.playing = !paused
+        hide.isHidden = !(paused && hovering)
+        needsLayout = true
+    }
+
+    override func hoverChanged() {
+        super.hoverChanged()
+        hide.isHidden = !(paused && hovering)
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fill.frame = bounds
+        CATransaction.commit()
+        icon.frame = NSRect(x: 10, y: bounds.midY - 10, width: 20, height: 20)
+        let trailing: CGFloat = hide.isHidden ? 6 : 24
+        hide.frame = NSRect(x: bounds.width - 24, y: bounds.midY - 13, width: 18, height: 26)
+        playPause.frame = NSRect(x: bounds.width - trailing - 26, y: bounds.midY - 13, width: 26, height: 26)
+        let textX: CGFloat = 40
+        let textWidth = max(playPause.frame.minX - textX - 6, 0)
+        let titleWidth = min(title.textWidth, textWidth - 17)
+        title.frame = NSRect(x: textX, y: 7, width: max(titleWidth, 0), height: 15)
+        equalizer.frame = NSRect(x: textX + max(titleWidth, 0) + 6, y: 9, width: 11, height: 10)
+        subtitle.frame = NSRect(x: textX, y: 24, width: textWidth, height: 14)
+    }
+
+    override func updateLayer() {
+        fill.paint(fill: hovering ? Theme.controlHoverFill : Theme.controlFill, in: effectiveAppearance)
+    }
+
+    override func mouseDown(with event: NSEvent) {}
+
+    override func mouseUp(with event: NSEvent) {
+        guard let media, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        store.select(media.tab.id, in: media.space.id)
     }
 }
 
 /// Offered once, when old Today tabs pile up: tidy them now, every day, or
 /// not at all. Nothing is lost: Undo and Recently Closed bring tabs back.
-struct CleanupCard: View {
-    @EnvironmentObject private var store: BrowserStore
-    let count: Int
-    @Environment(\.colorScheme) private var colorScheme
+final class CleanupCellView: NSTableCellView {
+    private let store: BrowserStore
+    private let fill = FillLayer()
+    private let title = Label.make(size: 12.5, weight: .semibold)
+    private let detail = Label.wrapping("MBGA can tidy them up. You can always bring them back.", size: 11.5)
+    private let notNow: NSButton
+    private let once: NSButton
+    private let daily: NSButton
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("\(count) tabs haven't been touched in a while")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("MBGA can tidy them up. You can always bring them back.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            HStack(spacing: 6) {
-                Button("Not Now") { store.answerCleanup(.notNow) }
-                Spacer(minLength: 0)
-                Button("Once") { store.answerCleanup(.once) }
-                Button("Daily") { store.answerCleanup(.daily) }
-                    .keyboardShortcut(.defaultAction)
-            }
-            .controlSize(.small)
-        }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(Theme.controlFill(dark: colorScheme == .dark)))
-        .padding(.vertical, 4)
-        .transition(.opacity)
+    init(store: BrowserStore) {
+        self.store = store
+        notNow = .push("Not Now") { store.answerCleanup(.notNow) }
+        once = .push("Once") { store.answerCleanup(.once) }
+        daily = .push("Daily") { store.answerCleanup(.daily) }
+        super.init(frame: .zero)
+        wantsLayer = true
+        fill.cornerRadius = 10
+        layer?.addSublayer(fill)
+        title.maximumNumberOfLines = 2
+        title.lineBreakMode = .byWordWrapping
+        for button in [notNow, once, daily] { button.controlSize = .small; button.font = Theme.font(11) }
+        daily.keyEquivalent = "\r"
+        for view in [title, detail, notNow, once, daily] { addSubview(view) }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var isFlipped: Bool { true }
+    override var wantsUpdateLayer: Bool { true }
+
+    func configure(count: Int) {
+        title.stringValue = "\(count) tabs haven't been touched in a while"
+        needsLayout = true
+    }
+
+    override func updateLayer() {
+        fill.paint(fill: Theme.controlFill, in: effectiveAppearance)
+    }
+
+    override func layout() {
+        super.layout()
+        let card = bounds.insetBy(dx: 0, dy: 3)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fill.frame = card
+        CATransaction.commit()
+        let width = card.width - 20
+        title.frame = NSRect(x: 10, y: card.minY + 9, width: width, height: 16)
+        detail.frame = NSRect(x: 10, y: card.minY + 27, width: width, height: 30)
+        let y = card.maxY - 28
+        notNow.frame = NSRect(x: 6, y: y, width: notNow.intrinsicContentSize.width, height: 24)
+        let dailyWidth = daily.intrinsicContentSize.width, onceWidth = once.intrinsicContentSize.width
+        daily.frame = NSRect(x: card.width - 6 - dailyWidth, y: y, width: dailyWidth, height: 24)
+        once.frame = NSRect(x: daily.frame.minX - onceWidth, y: y, width: onceWidth, height: 24)
     }
 }
 
-extension AnyTransition {
-    /// Today tabs dropping away toward Clear when they are tidied up.
-    static var archive: AnyTransition {
-        .asymmetric(insertion: .identity,
-                    removal: .scale(scale: 0.7, anchor: .bottom).combined(with: .offset(y: 24)).combined(with: .opacity))
+/// Shown over the page while a sidebar tab is dragged onto it: where the
+/// little window will appear.
+@MainActor
+final class DropPreviewView: NSView {
+    private let dim = CALayer()
+    private let frameLayer = FillLayer()
+    private let page = FillLayer()
+    private let dots = (0..<3).map { _ in CALayer() }
+    private let icon = NSImageView()
+    private let bigIcon = NSImageView()
+    private let title = Label.make(size: 12, weight: .medium)
+    private let hint = Label.make("Drop to open in a little window", size: 13, weight: .medium,
+                                  color: .secondaryLabelColor)
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.addSublayer(dim)
+        layer?.addSublayer(frameLayer)
+        frameLayer.cornerRadius = 16
+        frameLayer.addSublayer(page)
+        page.cornerRadius = 10
+        for dot in dots {
+            dot.cornerRadius = 4
+            frameLayer.addSublayer(dot)
+        }
+        hint.alignment = .center
+        for view in [icon, title, bigIcon, hint] as [NSView] { addSubview(view) }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var isFlipped: Bool { true }
+    override var wantsUpdateLayer: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func configure(_ tab: TabInfo) {
+        icon.image = FaviconCache.shared.image(for: tab)
+        bigIcon.image = icon.image
+        title.stringValue = tab.displayTitle
+        needsLayout = true
+    }
+
+    private var card: NSRect {
+        NSRect(x: bounds.midX - 150, y: bounds.midY - 180, width: 300, height: 360)
+    }
+
+    override func layout() {
+        super.layout()
+        let card = card
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        dim.frame = bounds
+        frameLayer.frame = card
+        page.frame = NSRect(x: 6, y: 32, width: card.width - 12, height: card.height - 38)
+        for (i, dot) in dots.enumerated() { dot.frame = NSRect(x: 12 + CGFloat(i) * 14, y: 12, width: 8, height: 8) }
+        CATransaction.commit()
+        icon.frame = NSRect(x: card.minX + 60, y: card.minY + 9, width: 13, height: 13)
+        title.frame = NSRect(x: card.minX + 79, y: card.minY + 8, width: card.width - 92, height: 15)
+        bigIcon.frame = NSRect(x: card.midX - 17, y: card.midY - 20, width: 34, height: 34)
+        hint.frame = NSRect(x: card.minX, y: card.midY + 22, width: card.width, height: 17)
+    }
+
+    override func updateLayer() {
+        let dark = effectiveAppearance.isDark
+        dim.backgroundColor = NSColor.black.withAlphaComponent(0.18).cgColor
+        frameLayer.paint(fill: dark ? NSColor(white: 0.2, alpha: 1) : NSColor(white: 0.94, alpha: 1),
+                         border: Theme.faint(0.12), in: effectiveAppearance)
+        frameLayer.borderWidth = 0.5
+        frameLayer.shadowColor = NSColor.black.withAlphaComponent(0.3).cgColor
+        frameLayer.shadowOpacity = 1
+        frameLayer.shadowRadius = 24
+        frameLayer.shadowOffset = CGSize(width: 0, height: -10)
+        page.paint(fill: dark ? NSColor(white: 0.12, alpha: 1) : .white, in: effectiveAppearance)
+        for dot in dots { dot.backgroundColor = Theme.faint(0.2).cgColor }
+    }
+}
+
+/// Over an empty space: its emoji and a way to open a tab.
+@MainActor
+final class EmptySpaceHintView: FlippedView {
+    private let store: BrowserStore
+    private let icon = Label.make(size: 40)
+    private let title = Label.make(size: 15, weight: .medium)
+    private let button = NSButton()
+
+    init(store: BrowserStore) {
+        self.store = store
+        super.init(frame: .zero)
+        icon.alignment = .center
+        title.alignment = .center
+        title.textColor = NSColor.black.withAlphaComponent(0.7)
+        button.isBordered = false
+        button.attributedTitle = NSAttributedString(string: "Search or Enter URL  ⌘T", attributes: [
+            .font: Theme.font(13), .foregroundColor: NSColor.black.withAlphaComponent(0.45),
+        ])
+        button.onAction { store.commandBar = .newTab }
+        for view in [icon, title, button] as [NSView] { addSubview(view) }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func update() {
+        let space = store.activeSpace
+        icon.stringValue = space.icon
+        title.stringValue = "No tab open in \(space.name)"
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        let y = bounds.midY - 50
+        icon.frame = NSRect(x: 0, y: y, width: bounds.width, height: 48)
+        title.frame = NSRect(x: 0, y: y + 56, width: bounds.width, height: 20)
+        button.frame = NSRect(x: bounds.midX - 110, y: y + 82, width: 220, height: 18)
     }
 }

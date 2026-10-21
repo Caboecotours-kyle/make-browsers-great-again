@@ -1,25 +1,8 @@
 import AppKit
-import SwiftUI
 
 /// Three bars bouncing like Arc's "now playing" indicator. The animation is
 /// handed to Core Animation, which runs it in the render server, so the app
 /// itself doesn't wake up for every frame. Static with Reduce Motion.
-struct Equalizer: NSViewRepresentable {
-    var playing = true
-    var color: NSColor = .labelColor
-
-    func makeNSView(context: Context) -> EqualizerView { EqualizerView() }
-
-    func updateNSView(_ view: EqualizerView, context: Context) {
-        view.barColor = color
-        view.playing = playing && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: EqualizerView, context: Context) -> CGSize? {
-        CGSize(width: 12, height: 12)
-    }
-}
-
 final class EqualizerView: NSView {
     private let bars = (0..<3).map { _ in CALayer() }
     // Each bar bounces at its own pace so the three never move in step.
@@ -31,8 +14,12 @@ final class EqualizerView: NSView {
     }
 
     var playing = false {
-        didSet { if playing != oldValue { updateAnimations() } }
+        didSet {
+            let animate = playing && !Motion.reduced
+            if animate != animating { animating = animate; updateAnimations() }
+        }
     }
+    private var animating = false
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -46,13 +33,15 @@ final class EqualizerView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+    override var intrinsicContentSize: NSSize { NSSize(width: 12, height: 11) }
+
     override func layout() {
         super.layout()
         let width: CGFloat = 2.5, gap = (bounds.width - width * 3) / 2
         for (i, bar) in bars.enumerated() {
             bar.bounds = CGRect(x: 0, y: 0, width: width, height: bounds.height)
             bar.position = CGPoint(x: CGFloat(i) * (width + gap) + width / 2, y: 0)
-            if !playing { bar.transform = CATransform3DMakeScale(1, rest[i], 1) }
+            if !animating { bar.transform = CATransform3DMakeScale(1, rest[i], 1) }
         }
     }
 
@@ -71,7 +60,7 @@ final class EqualizerView: NSView {
         for (i, bar) in bars.enumerated() {
             bar.removeAllAnimations()
             bar.transform = CATransform3DMakeScale(1, rest[i], 1)
-            guard playing else { continue }
+            guard animating else { continue }
             let bounce = CABasicAnimation(keyPath: "transform.scale.y")
             bounce.fromValue = 0.25
             bounce.toValue = 1.0

@@ -1,5 +1,4 @@
 import AppKit
-import SwiftUI
 
 struct RGB: Equatable {
     var r, g, b: Double
@@ -50,10 +49,15 @@ struct RGB: Equatable {
         RGB(r: r + (other.r - r) * t, g: g + (other.g - g) * t, b: b + (other.b - b) * t)
     }
 
-    var color: Color { Color(red: r, green: g, blue: b) }
+    var nsColor: NSColor { NSColor(srgbRed: r, green: g, blue: b, alpha: 1) }
+    var cgColor: CGColor { CGColor(srgbRed: r, green: g, blue: b, alpha: 1) }
 
     static let white = RGB(0xFFFFFF)
     static let black = RGB(0x000000)
+}
+
+extension NSAppearance {
+    var isDark: Bool { bestMatch(from: [.aqua, .darkAqua]) == .darkAqua }
 }
 
 enum Theme {
@@ -78,7 +82,7 @@ enum Theme {
     /// A vertical wash: the space color at the top fading toward the neutral
     /// window background, and further still while the window is inactive,
     /// as system materials do.
-    static func gradient(for base: RGB, dark: Bool, active: Bool, style: TintStyle) -> [Color] {
+    static func gradient(for base: RGB, dark: Bool, active: Bool, style: TintStyle) -> [RGB] {
         // Share of the neutral background mixed in at the top and bottom.
         var (top, bottom): (Double, Double) = switch style {
         case .vivid: dark ? (0.42, 0.6) : (0.4, 0.58)
@@ -90,34 +94,62 @@ enum Theme {
             bottom += (1 - bottom) * 0.5
         }
         let neutral = neutral(dark: dark)
-        return [base.mixed(with: neutral, top).color, base.mixed(with: neutral, bottom).color]
+        return [base.mixed(with: neutral, top), base.mixed(with: neutral, bottom)]
     }
 
-    /// Fills for controls drawn on the tinted window background. Hover is
-    /// always weaker than selection, in both appearances.
-    static func hoverFill(dark: Bool) -> Color {
-        dark ? .white.opacity(0.07) : .white.opacity(0.3)
+    // Fills for controls drawn on the tinted window background. Hover is
+    // always weaker than selection, in both appearances. They resolve against
+    // the appearance current while drawing (or in updateLayer).
+
+    static let hoverFill = NSColor(name: nil) {
+        $0.isDark ? .white.withAlphaComponent(0.07) : .white.withAlphaComponent(0.3)
     }
 
-    static func controlFill(dark: Bool, hovering: Bool = false) -> Color {
-        dark ? .white.opacity(hovering ? 0.1 : 0.06) : .white.opacity(hovering ? 0.55 : 0.4)
+    static let controlFill = NSColor(name: nil) {
+        $0.isDark ? .white.withAlphaComponent(0.06) : .white.withAlphaComponent(0.4)
+    }
+
+    static let controlHoverFill = NSColor(name: nil) {
+        $0.isDark ? .white.withAlphaComponent(0.1) : .white.withAlphaComponent(0.55)
     }
 
     /// The selected tab: an opaque pill that stands out in both appearances.
-    static func selectedFill(dark: Bool) -> Color {
-        dark ? Color(red: 0.3, green: 0.3, blue: 0.32) : .white
+    static let selectedFill = NSColor(name: nil) {
+        $0.isDark ? NSColor(srgbRed: 0.3, green: 0.3, blue: 0.32, alpha: 1) : .white
+    }
+
+    static let selectedShadow = NSColor(name: nil) {
+        $0.isDark ? .black.withAlphaComponent(0.3) : .black.withAlphaComponent(0.09)
+    }
+
+    /// Hairlines and quiet fills drawn in the text color.
+    static func faint(_ alpha: CGFloat) -> NSColor { NSColor.labelColor.withAlphaComponent(alpha) }
+
+    /// Solid surfaces floating over the page: command bar, toasts.
+    static let cardFill = NSColor(name: nil) {
+        $0.isDark ? NSColor(white: 0.16, alpha: 1) : NSColor(white: 0.99, alpha: 1)
+    }
+
+    static let toastFill = NSColor(name: nil) {
+        $0.isDark ? NSColor(white: 0.2, alpha: 1) : .white
+    }
+
+    static func font(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
+        .systemFont(ofSize: size, weight: weight)
     }
 }
 
 /// How strongly a space's color tints the window.
-enum TintStyle: String, CaseIterable, Identifiable {
+enum TintStyle: String, CaseIterable {
     case vivid, calm, neutral
 
     static let defaultsKey = "tintStyle"
     /// The window takes the visible page's theme color instead of the space's.
     static let matchPageKey = "matchPageColor"
 
-    var id: String { rawValue }
+    static var saved: TintStyle {
+        UserDefaults.standard.string(forKey: defaultsKey).flatMap(TintStyle.init) ?? .calm
+    }
 
     var title: String {
         switch self {
@@ -134,13 +166,39 @@ enum TintStyle: String, CaseIterable, Identifiable {
 /// Actions done hundreds of times a day (new tab, close tab, switching)
 /// are not animated at all. With Reduce Motion everything is instant.
 enum Motion {
-    static var quick: Animation? { reduced ? nil : .easeOut(duration: 0.14) }
-    static var glide: Animation? { reduced ? nil : .spring(response: 0.34, dampingFraction: 0.82) }
-    static var settle: Animation? { reduced ? nil : .spring(response: 0.3, dampingFraction: 0.86) }
-    static var foldOut: Animation? { reduced ? nil : .spring(response: 0.14, dampingFraction: 0.86) }
-    static var foldIn: Animation? { reduced ? nil : .spring(response: 0.13, dampingFraction: 1) }
+    struct Curve {
+        let duration: TimeInterval
+        let timing: CAMediaTimingFunction
+    }
 
-    private static var reduced: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    // Springs approximated by an ease-out with a soft landing, so AppKit's
+    // animator and Core Animation can both use them.
+    static let quick = Curve(duration: 0.14, timing: CAMediaTimingFunction(name: .easeOut))
+    static let glide = Curve(duration: 0.34, timing: CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1))
+    static let settle = Curve(duration: 0.3, timing: CAMediaTimingFunction(controlPoints: 0.25, 0.85, 0.3, 1))
+    static let foldOut = Curve(duration: 0.16, timing: CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1))
+    static let foldIn = Curve(duration: 0.13, timing: CAMediaTimingFunction(name: .easeIn))
+
+    static var reduced: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+
+    /// Runs `changes` through the views' and layers' animators, or instantly
+    /// with Reduce Motion or no curve.
+    @MainActor
+    static func animate(_ curve: Curve?, _ changes: () -> Void, completion: (@MainActor () -> Void)? = nil) {
+        guard let curve, !reduced else {
+            changes()
+            completion?()
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = curve.duration
+            context.timingFunction = curve.timing
+            context.allowsImplicitAnimation = true
+            changes()
+        } completionHandler: {
+            MainActor.assumeIsolated { completion?() }
+        }
+    }
 }
 
 extension NSWindow {
@@ -154,42 +212,6 @@ extension NSWindow {
         }
         if #available(macOS 26, *) { return 16 }
         return 10
-    }
-}
-
-/// Window background tinted with the current space's color. Animatable so
-/// the tint follows the pager continuously during swipes and springs.
-struct SpaceBackdrop: View {
-    @ObservedObject var pager: PagerModel
-    let colors: [UInt32]
-
-    var body: some View {
-        BackdropGradient(position: pager.position, colors: colors)
-            // A page's color fades in rather than snapping on tab switches.
-            .animation(Motion.quick, value: colors)
-    }
-}
-
-private struct BackdropGradient: View, Animatable {
-    var position: CGFloat
-    let colors: [UInt32]
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.controlActiveState) private var activeState
-    @AppStorage(TintStyle.defaultsKey) private var style = TintStyle.calm
-
-    var animatableData: CGFloat {
-        get { position }
-        set { position = newValue }
-    }
-
-    var body: some View {
-        LinearGradient(
-            colors: Theme.gradient(for: Theme.blend(colors, at: position), dark: colorScheme == .dark,
-                                   active: activeState != .inactive, style: style),
-            startPoint: .top,
-            endPoint: .bottom
-        )
-        .animation(Motion.quick, value: activeState)
     }
 }
 
@@ -219,12 +241,18 @@ final class FaviconCache {
     private let cache = NSCache<NSString, NSImage>()
     /// Brand colors sampled from favicons; a stored nil means the icon has none.
     private var colors: [String: RGB?] = [:]
+    private static let globe = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)!
 
     func image(atPath path: String) -> NSImage? {
         if let image = cache.object(forKey: path as NSString) { return image }
         guard let image = NSImage(contentsOfFile: path) else { return nil }
         cache.setObject(image, forKey: path as NSString)
         return image
+    }
+
+    /// The tab's favicon, or a globe template image.
+    func image(for tab: TabInfo) -> NSImage {
+        tab.faviconPath.flatMap { image(atPath: $0) } ?? Self.globe
     }
 
     func invalidate(_ path: String) {
@@ -272,40 +300,4 @@ final class FaviconCache {
         guard weight > 6 else { return nil }
         return RGB(r: min(r / weight, 1), g: min(g / weight, 1), b: min(b / weight, 1))
     }
-}
-
-struct FaviconImage: View {
-    let tab: TabInfo
-    var size: CGFloat = 16
-
-    var body: some View {
-        if let path = tab.faviconPath, let image = FaviconCache.shared.image(atPath: path) {
-            Image(nsImage: image)
-                .resizable()
-                .interpolation(.high)
-                .frame(width: size, height: size)
-                .clipShape(RoundedRectangle(cornerRadius: size * 0.2, style: .continuous))
-        } else {
-            Image(systemName: "globe")
-                .font(.system(size: size * 0.8))
-                .foregroundStyle(.secondary)
-                .frame(width: size, height: size)
-        }
-    }
-}
-
-/// Lets the user drag the window by an otherwise empty area.
-struct WindowDragArea: NSViewRepresentable {
-    final class DragView: NSView {
-        override func mouseDown(with event: NSEvent) {
-            if event.clickCount == 2 {
-                window?.performZoom(nil)
-            } else {
-                window?.performDrag(with: event)
-            }
-        }
-    }
-
-    func makeNSView(context: Context) -> DragView { DragView() }
-    func updateNSView(_ nsView: DragView, context: Context) {}
 }

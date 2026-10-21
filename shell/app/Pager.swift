@@ -1,13 +1,31 @@
 import AppKit
-import SwiftUI
 
 /// Horizontal paging between spaces, driven directly by trackpad scroll
 /// events so a two-finger swipe anywhere in the sidebar moves the spaces
 /// with the fingers and springs to the nearest one on release.
 @MainActor
-final class PagerModel: ObservableObject {
+final class PagerModel {
     /// Fractional index of the space on screen.
-    @Published var position: CGFloat = 0
+    private(set) var position: CGFloat = 0
+
+    private struct Observer {
+        weak var owner: AnyObject?
+        let handle: @MainActor (_ animated: Bool) -> Void
+    }
+    private var observers: [Observer] = []
+
+    /// Calls `handle` whenever the position changes, with whether to
+    /// animate to it (a settle) or follow it directly (fingers moving).
+    func observe(_ owner: AnyObject, _ handle: @escaping @MainActor (_ animated: Bool) -> Void) {
+        observers.append(Observer(owner: owner, handle: handle))
+    }
+
+    func setPosition(_ value: CGFloat, animated: Bool) {
+        guard value != position else { return }
+        position = value
+        observers.removeAll { $0.owner == nil }
+        for observer in observers { observer.handle(animated) }
+    }
 
     var pageCount = 1
     var pageWidth: CGFloat = 260
@@ -37,11 +55,7 @@ final class PagerModel: ObservableObject {
     /// Moves to `index` unless the user is swiping.
     func show(_ index: Int, animated: Bool) {
         guard !isTracking, position != CGFloat(index) else { return }
-        if animated {
-            withAnimation(Motion.glide) { position = CGFloat(index) }
-        } else {
-            position = CGFloat(index)
-        }
+        setPosition(CGFloat(index), animated: animated)
     }
 
     /// Returns true if the event was consumed.
@@ -65,7 +79,7 @@ final class PagerModel: ObservableObject {
             dy += event.scrollingDeltaY
             if abs(dx) > 6, abs(dx) > abs(dy) * 1.2 {
                 tracking = .horizontal(start: position, dx: dx, velocity: event.scrollingDeltaX)
-                position = rubberBand(position - dx / pageWidth)
+                setPosition(rubberBand(position - dx / pageWidth), animated: false)
                 return true
             }
             tracking = ended ? .idle : abs(dy) > 6 ? .vertical : .undecided(dx: dx, dy: dy)
@@ -79,7 +93,7 @@ final class PagerModel: ObservableObject {
                 tracking = .momentum
             } else {
                 tracking = .horizontal(start: start, dx: dx, velocity: event.scrollingDeltaX)
-                position = rubberBand(start - dx / pageWidth)
+                setPosition(rubberBand(start - dx / pageWidth), animated: false)
             }
             return true
 
@@ -109,7 +123,7 @@ final class PagerModel: ObservableObject {
             target = velocity > 0 ? raw.rounded(.down) : raw.rounded(.up)
         }
         let index = Int(min(max(target, 0), CGFloat(pageCount - 1)))
-        withAnimation(Motion.glide) { position = CGFloat(index) }
+        setPosition(CGFloat(index), animated: true)
         onSettle?(index)
     }
 }
@@ -162,27 +176,54 @@ final class WebContainerView: NSView {
     }
 }
 
-/// Places the shared WebContainerView in the SwiftUI layout. The container
-/// is re-parented rather than recreated so live pages survive layout changes.
-struct WebArea: NSViewRepresentable {
+/// The page as a card: a soft shadow and a hairline around the shared
+/// WebContainerView, with corners that follow the window's.
+final class PageCardView: NSView {
     let container: WebContainerView
-    let cornerRadius: CGFloat
-    var border: NSColor?
+    private let shadowLayer = CALayer()
 
-    func makeNSView(context: Context) -> NSView {
-        let host = NSView()
-        host.autoresizesSubviews = true
-        return host
+    init(container: WebContainerView) {
+        self.container = container
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.masksToBounds = false
+        shadowLayer.backgroundColor = NSColor.white.cgColor
+        shadowLayer.cornerCurve = .continuous
+        shadowLayer.shadowRadius = 6
+        shadowLayer.shadowOffset = CGSize(width: 0, height: -1)
+        shadowLayer.shadowOpacity = 1
+        layer?.addSublayer(shadowLayer)
+        container.frame = bounds
+        container.autoresizingMask = [.width, .height]
+        addSubview(container)
     }
 
-    func updateNSView(_ host: NSView, context: Context) {
-        if container.superview !== host {
-            container.removeFromSuperview()
-            container.frame = host.bounds
-            container.autoresizingMask = [.width, .height]
-            host.addSubview(container)
-        }
-        container.cornerRadius = cornerRadius
-        container.setBorder(border)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    /// Card corners and edge, or none for full screen.
+    var isCard = true {
+        didSet { needsDisplay = true; needsLayout = true }
+    }
+    var cornerRadius: CGFloat = 8 {
+        didSet { needsDisplay = true; needsLayout = true }
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        shadowLayer.frame = bounds
+        shadowLayer.cornerRadius = isCard ? cornerRadius : 0
+        shadowLayer.isHidden = !isCard
+        CATransaction.commit()
+        container.cornerRadius = isCard ? cornerRadius : 0
+    }
+
+    override func updateLayer() {
+        let dark = effectiveAppearance.isDark
+        shadowLayer.shadowColor = NSColor.black.withAlphaComponent(dark ? 0.3 : 0.07).cgColor
+        container.setBorder(isCard ? (dark ? .white.withAlphaComponent(0.1) : .black.withAlphaComponent(0.08)) : nil)
     }
 }

@@ -5,7 +5,8 @@
 MBGA is a macOS browser with Arc's sidebar, built to use as little memory as
 possible. Pages are rendered by Chromium (through the prebuilt Chromium
 Embedded Framework), all browser state lives in a Rust core, and the window is
-a thin native SwiftUI/AppKit shell.
+a thin native AppKit shell (no SwiftUI: views update only the parts that
+changed, lists reuse their rows, and Core Animation does the motion).
 
 ## Architecture
 
@@ -16,7 +17,9 @@ core/          Rust: spaces, profiles, tabs, favorites, pinned folders,
 shell/engine/  Objective-C++ bridge to CEF: app class, per-profile storage,
                one client per tab, popups, downloads, permissions, favicons.
 shell/helper/  Entry point of Chromium's subprocesses (renderer, GPU, ...).
-shell/app/     SwiftUI/AppKit UI: sidebar, swipeable spaces, command bar.
+shell/app/     AppKit UI: sidebar (a table per space), swipeable spaces,
+               command bar, sheets. The store reports what changed; each
+               view redraws only its part.
 ```
 
 The core owns the data; the shell renders snapshots of it and forwards engine

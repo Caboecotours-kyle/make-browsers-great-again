@@ -1,19 +1,27 @@
-import SwiftUI
+import AppKit
 
 /// Arc-style command bar: type a URL or search, jump to an open tab or a
 /// space, run a command, or reopen something closed. Results come in
 /// sections, each row shows its shortcut, and ⌘↩ always searches the web.
-struct CommandBar: View {
-    @EnvironmentObject private var store: BrowserStore
+@MainActor
+final class CommandBarView: NSView, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
+    private let store: BrowserStore
     let mode: CommandBarMode
+    private let dim = CALayer()
+    private let card = CommandBarCard()
+    private let searchIcon = NSImageView()
+    private let field = NSTextField()
+    private let topRule = CALayer()
+    private let bottomRule = CALayer()
+    private let scroll = NSScrollView()
+    private let table = NSTableView()
+    private let footer = Label.make(size: 11, color: .secondaryLabelColor)
+    private var rows: [Row] = []
+    private var items: [Item] = []
+    private var actions: [CommandAction] = []
+    private var selection = 0
 
-    @State private var text = ""
-    @State private var selection = 0
-    @State private var shown = false
-    @FocusState private var focused: Bool
-    @Environment(\.colorScheme) private var colorScheme
-
-    private enum Item: Hashable {
+    enum Item: Hashable {
         case go(String)
         case search(String)
         case page(HistoryItem)
@@ -23,19 +31,149 @@ struct CommandBar: View {
         case closed(TabInfo)
     }
 
-    private struct Section: Identifiable {
-        let id: String
-        let title: String?
-        let items: [Item]
+    private enum Row {
+        case header(String)
+        case item(Item, index: Int)
     }
-
-    private var query: String { text.trimmingCharacters(in: .whitespaces) }
 
     /// MBGA_DEBUG_COMMAND opens the bar at launch with this text, for
     /// screenshots of the results.
     static let debugPreset = ProcessInfo.processInfo.environment["MBGA_DEBUG_COMMAND"].flatMap { $0.isEmpty ? nil : $0 }
 
-    private func sections(_ actions: [CommandAction]) -> [Section] {
+    init(store: BrowserStore, mode: CommandBarMode) {
+        self.store = store
+        self.mode = mode
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.addSublayer(dim)
+
+        searchIcon.image = .symbol("magnifyingglass", size: 16)
+        searchIcon.contentTintColor = .secondaryLabelColor
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = Theme.font(18)
+        field.placeholderString = mode == .newTab ? "Search, enter a URL or type a command…" : "Enter URL…"
+        field.delegate = self
+        field.cell?.isScrollable = true
+        field.cell?.wraps = false
+
+        let column = NSTableColumn(identifier: .init("main"))
+        table.addTableColumn(column)
+        table.headerView = nil
+        table.style = .plain
+        table.backgroundColor = .clear
+        table.selectionHighlightStyle = .none
+        table.intercellSpacing = NSSize(width: 0, height: 2)
+        table.dataSource = self
+        table.delegate = self
+        table.target = self
+        table.action = #selector(rowClicked)
+        table.focusRingType = .none
+        scroll.documentView = table
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = false
+        scroll.automaticallyAdjustsContentInsets = false
+        scroll.contentInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
+
+        footer.stringValue = "↩ Open     ⌘↩ Search the web     esc Close"
+        footer.alignment = .right
+
+        addSubview(card)
+        for view in [searchIcon, field, scroll, footer] as [NSView] { card.addSubview(view) }
+        card.layer?.addSublayer(topRule)
+        card.layer?.addSublayer(bottomRule)
+
+        if mode == .editCurrent { field.stringValue = store.visibleTab?.url ?? "" }
+        if mode == .newTab, let preset = Self.debugPreset { field.stringValue = preset }
+        reload()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var isFlipped: Bool { true }
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        dim.backgroundColor = NSColor.black.withAlphaComponent(0.12).cgColor
+        topRule.backgroundColor = Theme.faint(0.08).cgColor
+        bottomRule.backgroundColor = Theme.faint(0.08).cgColor
+    }
+
+    /// Eases in fast enough to feel instant, and takes the keyboard.
+    func present() {
+        layoutSubtreeIfNeeded()
+        window?.makeFirstResponder(field)
+        field.currentEditor()?.selectAll(nil)
+        guard !Motion.reduced, let layer = card.layer else { return }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0
+        fade.toValue = 1
+        let grow = CABasicAnimation(keyPath: "transform")
+        let bounds = layer.bounds
+        var start = CATransform3DMakeTranslation(bounds.width * 0.015, bounds.height * 0.015, 0)
+        start = CATransform3DScale(start, 0.97, 0.97, 1)
+        grow.fromValue = start
+        grow.toValue = CATransform3DIdentity
+        for animation in [fade, grow] {
+            animation.duration = Motion.quick.duration
+            animation.timingFunction = Motion.quick.timing
+        }
+        layer.add(fade, forKey: "fade")
+        layer.add(grow, forKey: "grow")
+        let dimFade = CABasicAnimation(keyPath: "opacity")
+        dimFade.fromValue = 0
+        dimFade.toValue = 1
+        dimFade.duration = Motion.quick.duration
+        dim.add(dimFade, forKey: "fade")
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        dim.frame = bounds
+        let width: CGFloat = 620
+        let listHeight = min(table.intrinsicListHeight + 12, 420)
+        let hasResults = !items.isEmpty
+        let height: CGFloat = 54 + (hasResults ? 1 + listHeight + 1 + 30 : 0)
+        card.frame = NSRect(x: (bounds.width - width) / 2, y: 110, width: width, height: height)
+        searchIcon.frame = NSRect(x: 16, y: 17, width: 20, height: 20)
+        field.frame = NSRect(x: 46, y: 14, width: width - 62, height: 26)
+        topRule.isHidden = !hasResults
+        bottomRule.isHidden = !hasResults
+        scroll.isHidden = !hasResults
+        footer.isHidden = !hasResults
+        topRule.frame = NSRect(x: 0, y: 54, width: width, height: 1)
+        scroll.frame = NSRect(x: 6, y: 55, width: width - 12, height: listHeight)
+        table.tableColumns.first?.width = width - 12
+        bottomRule.frame = NSRect(x: 0, y: 55 + listHeight, width: width, height: 1)
+        footer.frame = NSRect(x: 14, y: height - 22, width: width - 28, height: 14)
+        CATransaction.commit()
+    }
+
+    // MARK: - Results
+
+    private var query: String { field.stringValue.trimmingCharacters(in: .whitespaces) }
+
+    private func reload() {
+        actions = CommandAction.all(for: store)
+        let sections = makeSections()
+        rows = []
+        items = []
+        for (title, sectionItems) in sections {
+            if let title { rows.append(.header(title)) }
+            for item in sectionItems {
+                rows.append(.item(item, index: items.count))
+                items.append(item)
+            }
+        }
+        selection = 0
+        table.reloadData()
+        needsLayout = true
+    }
+
+    private func makeSections() -> [(String?, [Item])] {
         let query = query
         guard !query.isEmpty else { return [] }
         let resolved = store.core.resolveInput(text: query)
@@ -73,31 +211,16 @@ struct CommandBar: View {
             .filter { store.snapshot.spaces.count > 1 && matches(query, $0.element.name) }
             .prefix(3)
             .map { .space($0.element, index: $0.offset) }
-
-        let actionItems: [Item] = query.count < 2 ? [] : actions
-            .filter { $0.matches(query) }
-            .prefix(5)
-            .map { .action($0.id) }
-
+        let actionItems: [Item] = query.count < 2 ? [] : actions.filter { $0.matches(query) }.prefix(5).map { .action($0.id) }
         let pages: [Item] = history
-            .filter { page in
-                openTabs[page.url] == nil && !top.contains(.page(page))
-            }
+            .filter { page in openTabs[page.url] == nil && !top.contains(.page(page)) }
             .prefix(5)
             .map { .page($0) }
-
         let closed: [Item] = store.canReopen
             ? store.core.closedTabs(limit: 25).filter { matches(query, $0.title, $0.url) }.prefix(3).map { .closed($0) }
             : []
-
-        return [
-            Section(id: "top", title: nil, items: top),
-            Section(id: "tabs", title: "Tabs", items: tabs),
-            Section(id: "spaces", title: "Spaces", items: spaceItems),
-            Section(id: "actions", title: "Actions", items: actionItems),
-            Section(id: "history", title: "History", items: pages),
-            Section(id: "closed", title: "Recently Closed", items: closed),
-        ].filter { !$0.items.isEmpty }
+        return [(nil, top), ("Tabs", tabs), ("Spaces", spaceItems), ("Actions", actionItems),
+                ("History", pages), ("Recently Closed", closed)].filter { !$0.1.isEmpty }
     }
 
     private func matches(_ query: String, _ fields: String...) -> Bool {
@@ -105,185 +228,61 @@ struct CommandBar: View {
         return words.allSatisfy { word in fields.contains { $0.localizedCaseInsensitiveContains(word) } }
     }
 
-    var body: some View {
-        let actions = CommandAction.all(for: store)
-        let sections = sections(actions)
-        let items = sections.flatMap(\.items)
-        let dark = colorScheme == .dark
-        ZStack(alignment: .top) {
-            Color.black.opacity(shown ? 0.12 : 0)
-                .contentShape(Rectangle())
-                .onTapGesture { close() }
+    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
-            VStack(spacing: 0) {
-                HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    TextField(mode == .newTab ? "Search, enter a URL or type a command…" : "Enter URL…", text: $text)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 18))
-                        .focused($focused)
-                        .onSubmit { commit(items, actions) }
-                        .onKeyPress(.return, phases: .down) { press in
-                            guard press.modifiers.contains(.command), !query.isEmpty else { return .ignored }
-                            store.search(query, mode: mode)
-                            return .handled
-                        }
-                }
-                .padding(.horizontal, 16)
-                .frame(height: 54)
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        if case .header = rows[row] { return 24 }
+        return 34
+    }
 
-                if !items.isEmpty {
-                    Divider().opacity(0.6)
-                    ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(sections) { section in
-                                if let title = section.title {
-                                    Text(title)
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                        .padding(.horizontal, 10)
-                                        .padding(.top, 8)
-                                        .padding(.bottom, 2)
-                                }
-                                ForEach(section.items, id: \.self) { item in
-                                    let index = items.firstIndex(of: item) ?? 0
-                                    row(item, actions: actions, selected: index == selection)
-                                        .onTapGesture {
-                                            selection = index
-                                            commit(items, actions)
-                                        }
-                                }
-                            }
-                        }
-                        .padding(6)
-                    }
-                    .frame(maxHeight: 420)
-                    .fixedSize(horizontal: false, vertical: true)
-                    Divider().opacity(0.6)
-                    footer
-                }
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let view = CommandRowView()
+        if case .item(_, let index) = rows[row] { view.highlighted = index == selection }
+        return view
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        switch rows[row] {
+        case .header(let title):
+            let cell = NSTableCellView()
+            let label = Label.make(title, size: 11, weight: .semibold, color: .secondaryLabelColor)
+            label.frame = NSRect(x: 10, y: 8, width: 300, height: 14)
+            cell.addSubview(label)
+            return cell
+        case .item(let item, _):
+            let cell = CommandItemCell()
+            configure(cell, with: item)
+            return cell
+        }
+    }
+
+    private func configure(_ cell: CommandItemCell, with item: Item) {
+        switch item {
+        case .go(let url):
+            cell.set(symbol: "globe", title: url, chip: "Go")
+        case .search(let query):
+            cell.set(symbol: "magnifyingglass", title: "Search for “\(query)”", chip: "Search")
+        case .page(let page):
+            let address = Self.address(page.url)
+            cell.set(symbol: "clock", title: page.title.isEmpty ? address : page.title, subtitle: address)
+        case .tab(let tab, let spaceID):
+            let subtitle = spaceID != store.activeSpace.id
+                ? store.snapshot.spaces.first { $0.id == spaceID }.map { "\($0.icon) \($0.name)" } ?? tab.host
+                : tab.host
+            cell.set(image: FaviconCache.shared.image(for: tab), title: tab.displayTitle, subtitle: subtitle,
+                     chip: "Switch to Tab")
+        case .space(let space, let index):
+            cell.set(emoji: space.icon.isEmpty ? "•" : space.icon, title: space.name, chip: index < 9 ? "⌃\(index + 1)" : nil)
+        case .action(let id):
+            if let action = actions.first(where: { $0.id == id }) {
+                cell.set(symbol: action.symbol, title: action.title, chip: action.shortcut)
             }
-            .frame(width: 620)
-            // A solid card: glass behind text this size hurts legibility.
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(dark ? Color(white: 0.16) : Color(white: 0.99)))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(.primary.opacity(dark ? 0.14 : 0.1), lineWidth: 0.5))
-            .shadow(color: .black.opacity(dark ? 0.5 : 0.22), radius: 32, y: 14)
-            // Eases in fast enough to feel instant.
-            .scaleEffect(shown ? 1 : 0.97, anchor: .top)
-            .opacity(shown ? 1 : 0)
-            .padding(.top, 110)
+        case .closed(let tab):
+            cell.set(image: FaviconCache.shared.image(for: tab), title: tab.displayTitle, subtitle: tab.host,
+                     chip: "Reopen", dimImage: true)
         }
-        .onAppear {
-            withAnimation(Motion.quick) { shown = true }
-            if mode == .editCurrent { text = store.visibleTab?.url ?? "" }
-            if mode == .newTab, let preset = Self.debugPreset { text = preset }
-            focused = true
-        }
-        .onChange(of: text) { selection = 0 }
-        .onKeyPress(.downArrow) {
-            selection = min(selection + 1, max(items.count - 1, 0))
-            return .handled
-        }
-        .onKeyPress(.upArrow) {
-            selection = max(selection - 1, 0)
-            return .handled
-        }
-        .onExitCommand { close() }
-    }
-
-    private var footer: some View {
-        HStack(spacing: 14) {
-            Spacer()
-            hint("↩", "Open")
-            hint("⌘↩", "Search the web")
-            hint("esc", "Close")
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 30)
-    }
-
-    private func hint(_ key: String, _ label: String) -> some View {
-        HStack(spacing: 5) {
-            Text(key).font(.system(size: 11, weight: .medium))
-            Text(label).font(.system(size: 11))
-        }
-        .foregroundStyle(.secondary)
-    }
-
-    @ViewBuilder
-    private func row(_ item: Item, actions: [CommandAction], selected: Bool) -> some View {
-        HStack(spacing: 10) {
-            switch item {
-            case .go(let url):
-                symbol("globe")
-                Text(url).lineLimit(1)
-                Spacer(minLength: 8)
-                chip("Go")
-            case .search(let query):
-                symbol("magnifyingglass")
-                Text("Search for “\(query)”").lineLimit(1)
-                Spacer(minLength: 8)
-                chip("Search")
-            case .page(let page):
-                symbol("clock")
-                Text(page.title.isEmpty ? Self.address(page.url) : page.title).lineLimit(1)
-                Text(Self.address(page.url)).foregroundStyle(.secondary).lineLimit(1)
-                Spacer(minLength: 8)
-            case .tab(let tab, let spaceID):
-                FaviconImage(tab: tab)
-                Text(tab.displayTitle).lineLimit(1)
-                if spaceID != store.activeSpace.id, let space = store.snapshot.spaces.first(where: { $0.id == spaceID }) {
-                    Text("\(space.icon) \(space.name)").foregroundStyle(.secondary).lineLimit(1)
-                } else {
-                    Text(tab.host).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                chip("Switch to Tab")
-            case .space(let space, let index):
-                Text(space.icon.isEmpty ? "•" : space.icon).frame(width: 16)
-                Text(space.name).lineLimit(1)
-                Spacer(minLength: 8)
-                if index < 9 { chip("⌃\(index + 1)") }
-            case .action(let id):
-                if let action = actions.first(where: { $0.id == id }) {
-                    symbol(action.symbol)
-                    Text(action.title).lineLimit(1)
-                    Spacer(minLength: 8)
-                    if let shortcut = action.shortcut { chip(shortcut) }
-                }
-            case .closed(let tab):
-                FaviconImage(tab: tab).opacity(0.7)
-                Text(tab.displayTitle).lineLimit(1)
-                Text(tab.host).foregroundStyle(.secondary).lineLimit(1)
-                Spacer(minLength: 8)
-                chip("Reopen")
-            }
-        }
-        .font(.system(size: 13))
-        .padding(.horizontal, 10)
-        .frame(height: 34)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(.primary.opacity(selected ? 0.08 : 0)))
-        .contentShape(Rectangle())
-    }
-
-    private func symbol(_ name: String) -> some View {
-        Image(systemName: name)
-            .frame(width: 16)
-            .foregroundStyle(.secondary)
-    }
-
-    private func chip(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
-            .frame(height: 18)
-            .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(.primary.opacity(0.06)))
     }
 
     /// "https://www.example.com/a" as "example.com/a".
@@ -293,9 +292,28 @@ struct CommandBar: View {
         return s.hasSuffix("/") ? String(s.dropLast()) : s
     }
 
-    private func commit(_ items: [Item], _ actions: [CommandAction]) {
+    private func moveSelection(_ offset: Int) {
+        guard !items.isEmpty else { return }
+        let old = selection
+        selection = min(max(selection + offset, 0), items.count - 1)
+        guard old != selection else { return }
+        for (row, entry) in rows.enumerated() {
+            guard case .item(_, let index) = entry, index == old || index == selection else { continue }
+            (table.rowView(atRow: row, makeIfNecessary: false) as? CommandRowView)?.highlighted = index == selection
+            if index == selection { table.scrollRowToVisible(row) }
+        }
+    }
+
+    @objc private func rowClicked() {
+        let row = table.clickedRow
+        guard rows.indices.contains(row), case .item(_, let index) = rows[row] else { return }
+        selection = index
+        commit()
+    }
+
+    private func commit() {
         guard items.indices.contains(selection) else {
-            if !query.isEmpty { store.submit(text, mode: mode) }
+            if !query.isEmpty { store.submit(field.stringValue, mode: mode) }
             return
         }
         switch items[selection] {
@@ -320,8 +338,179 @@ struct CommandBar: View {
         }
     }
 
-    private func close() {
-        store.commandBar = nil
+    // MARK: - Keyboard and mouse
+
+    func controlTextDidChange(_ obj: Notification) { reload() }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        switch selector {
+        case #selector(NSResponder.moveDown(_:)):
+            moveSelection(1)
+        case #selector(NSResponder.moveUp(_:)):
+            moveSelection(-1)
+        case #selector(NSResponder.insertNewline(_:)):
+            if NSApp.currentEvent?.modifierFlags.contains(.command) == true, !query.isEmpty {
+                store.search(query, mode: mode)
+            } else {
+                commit()
+            }
+        case #selector(NSResponder.cancelOperation(_:)):
+            store.commandBar = nil
+        default:
+            return false
+        }
+        return true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        // A click outside the card closes the bar.
+        if !card.frame.contains(convert(event.locationInWindow, from: nil)) { store.commandBar = nil }
+    }
+}
+
+/// The bar's solid card: glass behind text this size hurts legibility.
+private final class CommandBarCard: FlippedView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 16
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = false
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        guard let layer else { return }
+        let dark = effectiveAppearance.isDark
+        layer.backgroundColor = Theme.cardFill.cgColor
+        layer.borderWidth = 0.5
+        layer.borderColor = Theme.faint(dark ? 0.14 : 0.1).cgColor
+        layer.shadowColor = NSColor.black.withAlphaComponent(dark ? 0.5 : 0.22).cgColor
+        layer.shadowOpacity = 1
+        layer.shadowRadius = 32
+        layer.shadowOffset = CGSize(width: 0, height: -14)
+    }
+
+    override func mouseDown(with event: NSEvent) {}
+}
+
+private final class CommandRowView: NSTableRowView {
+    private let fill = FillLayer()
+
+    var highlighted = false {
+        didSet { needsDisplay = true; updateLayer() }
+    }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        fill.cornerRadius = 8
+        layer?.addSublayer(fill)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fill.frame = bounds
+        CATransaction.commit()
+    }
+
+    override func updateLayer() {
+        fill.paint(fill: highlighted ? Theme.faint(0.08) : nil, in: effectiveAppearance)
+    }
+
+    override func drawSelection(in dirtyRect: NSRect) {}
+}
+
+/// A result row: icon, title, quieter subtitle and a shortcut chip.
+private final class CommandItemCell: NSTableCellView {
+    private let icon = NSImageView()
+    private let emoji = Label.make(size: 13)
+    private let title = Label.make()
+    private let subtitle = Label.make(color: .secondaryLabelColor)
+    private let chip = Label.make(size: 11, weight: .medium, color: .secondaryLabelColor)
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.contentTintColor = .secondaryLabelColor
+        chip.alignment = .center
+        chip.wantsLayer = true
+        chip.layer?.cornerRadius = 5
+        chip.layer?.cornerCurve = .continuous
+        emoji.alignment = .center
+        for view in [icon, emoji, title, subtitle, chip] as [NSView] { addSubview(view) }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        chip.layer?.backgroundColor = Theme.faint(0.06).cgColor
+    }
+
+    private func set(title text: String, subtitle sub: String?, chip label: String?) {
+        title.stringValue = text
+        subtitle.stringValue = sub ?? ""
+        subtitle.isHidden = sub == nil
+        chip.stringValue = label ?? ""
+        chip.isHidden = label == nil
+        needsLayout = true
+    }
+
+    func set(symbol: String, title: String, subtitle: String? = nil, chip: String? = nil) {
+        icon.image = .symbol(symbol, size: 13, weight: .regular)
+        icon.alphaValue = 1
+        icon.isHidden = false
+        emoji.isHidden = true
+        set(title: title, subtitle: subtitle, chip: chip)
+    }
+
+    func set(image: NSImage, title: String, subtitle: String? = nil, chip: String? = nil, dimImage: Bool = false) {
+        icon.image = image
+        icon.alphaValue = dimImage ? 0.7 : 1
+        icon.isHidden = false
+        emoji.isHidden = true
+        set(title: title, subtitle: subtitle, chip: chip)
+    }
+
+    func set(emoji text: String, title: String, chip: String? = nil) {
+        emoji.stringValue = text
+        emoji.isHidden = false
+        icon.isHidden = true
+        set(title: title, subtitle: nil, chip: chip)
+    }
+
+    override func layout() {
+        super.layout()
+        let midY = bounds.midY
+        icon.frame = NSRect(x: 10, y: midY - 8, width: 16, height: 16)
+        emoji.frame = NSRect(x: 8, y: midY - 9, width: 20, height: 18)
+        let chipWidth: CGFloat = chip.isHidden ? 0 : chip.textWidth + 12
+        chip.frame = NSRect(x: bounds.width - 10 - chipWidth, y: midY - 9, width: chipWidth, height: 18)
+        let textX: CGFloat = 36
+        let available = bounds.width - textX - chipWidth - 18
+        let titleWidth = min(title.textWidth, subtitle.isHidden ? available : available * 0.62)
+        title.frame = NSRect(x: textX, y: midY - 8, width: max(titleWidth, 0), height: 16)
+        let subX = textX + titleWidth + 8
+        subtitle.frame = NSRect(x: subX, y: midY - 8, width: max(textX + available - subX, 0), height: 16)
+    }
+}
+
+private extension NSTableView {
+    /// Height of all rows, for sizing the bar to its results.
+    var intrinsicListHeight: CGFloat {
+        guard numberOfRows > 0 else { return 0 }
+        return rect(ofRow: numberOfRows - 1).maxY
     }
 }
 

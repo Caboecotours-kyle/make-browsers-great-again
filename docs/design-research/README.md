@@ -104,9 +104,9 @@ Built: all 15 items, plus ad and tracker blocking (dealbreaker 1), the
 Vivid / Calm / Neutral color setting, Match Page Colour and the Compact rail.
 
 How some of it differs from the research:
-- **Item 14:** tabs drag as a compact pill, and dropping one on the page
-  opens it in a little window, with a preview while dragging over the
-  page. The pill isn't re-centred under the cursor.
+- **Item 14:** tabs drag as a compact pill centred under the pointer that
+  turns into a little-window preview over the page; dropping it there opens
+  the tab in a little window.
 - **Mini player equaliser:** drawn by Core Animation in the render server,
   so it costs the app no work per frame.
 - **Ad blocker scriptlets:** come from uBlock Origin 1.48, the last release

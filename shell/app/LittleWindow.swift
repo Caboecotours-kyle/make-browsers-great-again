@@ -1,5 +1,4 @@
 import AppKit
-import SwiftUI
 
 /// A tab popped out of the sidebar into a small window of its own, like
 /// Arc's Little Arc. The tab stays in its space; closing the window, "Open
@@ -9,8 +8,7 @@ final class LittleWindow: NSObject, NSWindowDelegate {
     let tabID: UInt64
     let window: NSWindow
     private weak var store: BrowserStore?
-    /// Holds the tab's web view inside the window's card.
-    private let host = NSView()
+    private let content: LittleWindowView
     private var returnToSidebar = false
 
     init(tabID: UInt64, view: MBWebView, store: BrowserStore, near point: NSPoint?) {
@@ -25,30 +23,17 @@ final class LittleWindow: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 360, height: 320)
         window.acceptsMouseMovedEvents = true
+        content = LittleWindowView(tabID: tabID, store: store)
         super.init()
         window.delegate = self
-
-        host.wantsLayer = true
-        host.layer?.masksToBounds = true
-        host.layer?.cornerCurve = .continuous
-        host.layer?.backgroundColor = NSColor.white.cgColor
-        view.removeFromSuperview()
-        view.frame = host.bounds
-        view.autoresizingMask = [.width, .height]
-        view.isHidden = false
-        host.addSubview(view)
-
-        let content = NSHostingView(rootView: LittleWindowView(tabID: tabID, host: host) { [weak self] in
-            self?.putBack()
-        }.environmentObject(store))
-        content.sizingOptions = []
+        content.putBack = { [weak self] in self?.putBack() }
         window.contentView = content
-        host.layer?.cornerRadius = max(window.systemCornerRadius - 6, 6)
+        content.host(view, cornerRadius: max(window.systemCornerRadius - 6, 6))
         place(near: point)
     }
 
     func show() {
-        guard !window.isVisible, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+        guard !window.isVisible, !Motion.reduced else {
             window.makeKeyAndOrderFront(nil)
             return
         }
@@ -72,7 +57,7 @@ final class LittleWindow: NSObject, NSWindowDelegate {
     }
 
     private func fadeOutAndClose() {
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+        guard !Motion.reduced else {
             window.close()
             return
         }
@@ -108,118 +93,90 @@ final class LittleWindow: NSObject, NSWindowDelegate {
     }
 }
 
-private struct LittleWindowView: View {
-    @EnvironmentObject private var store: BrowserStore
-    let tabID: UInt64
-    let host: NSView
-    let putBack: () -> Void
-    @Environment(\.colorScheme) private var colorScheme
-    @AppStorage(TintStyle.defaultsKey) private var style = TintStyle.calm
+/// The little window's content: a bar with the tab's icon, title and site
+/// and "Open in Sidebar", above the page as a card on the space's color.
+private final class LittleWindowView: FlippedView {
+    private let tabID: UInt64
+    private let store: BrowserStore
+    private let backdrop = BackdropView()
+    private let bar = WindowDragView()
+    private let icon = NSImageView()
+    private let title = Label.make(size: 12.5, weight: .medium)
+    private let host = Label.make(size: 12, color: .secondaryLabelColor)
+    private let back = NSButton()
+    private let container = NSView()
+    var putBack: (() -> Void)?
 
-    var body: some View {
-        let tab = store.core.tab(id: tabID)
+    init(tabID: UInt64, store: BrowserStore) {
+        self.tabID = tabID
+        self.store = store
+        super.init(frame: .zero)
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        back.isBordered = false
+        back.image = .symbol("sidebar.left", size: 12)
+        back.imagePosition = .imageLeading
+        back.attributedTitle = NSAttributedString(string: " Open in Sidebar", attributes: [
+            .font: Theme.font(12, .medium), .foregroundColor: NSColor.labelColor,
+        ])
+        back.contentTintColor = .labelColor
+        back.toolTip = "Put this tab back in the main window"
+        back.onAction { [weak self] in self?.putBack?() }
+        container.wantsLayer = true
+        container.layer?.masksToBounds = true
+        container.layer?.cornerCurve = .continuous
+        container.layer?.backgroundColor = NSColor.white.cgColor
+        addSubview(backdrop)
+        addSubview(bar)
+        for view in [icon, title, host, back] as [NSView] { bar.addSubview(view) }
+        addSubview(container)
+        store.observe(self) { [weak self] change in
+            if change == .snapshot { self?.update() }
+        }
+        update()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func host(_ view: NSView, cornerRadius: CGFloat) {
+        container.layer?.cornerRadius = cornerRadius
+        view.removeFromSuperview()
+        view.frame = container.bounds
+        view.autoresizingMask = [.width, .height]
+        view.isHidden = false
+        container.addSubview(view)
+    }
+
+    private func update() {
+        guard let tab = store.core.tab(id: tabID) else { return }
+        icon.image = FaviconCache.shared.image(for: tab)
+        title.stringValue = tab.displayTitle
+        host.stringValue = tab.host
         let space = store.snapshot.spaces.first { s in
             s.today.contains { $0.id == tabID } || s.pinned.contains { $0.id == tabID } || s.favorites.contains { $0.id == tabID }
         }
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                // Room for the traffic lights.
-                Spacer().frame(width: 64)
-                if let tab {
-                    FaviconImage(tab: tab, size: 14)
-                    Text(tab.displayTitle)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .lineLimit(1)
-                    Text(tab.host)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                Button(action: putBack) {
-                    Label("Open in Sidebar", systemImage: "sidebar.left")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.borderless)
-                .help("Put this tab back in the main window")
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 36)
-            .background(WindowDragArea())
-            HostedView(view: host)
-                .padding([.horizontal, .bottom], 6)
-        }
-        .background(
-            LinearGradient(colors: Theme.gradient(for: RGB(space?.color ?? Theme.spaceColors[0]),
-                                                  dark: colorScheme == .dark, active: true, style: style),
-                           startPoint: .top, endPoint: .bottom)
-        )
-        .ignoresSafeArea()
+        let stops = Theme.gradient(for: RGB(space?.color ?? Theme.spaceColors[0]), dark: effectiveAppearance.isDark,
+                                   active: true, style: TintStyle.saved)
+        backdrop.setColors(stops.map(\.cgColor), curve: nil)
+        needsLayout = true
     }
-}
 
-/// Puts an existing AppKit view into SwiftUI's layout.
-private struct HostedView: NSViewRepresentable {
-    let view: NSView
-
-    func makeNSView(context: Context) -> NSView { view }
-    func updateNSView(_ nsView: NSView, context: Context) {}
-}
-
-/// Shown over the page while a sidebar tab is dragged onto it: where the
-/// little window will appear.
-struct LittleWindowDropPreview: View {
-    let tab: TabInfo
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        let dark = colorScheme == .dark
-        ZStack {
-            Color.black.opacity(0.18)
-            VStack(spacing: 0) {
-                HStack(spacing: 6) {
-                    ForEach(0..<3, id: \.self) { _ in Circle().fill(.primary.opacity(0.2)).frame(width: 8, height: 8) }
-                    Spacer().frame(width: 6)
-                    FaviconImage(tab: tab, size: 13)
-                    Text(tab.displayTitle).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 12)
-                .frame(height: 32)
-                VStack(spacing: 10) {
-                    FaviconImage(tab: tab, size: 34)
-                    Text("Drop to open in a little window")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(dark ? Color(white: 0.12) : .white))
-                .padding([.horizontal, .bottom], 6)
-            }
-            .frame(width: 300, height: 360)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(dark ? Color(white: 0.2) : Color(white: 0.94)))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.primary.opacity(0.12), lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.3), radius: 24, y: 10)
-        }
-        .allowsHitTesting(false)
-        .transition(.opacity.combined(with: .scale(scale: 0.97)))
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        update()
     }
-}
 
-/// What a tab looks like while dragged: a compact pill like the selected row.
-struct TabDragPreview: View {
-    let tab: TabInfo
-
-    var body: some View {
-        HStack(spacing: 8) {
-            FaviconImage(tab: tab)
-            Text(tab.displayTitle)
-                .font(.system(size: 13, weight: .medium))
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 10)
-        .frame(width: 220, height: 30, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.background))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.primary.opacity(0.12), lineWidth: 0.5))
+    override func layout() {
+        super.layout()
+        backdrop.frame = bounds
+        bar.frame = NSRect(x: 0, y: 0, width: bounds.width, height: 36)
+        // Room for the traffic lights.
+        icon.frame = NSRect(x: 74, y: 11, width: 14, height: 14)
+        let backWidth = back.intrinsicContentSize.width + 8
+        back.frame = NSRect(x: bounds.width - 10 - backWidth, y: 8, width: backWidth, height: 20)
+        let available = back.frame.minX - 96 - 8
+        let titleWidth = min(title.textWidth, available * 0.65)
+        title.frame = NSRect(x: 96, y: 10, width: max(titleWidth, 0), height: 16)
+        host.frame = NSRect(x: 96 + titleWidth + 8, y: 10, width: max(available - titleWidth - 8, 0), height: 16)
+        container.frame = NSRect(x: 6, y: 36, width: max(bounds.width - 12, 0), height: max(bounds.height - 42, 0))
     }
 }

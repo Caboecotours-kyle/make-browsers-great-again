@@ -1,449 +1,749 @@
-import SwiftUI
+import AppKit
 
-struct Sidebar: View {
-    @EnvironmentObject private var store: BrowserStore
+/// The full sidebar: toolbar, address field, favorites, the active space's
+/// list (swipeable between spaces), the mini player and the bottom bar.
+/// One instance moves between the window and the floating peek card.
+@MainActor
+final class SidebarView: FlippedView {
+    private let store: BrowserStore
+    private let toolbar: SidebarToolbarView
+    private let address: AddressPillView
+    private let favorites: FavoritesGridView
+    private let pager: SpacePagerView
+    private let player: MiniPlayerView
+    private let bottom: SidebarBottomBar
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SidebarToolbar()
-            AddressPill()
-            FavoritesGrid(space: store.activeSpace)
-            SpacePager(pager: store.pager)
-            VStack(spacing: 0) {
-                if let media = store.mediaTab {
-                    MiniPlayer(tab: media.tab, space: media.space)
-                }
-            }
-            .animation(Motion.settle, value: store.mediaTab?.tab.id)
-            SidebarBottomBar()
+    init(store: BrowserStore) {
+        self.store = store
+        toolbar = SidebarToolbarView(store: store)
+        address = AddressPillView(store: store)
+        favorites = FavoritesGridView(store: store)
+        pager = SpacePagerView(store: store)
+        player = MiniPlayerView(store: store)
+        bottom = SidebarBottomBar(store: store)
+        super.init(frame: .zero)
+        for view in [toolbar, address, favorites, pager, player, bottom] as [NSView] { addSubview(view) }
+        player.isHidden = store.mediaTab == nil
+        store.observe(self) { [weak self] change in self?.handle(change) }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    private func handle(_ change: StoreChange) {
+        switch change {
+        case .snapshot:
+            favorites.update()
+            pager.update(animation: store.snapshotAnimation)
+            bottom.update()
+            address.update()
+            updatePlayer()
+            needsLayout = true
+        case .nav:
+            toolbar.update()
+            address.update()
+        case .blocked:
+            address.update()
+        case .media:
+            updatePlayer()
+            pager.refreshDecorations()
+        case .cleanup, .renaming:
+            pager.refreshDecorations()
+        case .drag:
+            // Empty favorites open a drop target while something is dragged.
+            favorites.update()
+            pager.refreshDecorations()
+            needsLayout = true
+            Motion.animate(Motion.quick) { layoutSubtreeIfNeeded() }
+        default:
+            break
         }
-        .padding(.horizontal, 10)
-        .padding(.bottom, 8)
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
-            store.pager.sidebarFrame = frame
+    }
+
+    private func updatePlayer() {
+        let media = store.mediaTab
+        player.update(media)
+        let visible = media != nil
+        guard visible == player.isHidden else { return }
+        // The player rises from the bottom bar.
+        player.isHidden = false
+        player.alphaValue = visible ? 0 : 1
+        Motion.animate(Motion.settle) {
+            player.animator().alphaValue = visible ? 1 : 0
+            needsLayout = true
+            layoutSubtreeIfNeeded()
+        } completion: { [weak self] in
+            guard let self else { return }
+            player.isHidden = store.mediaTab == nil
+            needsLayout = true
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        let width = bounds.width - 20
+        var y: CGFloat = 6
+        toolbar.frame = NSRect(x: 10, y: y, width: width, height: 30)
+        y += 30 + 10
+        address.frame = NSRect(x: 10, y: y, width: width, height: 34)
+        y += 34 + 10
+        let favoritesHeight = favorites.preferredHeight(width: width)
+        favorites.frame = NSRect(x: 10, y: y, width: width, height: favoritesHeight)
+        if favoritesHeight > 0 { y += favoritesHeight + 10 }
+        let bottomY = bounds.height - 8 - 28
+        bottom.frame = NSRect(x: 10, y: bottomY, width: width, height: 28)
+        var listBottom = bottomY - 10
+        if store.mediaTab != nil || !player.isHidden {
+            player.frame = NSRect(x: 10, y: listBottom - 46, width: width, height: 46)
+            listBottom -= 46 + 10
+        }
+        pager.frame = NSRect(x: 10, y: y, width: width, height: max(listBottom - y, 0))
+        // Two-finger swipes anywhere in the sidebar switch spaces.
+        if let content = window?.contentView {
+            store.pager.sidebarFrame = convert(bounds, to: content)
         }
     }
 }
 
-struct SidebarIconButton: View {
-    let systemName: String
-    var disabled = false
-    let action: () -> Void
-    @State private var hovering = false
-    @Environment(\.colorScheme) private var colorScheme
+// MARK: - Toolbar
 
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 13, weight: .medium))
-                .frame(width: 28, height: 24)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(hovering && !disabled ? Theme.hoverFill(dark: colorScheme == .dark) : .clear)
-                )
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .opacity(disabled ? 0.35 : 0.8)
-        .disabled(disabled)
-        .onHover { hovering = $0 }
-        .animation(Motion.quick, value: hovering)
+private final class SidebarToolbarView: WindowDragView {
+    private let store: BrowserStore
+    private let toggle: SymbolButton
+    private let back: SymbolButton
+    private let forward: SymbolButton
+    private let reload: SymbolButton
+
+    init(store: BrowserStore) {
+        self.store = store
+        toggle = SymbolButton("sidebar.left") { store.toggleSidebar() }
+        back = SymbolButton("arrow.left") { store.goBack() }
+        forward = SymbolButton("arrow.right") { store.goForward() }
+        reload = SymbolButton("arrow.clockwise") { store.reloadOrStop() }
+        super.init(frame: .zero)
+        toggle.toolTip = "Focus Mode  ⌘S"
+        for view in [toggle, back, forward, reload] { addSubview(view) }
+        update()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func update() {
+        back.isEnabled = store.nav.canGoBack
+        forward.isEnabled = store.nav.canGoForward
+        reload.setSymbol(store.nav.isLoading ? "xmark" : "arrow.clockwise")
+        reload.isEnabled = store.visibleTabID != nil
+    }
+
+    override func layout() {
+        super.layout()
+        // Room for the window's traffic lights.
+        toggle.frame = NSRect(x: 66, y: 3, width: 28, height: 24)
+        reload.frame = NSRect(x: bounds.width - 28, y: 3, width: 28, height: 24)
+        forward.frame = NSRect(x: bounds.width - 58, y: 3, width: 28, height: 24)
+        back.frame = NSRect(x: bounds.width - 88, y: 3, width: 28, height: 24)
     }
 }
 
-private struct SidebarToolbar: View {
-    @EnvironmentObject private var store: BrowserStore
+// MARK: - Address field
 
-    var body: some View {
-        HStack(spacing: 2) {
-            // Room for the window's traffic lights.
-            Spacer().frame(width: 66)
-            SidebarIconButton(systemName: "sidebar.left") { store.toggleSidebar() }
-            Spacer(minLength: 0)
-            SidebarIconButton(systemName: "arrow.left", disabled: !store.nav.canGoBack) { store.goBack() }
-            SidebarIconButton(systemName: "arrow.right", disabled: !store.nav.canGoForward) { store.goForward() }
-            SidebarIconButton(systemName: store.nav.isLoading ? "xmark" : "arrow.clockwise",
-                              disabled: store.visibleTabID == nil) { store.reloadOrStop() }
-        }
-        .frame(height: 30)
-        .padding(.top, 6)
-        .background(WindowDragArea())
+/// The visible page's site; click to edit the address or search. Also shows
+/// loading and how many ads and trackers were blocked.
+private final class AddressPillView: HoverView {
+    private let store: BrowserStore
+    private let fill = FillLayer()
+    private let lock = NSImageView()
+    private let host = Label.make()
+    private let spinner = NSProgressIndicator()
+    private let shield = NSImageView()
+    private let blocked = Label.make(size: 11, weight: .medium)
+    private var shownCount = 0
+
+    init(store: BrowserStore) {
+        self.store = store
+        super.init(frame: .zero)
+        fill.cornerRadius = 10
+        layer?.addSublayer(fill)
+        lock.image = .symbol("lock.fill", size: 10, weight: .regular)
+        lock.contentTintColor = .labelColor
+        lock.alphaValue = 0.5
+        spinner.style = .spinning
+        spinner.controlSize = .mini
+        spinner.isDisplayedWhenStopped = false
+        shield.image = .symbol("shield.lefthalf.filled", size: 10, weight: .regular)
+        shield.contentTintColor = .labelColor
+        shield.alphaValue = 0.5
+        blocked.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        blocked.alphaValue = 0.5
+        blocked.wantsLayer = true
+        for view in [lock, host, spinner, shield, blocked] as [NSView] { addSubview(view) }
+        update()
     }
-}
 
-private struct AddressPill: View {
-    @EnvironmentObject private var store: BrowserStore
-    @State private var hovering = false
-    @Environment(\.colorScheme) private var colorScheme
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    var body: some View {
+    func update() {
         let tab = store.visibleTab
-        Button { store.commandBar = tab == nil ? .newTab : .editCurrent } label: {
-            HStack(spacing: 6) {
-                if let tab, tab.url.hasPrefix("https://") {
-                    Image(systemName: "lock.fill").font(.system(size: 10)).opacity(0.5)
-                }
-                Text(tab.map(\.host) ?? "Search or Enter URL…")
-                    .font(.system(size: 13))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .opacity(tab == nil ? 0.5 : 0.85)
-                Spacer(minLength: 0)
-                if store.nav.isLoading {
-                    ProgressView().controlSize(.mini)
-                }
-                if tab != nil, case let blocked = store.visibleBlockedCount, blocked > 0 {
-                    // What the blocker kept off this page, quietly.
-                    HStack(spacing: 3) {
-                        Image(systemName: "shield.lefthalf.filled").font(.system(size: 10))
-                        Text("\(blocked)").font(.system(size: 11, weight: .medium).monospacedDigit())
-                            .contentTransition(.numericText(value: Double(blocked)))
-                    }
-                    .opacity(0.5)
-                    .help("\(blocked) ads and trackers blocked on this page")
-                }
+        lock.isHidden = !(tab?.url.hasPrefix("https://") ?? false)
+        host.stringValue = tab?.host ?? "Search or Enter URL…"
+        host.alphaValue = tab == nil ? 0.5 : 0.85
+        if store.nav.isLoading { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+        let count = tab == nil ? 0 : store.visibleBlockedCount
+        shield.isHidden = count == 0
+        blocked.isHidden = count == 0
+        if count != shownCount {
+            // The count rolls up as more is blocked.
+            if count > shownCount, !Motion.reduced, let layer = blocked.layer {
+                let roll = CATransition()
+                roll.type = .push
+                roll.subtype = .fromTop
+                roll.duration = Motion.quick.duration
+                roll.timingFunction = Motion.quick.timing
+                layer.add(roll, forKey: "roll")
             }
-            .padding(.horizontal, 10)
-            .frame(height: 34)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Theme.controlFill(dark: colorScheme == .dark, hovering: hovering))
-            )
-            .contentShape(Rectangle())
+            shownCount = count
+            blocked.stringValue = "\(count)"
+            toolTip = count > 0 ? "\(count) ads and trackers blocked on this page" : nil
         }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .animation(Motion.quick, value: hovering)
+        needsLayout = true
     }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fill.frame = bounds
+        CATransaction.commit()
+        var x: CGFloat = 10
+        if !lock.isHidden {
+            lock.frame = NSRect(x: x, y: bounds.midY - 6, width: 10, height: 12)
+            x += 16
+        }
+        var trailing = bounds.width - 10
+        if !blocked.isHidden {
+            let width = blocked.textWidth
+            blocked.frame = NSRect(x: trailing - width, y: bounds.midY - 7, width: width, height: 14)
+            shield.frame = NSRect(x: trailing - width - 14, y: bounds.midY - 6, width: 11, height: 12)
+            trailing -= width + 20
+        }
+        if store.nav.isLoading {
+            spinner.frame = NSRect(x: trailing - 12, y: bounds.midY - 6, width: 12, height: 12)
+            trailing -= 18
+        }
+        host.frame = NSRect(x: x, y: bounds.midY - 8, width: max(trailing - x, 0), height: 16)
+    }
+
+    override func updateLayer() {
+        fill.paint(fill: hovering ? Theme.controlHoverFill : Theme.controlFill, in: effectiveAppearance)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        store.commandBar = store.visibleTab == nil ? .newTab : .editCurrent
+    }
+
+    override func mouseDown(with event: NSEvent) {}
 }
 
-/// Favorites belong to the profile, so every space using it shows the same grid.
-private struct FavoritesGrid: View {
-    @EnvironmentObject private var store: BrowserStore
-    let space: SpaceInfo
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
+// MARK: - Favorites
 
-    var body: some View {
+/// Favorites belong to the profile, so every space using it shows the same
+/// grid: four columns of tiles, reorderable by dragging.
+private final class FavoritesGridView: FlippedView {
+    private let store: BrowserStore
+    private var tiles: [FavoriteTileView] = []
+    private let caret = CALayer()
+    private let hint = DropHintCellView()
+    private var dropIndex: Int?
+    private let columns = 4
+    private let tileHeight: CGFloat = 42
+    private let spacing: CGFloat = 8
+
+    init(store: BrowserStore) {
+        self.store = store
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.masksToBounds = false
+        caret.cornerRadius = 1.5
+        caret.isHidden = true
+        layer?.addSublayer(caret)
+        hint.configure("Drop to add to Favorites", visible: true)
+        addSubview(hint)
+        registerForDraggedTypes([.sidebarItem, .URL])
+        update()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    private var space: SpaceInfo { store.activeSpace }
+
+    func preferredHeight(width: CGFloat) -> CGFloat {
+        let count = space.favorites.count
+        if count == 0 { return store.isDragging ? 34 : 0 }
+        let rowCount = (count + columns - 1) / columns
+        return CGFloat(rowCount) * tileHeight + CGFloat(rowCount - 1) * spacing
+    }
+
+    func update() {
+        let favorites = space.favorites
+        while tiles.count > favorites.count { tiles.removeLast().removeFromSuperview() }
+        while tiles.count < favorites.count {
+            let tile = FavoriteTileView(store: store)
+            tiles.append(tile)
+            addSubview(tile)
+        }
+        for (tile, tab) in zip(tiles, favorites) { tile.configure(tab, space: space) }
+        hint.isHidden = !(favorites.isEmpty && store.isDragging)
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        hint.frame = bounds
+        let width = (bounds.width - spacing * CGFloat(columns - 1)) / CGFloat(columns)
+        for (i, tile) in tiles.enumerated() {
+            let row = i / columns, column = i % columns
+            tile.frame = NSRect(x: CGFloat(column) * (width + spacing), y: CGFloat(row) * (tileHeight + spacing),
+                                width: width, height: tileHeight)
+        }
+    }
+
+    // Dropping a tab here adds it as a favorite at the caret.
+
+    private func insertionIndex(at point: NSPoint) -> Int {
+        guard !tiles.isEmpty else { return 0 }
+        for (i, tile) in tiles.enumerated() where point.y <= tile.frame.maxY + spacing / 2 {
+            if point.x < tile.frame.midX { return i }
+            if i % columns == columns - 1 || i == tiles.count - 1 { return i + 1 }
+        }
+        return tiles.count
+    }
+
+    private func showCaret(at index: Int?) {
+        guard index != dropIndex else { return }
+        dropIndex = index
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        guard let index, !tiles.isEmpty else {
+            caret.isHidden = true
+            return
+        }
+        let anchor = index < tiles.count ? tiles[index].frame : tiles[index - 1].frame
+        let x = index < tiles.count ? anchor.minX - spacing / 2 : anchor.maxX + spacing / 2
+        caret.backgroundColor = NSColor.controlAccentColor.cgColor
+        caret.frame = NSRect(x: x - 1.5, y: anchor.minY + 6, width: 3, height: anchor.height - 12)
+        caret.isHidden = false
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { draggingUpdated(sender) }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        showCaret(at: insertionIndex(at: convert(sender.draggingLocation, from: nil)))
+        return sender.draggingPasteboard.string(forType: .sidebarItem) != nil ? .move : .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) { showCaret(at: nil) }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let index = insertionIndex(at: convert(sender.draggingLocation, from: nil))
+        showCaret(at: nil)
         let target = DropTarget.favorites(profileId: space.profileId)
-        if space.favorites.isEmpty {
-            // Invisible until a tab is dragged over it.
-            DropZone(key: "fav-empty-\(space.profileId)", label: "Drop to add to Favorites",
-                     target: target, index: 0)
-        } else {
-            LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(Array(space.favorites.enumerated()), id: \.element.id) { index, tab in
-                    FavoriteTile(tab: tab, space: space, index: index)
-                }
-            }
+        if let id = sender.draggingPasteboard.string(forType: .sidebarItem).flatMap(UInt64.init) {
+            guard store.core.tab(id: id) != nil else { return false }
+            store.drop(id, on: target, index: index)
+            return true
         }
+        guard let url = sender.draggingPasteboard.string(forType: .URL) else { return false }
+        store.dropURL(url, on: target, index: index)
+        return true
     }
 }
 
-private struct FavoriteTile: View {
-    @EnvironmentObject private var store: BrowserStore
-    let tab: TabInfo
-    let space: SpaceInfo
-    let index: Int
-    @State private var hovering = false
-    @State private var width: CGFloat = 50
-    @Environment(\.colorScheme) private var colorScheme
+/// A favorite: its icon on a tile that, when selected, lights up in the
+/// site's own color, as in Dia.
+private final class FavoriteTileView: HoverView, NSDraggingSource {
+    private let store: BrowserStore
+    private let fill = FillLayer()
+    private let brand = FillLayer()
+    private let icon = NSImageView()
+    private var tab: TabInfo?
+    private var space: SpaceInfo?
+    private var downEvent: NSEvent?
+    private var dragging = false
 
-    var body: some View {
+    init(store: BrowserStore) {
+        self.store = store
+        super.init(frame: .zero)
+        fill.cornerRadius = 10
+        brand.cornerRadius = 10
+        layer?.addSublayer(fill)
+        layer?.addSublayer(brand)
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.wantsLayer = true
+        icon.layer?.cornerRadius = 3.6
+        icon.layer?.cornerCurve = .continuous
+        icon.layer?.masksToBounds = true
+        icon.contentTintColor = .secondaryLabelColor
+        addSubview(icon)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func configure(_ tab: TabInfo, space: SpaceInfo) {
+        self.tab = tab
+        self.space = space
+        icon.image = FaviconCache.shared.image(for: tab)
+        icon.alphaValue = tab.live || space.activeTab == tab.id ? 1 : 0.6
+        toolTip = tab.displayTitle
+        needsDisplay = true
+        updateLayer()
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fill.frame = bounds
+        brand.frame = bounds
+        CATransaction.commit()
+        icon.frame = NSRect(x: bounds.midX - 9, y: bounds.midY - 9, width: 18, height: 18)
+    }
+
+    override func updateLayer() {
+        guard let tab, let space else { return }
         let active = space.activeTab == tab.id
-        let dark = colorScheme == .dark
-        // The selected favorite lights up in its site's color, as in Dia.
-        let brand = active ? tab.faviconPath.flatMap { FaviconCache.shared.brandColor(atPath: $0) } : nil
-        let key = "fav-\(tab.id)"
-        let indicator = store.dropIndicator?.key == key ? store.dropIndicator?.edge : nil
-        FaviconImage(tab: tab, size: 18)
-            .opacity(tab.live || active ? 1 : 0.6)
-            .frame(maxWidth: .infinity)
-            .frame(height: 42)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(active ? Theme.selectedFill(dark: dark) : Theme.controlFill(dark: dark, hovering: hovering))
-                    .overlay {
-                        if let brand {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(brand.color.opacity(dark ? 0.32 : 0.2))
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(brand.color.opacity(dark ? 0.6 : 0.45), lineWidth: 1)
-                        }
-                    }
-                    .shadow(color: .black.opacity(active ? (dark ? 0.3 : 0.09) : 0), radius: 1.5, y: 0.5)
-            )
-            .overlay(alignment: indicator == .before ? .leading : .trailing) {
-                if indicator != nil {
-                    Capsule().fill(Color.accentColor).frame(width: 3).padding(.vertical, 6).offset(x: indicator == .before ? -5 : 5)
-                }
-            }
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-            .contentShape(Rectangle())
-            // A plain tap gesture loses quick clicks to the drag recognizer.
-            .simultaneousGesture(TapGesture().onEnded { store.select(tab.id, in: space.id) })
-            .onHover { hovering = $0 }
-            .animation(Motion.quick, value: hovering)
-            .help(tab.displayTitle)
-            .onDrag({ store.dragProvider(for: tab.id, url: tab.url) }, preview: { TabDragPreview(tab: tab) })
-            .onDrop(of: [.sidebarItem, .url], delegate: ItemDropDelegate(
-                store: store, key: key, target: .favorites(profileId: space.profileId),
-                index: index, folderID: nil, horizontal: true, length: width))
-            .contextMenu { TabMenu(tab: tab, space: space) }
+        fill.paint(fill: active ? Theme.selectedFill : hovering ? Theme.controlHoverFill : Theme.controlFill,
+                   shadow: active ? Theme.selectedShadow : nil, in: effectiveAppearance)
+        let color = active ? tab.faviconPath.flatMap { FaviconCache.shared.brandColor(atPath: $0) } : nil
+        let dark = effectiveAppearance.isDark
+        brand.paint(fill: color.map { $0.nsColor.withAlphaComponent(dark ? 0.32 : 0.2) },
+                    border: color.map { $0.nsColor.withAlphaComponent(dark ? 0.6 : 0.45) }, in: effectiveAppearance)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        downEvent = event
+        dragging = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard !dragging, let downEvent, let tab else { return }
+        let start = downEvent.locationInWindow, now = event.locationInWindow
+        guard hypot(now.x - start.x, now.y - start.y) > 3 else { return }
+        dragging = true
+        let item = NSPasteboardItem()
+        item.setString(String(tab.id), forType: .sidebarItem)
+        item.setString(tab.url, forType: .URL)
+        item.setString(tab.url, forType: .string)
+        let image = DragImages.pill(for: tab)
+        let point = convert(event.locationInWindow, from: nil)
+        let dragItem = NSDraggingItem(pasteboardWriter: item)
+        dragItem.setDraggingFrame(NSRect(x: point.x - image.size.width / 2, y: point.y - image.size.height / 2,
+                                         width: image.size.width, height: image.size.height), contents: image)
+        store.beginDrag(tab.id)
+        let session = beginDraggingSession(with: [dragItem], event: downEvent, source: self)
+        session.animatesToStartingPositionsOnCancelOrFail = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer { downEvent = nil }
+        guard !dragging, let tab, let space, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        store.select(tab.id, in: space.id)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let tab, let space else { return nil }
+        return Menus.tab(tab, in: space, store: store)
+    }
+
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        context == .withinApplication ? [.move, .copy] : .copy
+    }
+
+    func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
+        store.dragMoved(to: screenPoint)
+    }
+
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        store.endDrag(at: screenPoint, accepted: operation != [])
     }
 }
 
-/// Swipeable pages, one per space. Only the pages next to the current
-/// position are built.
-private struct SpacePager: View {
-    @EnvironmentObject private var store: BrowserStore
-    @ObservedObject var pager: PagerModel
-    private let gap: CGFloat = 24
+// MARK: - Space pager
 
-    var body: some View {
-        GeometryReader { geo in
-            let stride = geo.size.width + gap
-            ZStack(alignment: .topLeading) {
-                ForEach(Array(store.snapshot.spaces.enumerated()), id: \.element.id) { index, space in
-                    let offset = CGFloat(index) - pager.position
-                    if abs(offset) < 1.2 {
-                        SpacePage(space: space)
-                            .frame(width: geo.size.width, height: geo.size.height)
-                            .offset(x: offset * stride)
-                    }
-                }
-            }
-            .onAppear { pager.pageWidth = stride }
-            .onChange(of: geo.size.width) { pager.pageWidth = stride }
-        }
+/// The spaces' lists side by side, offset by the pager's position, so a
+/// two-finger swipe slides them with the fingers. Only the pages near the
+/// current position exist.
+private final class SpacePagerView: FlippedView {
+    private let store: BrowserStore
+    private var pages: [UInt64: SpacePageView] = [:]
+    private let gap: CGFloat = 24
+    /// Pages also kept while animating from this position.
+    private var animatingFrom: CGFloat?
+
+    init(store: BrowserStore) {
+        self.store = store
+        super.init(frame: .zero)
+        wantsLayer = true
         // Neighbouring spaces wait just past the edge; never show them over
         // the page.
-        .clipped()
+        layer?.masksToBounds = true
+        store.pager.observe(self) { [weak self] animated in self?.positionChanged(animated: animated) }
+        update(animation: nil)
     }
-}
 
-private struct SpacePage: View {
-    @EnvironmentObject private var store: BrowserStore
-    let space: SpaceInfo
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            SpaceHeader(space: space)
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(space.pinned, id: \.id) { row in
-                        if let tab = row.tab {
-                            TabRow(tab: tab, space: space, depth: Int(row.depth), pinned: true,
-                                   target: .pinned(spaceId: space.id, folderId: row.parentId),
-                                   index: Int(row.index))
-                        } else {
-                            FolderRow(row: row, space: space)
-                        }
-                    }
-                    if space.pinned.isEmpty {
-                        DropZone(key: "pin-empty-\(space.id)", label: "Drop to pin",
-                                 target: .pinned(spaceId: space.id, folderId: nil), index: 0)
-                    }
-                    TodayDivider(space: space)
-                    if space.id == store.activeSpace.id, let count = store.cleanupOffer {
-                        CleanupCard(count: count)
-                    }
-                    NewTabRow(space: space)
-                    LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(Array(space.today.enumerated()), id: \.element.id) { index, tab in
-                            TabRow(tab: tab, space: space, depth: 0, pinned: false,
-                                   target: .today(spaceId: space.id), index: index)
-                                .transition(.archive)
-                        }
-                    }
+    private var stride: CGFloat { bounds.width + gap }
+
+    func update(animation: Motion.Curve?) {
+        let spaces = store.snapshot.spaces
+        for (id, page) in pages where !spaces.contains(where: { $0.id == id }) {
+            page.removeFromSuperview()
+            pages[id] = nil
+        }
+        for space in spaces {
+            pages[space.id]?.update(space, animation: animation)
+        }
+        ensurePages()
+        layoutPages()
+    }
+
+    func refreshDecorations() {
+        for page in pages.values { page.refreshDecorations() }
+    }
+
+    private func wanted(_ index: Int) -> Bool {
+        let position = store.pager.position
+        if abs(CGFloat(index) - position) < 1.2 { return true }
+        if let from = animatingFrom {
+            let low = min(from, position) - 1.2, high = max(from, position) + 1.2
+            return CGFloat(index) > low && CGFloat(index) < high
+        }
+        return false
+    }
+
+    private func ensurePages() {
+        for (index, space) in store.snapshot.spaces.enumerated() {
+            if wanted(index) {
+                if pages[space.id] == nil {
+                    let page = SpacePageView(space: space, store: store)
+                    pages[space.id] = page
+                    addSubview(page)
                 }
-                .padding(.bottom, 12)
+            } else if let page = pages.removeValue(forKey: space.id) {
+                page.removeFromSuperview()
             }
         }
     }
-}
 
-private struct SpaceHeader: View {
-    @EnvironmentObject private var store: BrowserStore
-    let space: SpaceInfo
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(space.icon.isEmpty ? "•" : space.icon).font(.system(size: 14))
-            Text(space.name)
-                .font(.system(size: 13, weight: .semibold))
-                .lineLimit(1)
-                .opacity(0.8)
-            Spacer(minLength: 0)
-            if store.snapshot.profiles.count > 1 {
-                Text(store.profileName(space.profileId))
-                    .font(.system(size: 10, weight: .medium))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(.primary.opacity(0.08)))
-                    .opacity(0.8)
-            }
+    private func layoutPages() {
+        let position = store.pager.position
+        for (index, space) in store.snapshot.spaces.enumerated() {
+            pages[space.id]?.frame = NSRect(x: (CGFloat(index) - position) * stride, y: 0,
+                                            width: bounds.width, height: bounds.height)
         }
-        .padding(.horizontal, 6)
-        .frame(height: 24)
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { store.spaceEditor = SpaceEditorRequest(spaceID: space.id) }
-        .contextMenu {
-            Button("Edit Space…") { store.spaceEditor = SpaceEditorRequest(spaceID: space.id) }
-            Button("New Folder") { store.newFolder(in: space.id) }
-            Menu("Profile") {
-                ForEach(store.snapshot.profiles, id: \.id) { profile in
-                    Toggle(profile.name, isOn: Binding(
-                        get: { space.profileId == profile.id },
-                        set: { if $0 { store.setProfile(profile.id, for: space.id) } }))
+    }
+
+    private func positionChanged(animated: Bool) {
+        if animated {
+            animatingFrom = currentVisualPosition()
+            ensurePages()
+            Motion.animate(Motion.glide) {
+                let position = store.pager.position
+                for (index, space) in store.snapshot.spaces.enumerated() {
+                    pages[space.id]?.animator().frame = NSRect(x: (CGFloat(index) - position) * stride, y: 0,
+                                                               width: bounds.width, height: bounds.height)
                 }
+            } completion: { [weak self] in
+                self?.animatingFrom = nil
+                self?.ensurePages()
             }
-            Divider()
-            Button("Delete Space", role: .destructive) { store.deleteSpace(space.id) }
-                .disabled(store.snapshot.spaces.count <= 1)
+        } else {
+            ensurePages()
+            layoutPages()
+        }
+    }
+
+    /// Where the pages are drawn right now (mid-animation included).
+    private func currentVisualPosition() -> CGFloat {
+        for (index, space) in store.snapshot.spaces.enumerated() {
+            if let page = pages[space.id] {
+                let x = page.layer?.presentation()?.frame.minX ?? page.frame.minX
+                return CGFloat(index) - x / max(stride, 1)
+            }
+        }
+        return store.pager.position
+    }
+
+    override func layout() {
+        super.layout()
+        store.pager.pageWidth = stride
+        layoutPages()
+    }
+}
+
+// MARK: - Bottom bar
+
+/// Downloads, the space switcher (only once there is a second space) and
+/// the + menu.
+private final class SidebarBottomBar: FlippedView {
+    private let store: BrowserStore
+    private let downloads: SymbolButton
+    private let add: SymbolButton
+    private var dots: [SpaceDotView] = []
+
+    init(store: BrowserStore) {
+        self.store = store
+        downloads = SymbolButton("arrow.down.circle") {
+            if let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
+                NSWorkspace.shared.open(folder)
+            }
+        }
+        add = SymbolButton("plus")
+        super.init(frame: .zero)
+        downloads.toolTip = "Downloads"
+        add.action = { [weak add] in
+            guard let add else { return }
+            Menus.newItem(store: store).popUp(positioning: nil, at: NSPoint(x: 0, y: add.bounds.height + 4), in: add)
+        }
+        addSubview(downloads)
+        addSubview(add)
+        update()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func update() {
+        let spaces = store.snapshot.spaces
+        // Most people use one space (5.5% of Arc's daily users used several),
+        // so the switcher only appears once there is a second.
+        let shown = spaces.count > 1 ? spaces : []
+        while dots.count > shown.count { dots.removeLast().removeFromSuperview() }
+        while dots.count < shown.count {
+            let dot = SpaceDotView(store: store)
+            dots.append(dot)
+            addSubview(dot)
+        }
+        for (dot, space) in zip(dots, shown) { dot.configure(space, active: space.id == store.snapshot.activeSpace) }
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        downloads.frame = NSRect(x: 0, y: 2, width: 28, height: 24)
+        add.frame = NSRect(x: bounds.width - 28, y: 2, width: 28, height: 24)
+        guard !dots.isEmpty else { return }
+        // Icons shrink, then turn into dots, so many spaces never make the
+        // bar (and with it the sidebar) wider.
+        let available = bounds.width - 64
+        let size = min(24, (available - CGFloat(dots.count - 1) * 2) / CGFloat(dots.count))
+        let icons = size >= 16
+        let width = CGFloat(dots.count) * size + CGFloat(dots.count - 1) * 2
+        var x = (bounds.width - width) / 2
+        for dot in dots {
+            dot.showsIcon = icons
+            dot.frame = NSRect(x: x, y: 2, width: max(size, 6), height: 24)
+            x += size + 2
         }
     }
 }
 
-private struct TodayDivider: View {
-    @EnvironmentObject private var store: BrowserStore
-    let space: SpaceInfo
-
-    var body: some View {
-        let key = "today-top-\(space.id)"
-        HStack(spacing: 8) {
-            Rectangle().fill(.primary.opacity(0.12)).frame(height: 1)
-            if !space.today.isEmpty {
-                Button { store.clearToday(space.id) } label: {
-                    Label("Clear", systemImage: "arrow.down")
-                        .font(.system(size: 11, weight: .medium))
-                        .labelStyle(.titleAndIcon)
-                        .opacity(0.55)
-                }
-                .buttonStyle(.plain)
-                .help("Archive all Today tabs in this space")
-            }
-        }
-        .padding(.horizontal, 6)
-        .frame(height: 22)
-        .background(store.dropIndicator?.key == key ? Color.accentColor.opacity(0.15) : .clear)
-        .onDrop(of: [.sidebarItem, .url], delegate: ItemDropDelegate(
-            store: store, key: key, target: .today(spaceId: space.id), index: 0,
-            folderID: nil, fixedEdge: .before))
-    }
-}
-
-private struct NewTabRow: View {
-    @EnvironmentObject private var store: BrowserStore
-    let space: SpaceInfo
-    @State private var hovering = false
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "plus").font(.system(size: 12, weight: .medium)).frame(width: 16)
-            Text("New Tab").font(.system(size: 13))
-            Spacer()
-        }
-        .opacity(0.6)
-        .padding(.horizontal, 10)
-        .frame(height: 30)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(hovering ? Theme.hoverFill(dark: colorScheme == .dark) : .clear))
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .animation(Motion.quick, value: hovering)
-        .onTapGesture {
-            store.activateSpace(space.id)
-            store.commandBar = .newTab
-        }
-    }
-}
-
-private struct SidebarBottomBar: View {
-    @EnvironmentObject private var store: BrowserStore
-
-    var body: some View {
-        HStack(spacing: 4) {
-            SidebarIconButton(systemName: "arrow.down.circle") {
-                if let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
-                    NSWorkspace.shared.open(downloads)
-                }
-            }
-            .help("Downloads")
-            Spacer(minLength: 4)
-            // Most people use one space (5.5% of Arc's daily users used
-            // several), so the switcher only appears once there is a second.
-            if store.snapshot.spaces.count > 1 {
-                // Icons shrink, then turn into dots, then scroll, so many spaces
-                // never make the bar (and with it the sidebar) wider.
-                ViewThatFits(in: .horizontal) {
-                    spaceDots(size: 24, icons: true)
-                    spaceDots(size: 18, icons: true)
-                    ScrollView(.horizontal, showsIndicators: false) { spaceDots(size: 14, icons: false) }
-                }
-                Spacer(minLength: 4)
-            }
-            Menu {
-                Button("New Space…") { store.spaceEditor = SpaceEditorRequest(spaceID: nil) }
-                Button("New Folder") { store.newFolder() }
-            } label: {
-                Image(systemName: "plus").font(.system(size: 13, weight: .medium))
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .frame(width: 28, height: 24)
-            .opacity(0.8)
-        }
-        .frame(height: 28)
+/// A space's emoji (or a dot); click to switch, drop a tab to move it there.
+private final class SpaceDotView: HoverView {
+    private let store: BrowserStore
+    private let fill = FillLayer()
+    private let label = Label.make(size: 13)
+    private let dot = CALayer()
+    private var space: SpaceInfo?
+    private var active = false
+    private var dropping = false
+    var showsIcon = true {
+        didSet { if showsIcon != oldValue { needsLayout = true } }
     }
 
-    private func spaceDots(size: CGFloat, icons: Bool) -> some View {
-        HStack(spacing: 2) {
-            ForEach(store.snapshot.spaces, id: \.id) { space in
-                SpaceDot(space: space, active: space.id == store.snapshot.activeSpace, size: size, icon: icons)
-            }
-        }
+    init(store: BrowserStore) {
+        self.store = store
+        super.init(frame: .zero)
+        fill.cornerRadius = 6
+        layer?.addSublayer(fill)
+        dot.cornerRadius = 3
+        layer?.addSublayer(dot)
+        label.alignment = .center
+        addSubview(label)
+        registerForDraggedTypes([.sidebarItem, .URL])
     }
-}
 
-private struct SpaceDot: View {
-    @EnvironmentObject private var store: BrowserStore
-    let space: SpaceInfo
-    let active: Bool
-    var size: CGFloat = 24
-    /// False shows a dot even for spaces with an icon.
-    var icon = true
-    @State private var hovering = false
-    @Environment(\.colorScheme) private var colorScheme
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    var body: some View {
-        let key = "space-\(space.id)"
-        Group {
-            if space.icon.isEmpty || !icon {
-                Circle().fill(.primary).frame(width: 6, height: 6)
-            } else {
-                Text(space.icon).font(.system(size: size * 0.54))
-            }
+    func configure(_ space: SpaceInfo, active: Bool) {
+        self.space = space
+        label.stringValue = space.icon
+        toolTip = space.name
+        if active != self.active {
+            self.active = active
+            Motion.animate(Motion.quick) { animator().alphaValue = active ? 1 : 0.45 }
+        } else {
+            alphaValue = active ? 1 : 0.45
         }
-        .frame(width: size, height: 24)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(store.dropIndicator?.key == key ? Theme.controlFill(dark: colorScheme == .dark, hovering: true)
-                      : hovering ? Theme.hoverFill(dark: colorScheme == .dark) : .clear)
-        )
-        .opacity(active ? 1 : 0.45)
-        .animation(Motion.quick, value: active)
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .animation(Motion.quick, value: hovering)
-        .onTapGesture { store.activateSpace(space.id) }
-        .help(space.name)
-        .onDrop(of: [.sidebarItem, .url], delegate: ItemDropDelegate(
-            store: store, key: key, target: .today(spaceId: space.id), index: 0,
-            folderID: nil, fixedEdge: .before))
-        .contextMenu {
-            Button("Edit Space…") { store.spaceEditor = SpaceEditorRequest(spaceID: space.id) }
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        let icon = showsIcon && !(space?.icon.isEmpty ?? true)
+        label.isHidden = !icon
+        label.font = Theme.font(min(bounds.width, 24) * 0.54)
+        label.frame = NSRect(x: 0, y: bounds.midY - 9, width: bounds.width, height: 18)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fill.frame = bounds
+        dot.isHidden = icon
+        dot.frame = NSRect(x: bounds.midX - 3, y: bounds.midY - 3, width: 6, height: 6)
+        CATransaction.commit()
+    }
+
+    override func updateLayer() {
+        fill.paint(fill: dropping ? Theme.controlHoverFill : hovering ? Theme.hoverFill : nil, in: effectiveAppearance)
+        effectiveAppearance.performAsCurrentDrawingAppearance { dot.backgroundColor = NSColor.labelColor.cgColor }
+    }
+
+    override func mouseDown(with event: NSEvent) {}
+
+    override func mouseUp(with event: NSEvent) {
+        if let space, bounds.contains(convert(event.locationInWindow, from: nil)) { store.activateSpace(space.id) }
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let space else { return nil }
+        let menu = NSMenu()
+        menu.add("Edit Space…") { [store] in store.spaceEditor = SpaceEditorRequest(spaceID: space.id) }
+        return menu
+    }
+
+    private func setDropping(_ value: Bool) {
+        dropping = value
+        FillLayer.animated(Motion.quick) { updateLayer() }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        setDropping(true)
+        return sender.draggingPasteboard.string(forType: .sidebarItem) != nil ? .move : .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) { setDropping(false) }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        setDropping(false)
+        guard let space else { return false }
+        let target = DropTarget.today(spaceId: space.id)
+        if let id = sender.draggingPasteboard.string(forType: .sidebarItem).flatMap(UInt64.init) {
+            guard store.core.tab(id: id) != nil else { return false }
+            store.drop(id, on: target, index: 0)
+            return true
         }
+        guard let url = sender.draggingPasteboard.string(forType: .URL) else { return false }
+        store.dropURL(url, on: target, index: 0)
+        return true
     }
 }

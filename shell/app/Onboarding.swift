@@ -1,18 +1,20 @@
 import AppKit
-import SwiftUI
 
-struct ImportRequest: Identifiable {
+struct ImportRequest {
     let id = UUID()
     /// The welcome sheet at first launch, rather than File ▸ Import.
     let firstLaunch: Bool
 }
 
 /// Finds other browsers on this Mac and imports their spaces, tabs and
-/// bookmarks. Shown once at first launch, and from File ▸ Import.
-struct ImportSheet: View {
-    @EnvironmentObject private var store: BrowserStore
-    @Environment(\.dismiss) private var dismiss
+/// bookmarks. Shown once at first launch, and from File ▸ Import. First
+/// launch ends with a choice of layout and color.
+@MainActor
+final class ImportSheet: NSObject {
     let request: ImportRequest
+    let window: NSWindow
+    var onClose: (() -> Void)?
+    private let store: BrowserStore
 
     private enum Phase {
         case scanning
@@ -23,141 +25,82 @@ struct ImportSheet: View {
         case style
     }
 
-    @State private var phase = Phase.scanning
-    @State private var selected: Set<String> = []
-    @State private var imported = false
+    private var phase = Phase.scanning
+    private var selected: Set<String> = []
+    private weak var importButton: NSButton?
+    private var imported = false
+    private var closed = false
+    private let title = Label.make(size: 22, weight: .semibold)
+    private let subtitle = Label.wrapping("", size: 13)
+    private let body = NSStackView()
+    private let buttons = NSStackView()
+    private let stack = NSStackView()
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            header
-            switch phase {
-            case .scanning:
-                status("Looking for other browsers…")
-            case .choosing(let sources):
-                if sources.isEmpty {
-                    Text("No other browsers with tabs or bookmarks were found on this Mac.")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 120)
-                } else {
-                    sourceList(sources)
-                    Text("Tabs and bookmarks are copied; your other browsers stay as they are. Passwords, history and cookies aren't imported, so you'll sign in to sites again.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            case .importing:
-                status("Importing…")
-            case .done(let summary):
-                doneView(summary)
-            case .style:
-                StylePicker(color: store.activeSpace.color)
-            }
-            buttons
-        }
-        .padding(24)
-        .frame(width: 540)
-        .task {
-            // MBGA_DEBUG_ONBOARDING=style opens straight at the style step,
-            // for screenshots.
-            if ProcessInfo.processInfo.environment["MBGA_DEBUG_ONBOARDING"] == "style" {
-                phase = .style
-            } else {
-                await scan()
-            }
-        }
+    init(request: ImportRequest, store: BrowserStore) {
+        self.request = request
+        self.store = store
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 300), styleMask: [.titled],
+                          backing: .buffered, defer: true)
+        super.init()
+        build()
+        render()
+        Task { await start() }
     }
 
-    // MARK: - Pieces
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if case .style = phase {
-                Text("Make it yours")
-                    .font(.system(size: 22, weight: .semibold))
-                Text("Pick a layout and how much color your spaces bring. You can change both later from the View menu.")
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text(request.firstLaunch ? "Welcome to MBGA" : "Import from Another Browser")
-                    .font(.system(size: 22, weight: .semibold))
-                Text("Bring your spaces, pinned tabs, open tabs and bookmarks from the browsers on this Mac.")
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
+    func close() {
+        guard !closed else { return }
+        closed = true
+        window.sheetParent?.endSheet(window)
+        onClose?()
     }
 
-    private func status(_ text: String) -> some View {
-        HStack(spacing: 10) {
-            ProgressView().controlSize(.small)
-            Text(text).foregroundStyle(.secondary)
+    private func build() {
+        subtitle.preferredMaxLayoutWidth = 492
+        body.orientation = .vertical
+        body.alignment = .leading
+        body.spacing = 6
+        buttons.spacing = 8
+        let header = NSStackView(views: [title, subtitle])
+        header.orientation = .vertical
+        header.alignment = .leading
+        header.spacing = 4
+        stack.setViews([header, body, buttons], in: .top)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 18
+        stack.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 24, right: 24)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        for view in [body, buttons] {
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -48).isActive = true
         }
-        .frame(maxWidth: .infinity, minHeight: 120)
+        let content = NSView()
+        content.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: content.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            content.widthAnchor.constraint(equalToConstant: 540),
+        ])
+        window.contentView = content
     }
 
-    private func sourceList(_ sources: [ImportSourceInfo]) -> some View {
-        ScrollView {
-            VStack(spacing: 6) {
-                ForEach(sources, id: \.id) { source in
-                    SourceRow(source: source, selected: $selected)
-                }
-            }
+    // MARK: - Phases
+
+    private func start() async {
+        // MBGA_DEBUG_ONBOARDING=style opens straight at the style step, for
+        // screenshots.
+        if ProcessInfo.processInfo.environment["MBGA_DEBUG_ONBOARDING"] == "style" {
+            phase = .style
+            render()
+            return
         }
-        .frame(maxHeight: 340)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func doneView(_ s: ImportSummary) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 28))
-                .foregroundStyle(.green)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(summaryText(s)).font(.system(size: 14, weight: .medium))
-                Text("Bookmarks are in folders under each space's pinned tabs. Nothing loads until you open it.")
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
-    }
-
-    @ViewBuilder private var buttons: some View {
-        HStack {
-            switch phase {
-            case .scanning, .importing:
-                Spacer()
-                Button(request.firstLaunch ? "Skip" : "Cancel") { finish() }
-                    .keyboardShortcut(.cancelAction)
-            case .choosing(let sources):
-                Button(request.firstLaunch ? "Start Fresh" : "Cancel") { next() }
-                    .keyboardShortcut(.cancelAction)
-                Spacer()
-                if sources.isEmpty {
-                    Button("Get Started") { next() }.keyboardShortcut(.defaultAction)
-                } else {
-                    Button("Import") { runImport(sources) }
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(selected.isEmpty)
-                }
-            case .done:
-                Spacer()
-                Button(request.firstLaunch ? "Continue" : "Done") { next() }.keyboardShortcut(.defaultAction)
-            case .style:
-                Spacer()
-                Button("Start Browsing") { finish() }.keyboardShortcut(.defaultAction)
-            }
-        }
-    }
-
-    // MARK: - Actions
-
-    private func scan() async {
         let core = store.core
         let home = ProcessInfo.processInfo.environment["MBGA_IMPORT_HOME"] ?? NSHomeDirectory()
         let sources = await Task.detached { core.detectBrowsers(home: home) }.value
-        selected = Set(Self.defaultChoice(sources).map { s in s.profiles.map { SourceRow.key(s, $0) } } ?? [])
+        selected = Set(Self.defaultChoice(sources).map { s in s.profiles.map { Self.key(s, $0) } } ?? [])
         phase = .choosing(sources)
+        render()
     }
 
     /// The system's default browser if it was found, else the first one.
@@ -168,37 +111,202 @@ struct ImportSheet: View {
         return usable.first { $0.bundleId != nil && $0.bundleId == defaultBrowser } ?? usable.first
     }
 
+    static func key(_ source: ImportSourceInfo, _ profile: ImportProfileInfo) -> String {
+        source.id + "\n" + profile.id
+    }
+
     private func runImport(_ sources: [ImportSourceInfo]) {
         let choices = sources.compactMap { source -> ImportChoice? in
-            let ids = source.profiles.filter { selected.contains(SourceRow.key(source, $0)) }.map(\.id)
+            let ids = source.profiles.filter { selected.contains(Self.key(source, $0)) }.map(\.id)
             return ids.isEmpty ? nil : ImportChoice(sourceId: source.id, profileIds: ids)
         }
         phase = .importing
+        render()
         let core = store.core
         Task {
             let summary = await Task.detached { core.importBrowsers(choices: choices) }.value
             store.refresh()
             imported = true
             phase = .done(summary)
+            render()
         }
     }
 
     /// First launch goes on to choosing a style; otherwise the sheet closes.
     private func next() {
         if request.firstLaunch {
-            withAnimation(Motion.settle) { phase = .style }
+            phase = .style
+            render()
         } else {
             finish()
         }
     }
 
     private func finish() {
-        dismiss()
+        close()
         guard request.firstLaunch else { return }
         store.core.finishOnboarding()
         store.refresh()
         // Starting fresh opens the address bar, as any launch with no tab does.
         if !imported && store.visibleTabID == nil { store.commandBar = .newTab }
+    }
+
+    // MARK: - Rendering
+
+    private func render() {
+        if case .style = phase {
+            title.stringValue = "Make it yours"
+            subtitle.stringValue = "Pick a layout and how much color your spaces bring. You can change both later from the View menu."
+        } else {
+            title.stringValue = request.firstLaunch ? "Welcome to MBGA" : "Import from Another Browser"
+            subtitle.stringValue = "Bring your spaces, pinned tabs, open tabs and bookmarks from the browsers on this Mac."
+        }
+        for view in body.arrangedSubviews { view.removeFromSuperview() }
+        for view in buttons.arrangedSubviews { view.removeFromSuperview() }
+        let finish: () -> Void = { [weak self] in self?.finish() }
+        let next: () -> Void = { [weak self] in self?.next() }
+        switch phase {
+        case .scanning:
+            body.addArrangedSubview(status("Looking for other browsers…"))
+            addButtons(cancel: (request.firstLaunch ? "Skip" : "Cancel", finish))
+        case .choosing(let sources):
+            let cancel = (request.firstLaunch ? "Start Fresh" : "Cancel", next)
+            if sources.isEmpty {
+                let none = Label.make("No other browsers with tabs or bookmarks were found on this Mac.",
+                                      color: .secondaryLabelColor)
+                body.addArrangedSubview(centered(none, height: 120))
+                addButtons(cancel: cancel, primary: ("Get Started", next))
+            } else {
+                body.addArrangedSubview(sourceList(sources))
+                let note = Label.wrapping("Tabs and bookmarks are copied; your other browsers stay as they are. Passwords, history and cookies aren't imported, so you'll sign in to sites again.",
+                                          size: 11)
+                note.preferredMaxLayoutWidth = 492
+                body.addArrangedSubview(note)
+                let runImport: () -> Void = { [weak self] in self?.runImport(sources) }
+                importButton = addButtons(cancel: cancel, primary: ("Import", runImport))
+                importButton?.isEnabled = !selected.isEmpty
+            }
+        case .importing:
+            body.addArrangedSubview(status("Importing…"))
+            addButtons(cancel: (request.firstLaunch ? "Skip" : "Cancel", finish))
+        case .done(let summary):
+            body.addArrangedSubview(doneView(summary))
+            addButtons(cancel: nil, primary: (request.firstLaunch ? "Continue" : "Done", next))
+        case .style:
+            body.addArrangedSubview(StylePicker(store: store))
+            addButtons(cancel: nil, primary: ("Start Browsing", finish))
+        }
+        resize()
+    }
+
+    /// Fits the sheet to its content.
+    private func resize() {
+        guard let content = window.contentView else { return }
+        content.layoutSubtreeIfNeeded()
+        let size = NSSize(width: 540, height: stack.fittingSize.height)
+        if window.isVisible {
+            var frame = window.frame
+            let height = window.frameRect(forContentRect: NSRect(origin: .zero, size: size)).height
+            frame.origin.y += frame.height - height
+            frame.size.height = height
+            window.setFrame(frame, display: true, animate: !Motion.reduced)
+        } else {
+            window.setContentSize(size)
+        }
+    }
+
+    /// The cancel-style button on the left and the default one on the right.
+    @discardableResult
+    private func addButtons(cancel: (String, () -> Void)?, primary: (String, () -> Void)? = nil) -> NSButton? {
+        if let (title, action) = cancel {
+            let button = NSButton.push(title, action: action)
+            button.keyEquivalent = "\u{1b}"
+            buttons.addArrangedSubview(button)
+        }
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        buttons.addArrangedSubview(spacer)
+        guard let (title, action) = primary else { return nil }
+        let button = NSButton.push(title, action: action)
+        button.keyEquivalent = "\r"
+        buttons.addArrangedSubview(button)
+        return button
+    }
+
+    private func status(_ text: String) -> NSView {
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.startAnimation(nil)
+        let row = NSStackView(views: [spinner, Label.make(text, color: .secondaryLabelColor)])
+        row.spacing = 10
+        return centered(row, height: 120)
+    }
+
+    private func centered(_ view: NSView, height: CGFloat) -> NSView {
+        let box = NSView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.centerXAnchor.constraint(equalTo: box.centerXAnchor),
+            view.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+            box.heightAnchor.constraint(equalToConstant: height),
+            box.widthAnchor.constraint(equalToConstant: 492),
+        ])
+        return box
+    }
+
+    private func sourceList(_ sources: [ImportSourceInfo]) -> NSView {
+        let list = NSStackView()
+        list.orientation = .vertical
+        list.alignment = .leading
+        list.spacing = 6
+        for source in sources {
+            let row = SourceRow(source: source, selected: selected) { [weak self] key, on in
+                guard let self else { return }
+                if on { selected.insert(key) } else { selected.remove(key) }
+                importButton?.isEnabled = !selected.isEmpty
+            }
+            list.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalToConstant: 492).isActive = true
+        }
+        let scroll = NSScrollView()
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        let document = FlippedView()
+        list.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(list)
+        NSLayoutConstraint.activate([
+            list.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            list.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            list.topAnchor.constraint(equalTo: document.topAnchor),
+            list.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+        ])
+        document.frame = NSRect(origin: .zero, size: list.fittingSize)
+        scroll.documentView = document
+        let height = min(list.fittingSize.height, 340)
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.heightAnchor.constraint(equalToConstant: height).isActive = true
+        scroll.widthAnchor.constraint(equalToConstant: 492).isActive = true
+        return scroll
+    }
+
+    private func doneView(_ s: ImportSummary) -> NSView {
+        let check = NSImageView(image: .symbol("checkmark.circle.fill", size: 28, weight: .regular) ?? NSImage())
+        check.contentTintColor = .systemGreen
+        let headline = Label.make(summaryText(s), size: 14, weight: .medium)
+        let detail = Label.wrapping("Bookmarks are in folders under each space's pinned tabs. Nothing loads until you open it.",
+                                    size: 13)
+        detail.preferredMaxLayoutWidth = 440
+        let text = NSStackView(views: [headline, detail])
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = 4
+        let row = NSStackView(views: [check, text])
+        row.alignment = .top
+        row.spacing = 12
+        return row
     }
 
     private func summaryText(_ s: ImportSummary) -> String {
@@ -211,171 +319,107 @@ struct ImportSheet: View {
     }
 }
 
-/// Layout (sidebar or Focus) and how strongly spaces tint the window, each
-/// with a small live preview. Choices apply at once.
-private struct StylePicker: View {
-    @EnvironmentObject private var store: BrowserStore
-    @AppStorage(TintStyle.defaultsKey) private var style = TintStyle.calm
-    let color: UInt32
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Layout").font(.system(size: 13, weight: .semibold))
-                HStack(spacing: 12) {
-                    ForEach(SidebarLayout.allCases) { layout in
-                        choice(layout.title, detail: Self.detail(layout), selected: store.layout == layout) {
-                            StylePreview(layout: layout, style: style, color: color)
-                        } action: { store.setLayout(layout) }
-                    }
-                }
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Color").font(.system(size: 13, weight: .semibold))
-                HStack(spacing: 12) {
-                    ForEach(TintStyle.allCases) { option in
-                        choice(option.title, detail: nil, selected: style == option) {
-                            StylePreview(layout: store.layout, style: option, color: color)
-                        } action: { style = option }
-                    }
-                }
-            }
-        }
-    }
-
-    private static func detail(_ layout: SidebarLayout) -> String {
-        switch layout {
-        case .full: "Tabs and spaces on the left"
-        case .compact: "Just the icons"
-        case .focus: "Just the page"
-        }
-    }
-
-    private func choice(_ title: String, detail: String?, selected: Bool,
-                        @ViewBuilder preview: () -> some View, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 6) {
-                preview()
-                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .strokeBorder(selected ? Color.accentColor : .primary.opacity(0.12), lineWidth: selected ? 2 : 1))
-                Text(title).font(.system(size: 12, weight: .medium))
-                if let detail {
-                    Text(detail).font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-/// A miniature MBGA window.
-private struct StylePreview: View {
-    let layout: SidebarLayout
-    let style: TintStyle
-    let color: UInt32
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        let dark = colorScheme == .dark
-        let sidebar = layout != .focus
-        let inset: CGFloat = sidebar ? 5 : 3
-        ZStack(alignment: .topLeading) {
-            LinearGradient(colors: Theme.gradient(for: RGB(color), dark: dark, active: true, style: style),
-                           startPoint: .top, endPoint: .bottom)
-            HStack(spacing: inset) {
-                if layout == .full {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Capsule().fill(.primary.opacity(0.15)).frame(height: 6)
-                        ForEach(0..<4, id: \.self) { i in
-                            Capsule().fill(.primary.opacity(i == 1 ? 0.3 : 0.12)).frame(width: i == 1 ? 34 : 28, height: 4)
-                        }
-                    }
-                    .padding(.top, 12)
-                    .padding(.leading, 6)
-                    .frame(width: 40, alignment: .topLeading)
-                } else if layout == .compact {
-                    VStack(spacing: 4) {
-                        ForEach(0..<5, id: \.self) { i in
-                            RoundedRectangle(cornerRadius: 1.5).fill(.primary.opacity(i == 1 ? 0.3 : 0.14)).frame(width: 7, height: 7)
-                        }
-                    }
-                    .padding(.top, 12)
-                    .frame(width: 14, alignment: .top)
-                }
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(.white)
-                    .shadow(color: .black.opacity(0.1), radius: 1, y: 0.5)
-                    .padding(.vertical, inset)
-                    .padding(.trailing, inset)
-                    .padding(.leading, sidebar ? 0 : inset)
-            }
-        }
-        .frame(height: 74)
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-    }
+private func plural(_ n: UInt32, _ one: String, _ many: String? = nil) -> String {
+    "\(n.formatted()) \(n == 1 ? one : many ?? one + "s")"
 }
 
 /// A browser with a checkbox per profile (or one for the whole browser).
-private struct SourceRow: View {
-    let source: ImportSourceInfo
-    @Binding var selected: Set<String>
+private final class SourceRow: NSView {
+    private let source: ImportSourceInfo
+    private let toggled: (String, Bool) -> Void
+    private let stack = NSStackView()
 
-    static func key(_ source: ImportSourceInfo, _ profile: ImportProfileInfo) -> String {
-        source.id + "\n" + profile.id
-    }
+    init(source: ImportSourceInfo, selected: Set<String>, toggled: @escaping (String, Bool) -> Void) {
+        self.source = source
+        self.toggled = toggled
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.cornerCurve = .continuous
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                BrowserIcon(bundleID: source.bundleId)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(source.name).font(.system(size: 13, weight: .semibold))
-                    if let error = source.error {
-                        Text(error).font(.caption).foregroundStyle(.secondary)
-                    } else if source.profiles.count == 1 {
-                        Text(describe(source.profiles[0])).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-                if source.error != nil, source.kind == .safari {
-                    Button("Open Settings") {
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!)
-                    }
-                    .controlSize(.small)
-                } else if source.profiles.count == 1 {
-                    toggle(source.profiles[0])
-                }
+        let icon = NSImageView()
+        if let id = source.bundleId, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+            icon.image = NSWorkspace.shared.icon(forFile: url.path)
+        } else {
+            icon.image = .symbol("globe", size: 20, weight: .regular)
+            icon.contentTintColor = .secondaryLabelColor
+        }
+        icon.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        let name = Label.make(source.name, size: 13, weight: .semibold)
+        let text = NSStackView(views: [name])
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = 2
+        if let error = source.error {
+            text.addArrangedSubview(Label.make(error, size: 11, color: .secondaryLabelColor))
+        } else if source.profiles.count == 1 {
+            text.addArrangedSubview(Label.make(describe(source.profiles[0]), size: 11, color: .secondaryLabelColor))
+        }
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        var top: [NSView] = [icon, text, spacer]
+        if source.error != nil, source.kind == .safari {
+            let settings = NSButton.push("Open Settings") {
+                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!)
             }
-            if source.profiles.count > 1 {
-                ForEach(source.profiles, id: \.id) { profile in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(profileLabel(profile)).font(.system(size: 12, weight: .medium))
-                            Text(describe(profile)).font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        toggle(profile)
-                    }
-                    .padding(.leading, 38)
-                }
+            settings.controlSize = .small
+            top.append(settings)
+        } else if source.profiles.count == 1 {
+            top.append(checkbox(source.profiles[0], selected: selected))
+        }
+        let topRow = NSStackView(views: top)
+        topRow.spacing = 10
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        stack.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+        stack.addArrangedSubview(topRow)
+        topRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -20).isActive = true
+        if source.profiles.count > 1 {
+            for profile in source.profiles {
+                let label = Label.make(profileLabel(profile), size: 12, weight: .medium)
+                let detail = Label.make(describe(profile), size: 11, color: .secondaryLabelColor)
+                let labels = NSStackView(views: [label, detail])
+                labels.orientation = .vertical
+                labels.alignment = .leading
+                labels.spacing = 1
+                let gap = NSView()
+                gap.setContentHuggingPriority(.init(1), for: .horizontal)
+                let row = NSStackView(views: [labels, gap, checkbox(profile, selected: selected)])
+                row.edgeInsets = NSEdgeInsets(top: 0, left: 38, bottom: 0, right: 0)
+                stack.addArrangedSubview(row)
+                row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -20).isActive = true
             }
         }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.quaternary.opacity(0.5)))
-        .opacity(source.error == nil ? 1 : 0.75)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        alphaValue = source.error == nil ? 1 : 0.75
     }
 
-    private func toggle(_ profile: ImportProfileInfo) -> some View {
-        let key = Self.key(source, profile)
-        return Toggle("", isOn: Binding(
-            get: { selected.contains(key) },
-            set: { if $0 { selected.insert(key) } else { selected.remove(key) } }
-        ))
-        .toggleStyle(.checkbox)
-        .labelsHidden()
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.5).cgColor
+    }
+
+    private func checkbox(_ profile: ImportProfileInfo, selected: Set<String>) -> NSButton {
+        let key = ImportSheet.key(source, profile)
+        let box = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+        box.state = selected.contains(key) ? .on : .off
+        box.onAction { [weak self, weak box] in
+            guard let box else { return }
+            self?.toggled(key, box.state == .on)
+        }
+        return box
     }
 
     /// "Chrome · Work" is shown as "Work" under its browser's name.
@@ -399,23 +443,173 @@ private struct SourceRow: View {
     }
 }
 
-private struct BrowserIcon: View {
-    let bundleID: String?
+/// Layout (Sidebar, Compact or Focus) and how strongly spaces tint the
+/// window, each with a small live preview. Choices apply at once.
+private final class StylePicker: NSStackView {
+    private let store: BrowserStore
+    private var layoutChoices: [StyleChoice] = []
+    private var colorChoices: [StyleChoice] = []
 
-    var body: some View {
-        if let bundleID, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                .resizable()
-                .frame(width: 28, height: 28)
-        } else {
-            Image(systemName: "globe")
-                .font(.system(size: 20))
-                .foregroundStyle(.secondary)
-                .frame(width: 28, height: 28)
+    init(store: BrowserStore) {
+        self.store = store
+        super.init(frame: .zero)
+        orientation = .vertical
+        alignment = .leading
+        spacing = 8
+        let color = store.activeSpace.color
+        addArrangedSubview(Label.make("Layout", size: 13, weight: .semibold))
+        let layouts = NSStackView()
+        layouts.spacing = 12
+        layouts.distribution = .fillEqually
+        for layout in SidebarLayout.allCases {
+            let choice = StyleChoice(title: layout.title, detail: Self.detail(layout),
+                                     preview: StylePreview(layout: layout, style: TintStyle.saved, color: color))
+            choice.onPick = { [weak self] in
+                self?.store.setLayout(layout)
+                self?.refresh()
+            }
+            layoutChoices.append(choice)
+            layouts.addArrangedSubview(choice)
+        }
+        addArrangedSubview(layouts)
+        setCustomSpacing(16, after: layouts)
+        addArrangedSubview(Label.make("Color", size: 13, weight: .semibold))
+        let colors = NSStackView()
+        colors.spacing = 12
+        colors.distribution = .fillEqually
+        for style in TintStyle.allCases {
+            let choice = StyleChoice(title: style.title, detail: nil,
+                                     preview: StylePreview(layout: store.layout, style: style, color: color))
+            choice.onPick = { [weak self] in
+                UserDefaults.standard.set(style.rawValue, forKey: TintStyle.defaultsKey)
+                self?.refresh()
+            }
+            colorChoices.append(choice)
+            colors.addArrangedSubview(choice)
+        }
+        addArrangedSubview(colors)
+        for row in [layouts, colors] { row.widthAnchor.constraint(equalToConstant: 492).isActive = true }
+        refresh()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    private static func detail(_ layout: SidebarLayout) -> String {
+        switch layout {
+        case .full: "Tabs and spaces on the left"
+        case .compact: "Just the icons"
+        case .focus: "Just the page"
+        }
+    }
+
+    private func refresh() {
+        let style = TintStyle.saved
+        for (choice, layout) in zip(layoutChoices, SidebarLayout.allCases) {
+            choice.selected = store.layout == layout
+            choice.preview.style = style
+        }
+        for (choice, option) in zip(colorChoices, TintStyle.allCases) {
+            choice.selected = style == option
+            choice.preview.layout = store.layout
         }
     }
 }
 
-private func plural(_ n: UInt32, _ one: String, _ many: String? = nil) -> String {
-    "\(n.formatted()) \(n == 1 ? one : many ?? one + "s")"
+/// A preview with a title (and detail) that can be picked.
+private final class StyleChoice: NSView {
+    let preview: StylePreview
+    var onPick: (() -> Void)?
+    var selected = false {
+        didSet { preview.selected = selected }
+    }
+
+    init(title: String, detail: String?, preview: StylePreview) {
+        self.preview = preview
+        super.init(frame: .zero)
+        let label = Label.make(title, size: 12, weight: .medium)
+        var views: [NSView] = [preview, label]
+        if let detail {
+            let small = Label.wrapping(detail, size: 11)
+            small.preferredMaxLayoutWidth = 150
+            views.append(small)
+        }
+        let stack = NSStackView(views: views)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        preview.heightAnchor.constraint(equalToConstant: 74).isActive = true
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            preview.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func mouseDown(with event: NSEvent) { onPick?() }
+}
+
+/// A miniature MBGA window.
+private final class StylePreview: NSView {
+    var layout: SidebarLayout { didSet { needsDisplay = true } }
+    var style: TintStyle { didSet { needsDisplay = true } }
+    var selected = false { didSet { needsDisplay = true } }
+    private let color: UInt32
+
+    init(layout: SidebarLayout, style: TintStyle, color: UInt32) {
+        self.layout = layout
+        self.style = style
+        self.color = color
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 9, yRadius: 9)
+        NSGraphicsContext.saveGraphicsState()
+        shape.addClip()
+        let stops = Theme.gradient(for: RGB(color), dark: effectiveAppearance.isDark, active: true, style: style)
+        NSGradient(colors: stops.map(\.nsColor))?.draw(in: bounds, angle: 90)
+        let faint = { (alpha: CGFloat) in NSColor.labelColor.withAlphaComponent(alpha) }
+        var pageX: CGFloat = 3
+        let inset: CGFloat = layout == .focus ? 3 : 5
+        switch layout {
+        case .full:
+            faint(0.15).setFill()
+            NSBezierPath(roundedRect: NSRect(x: 6, y: 12, width: 34, height: 6), xRadius: 3, yRadius: 3).fill()
+            for i in 0..<4 {
+                faint(i == 1 ? 0.3 : 0.12).setFill()
+                NSBezierPath(roundedRect: NSRect(x: 6, y: 22 + CGFloat(i) * 8, width: i == 1 ? 34 : 28, height: 4),
+                             xRadius: 2, yRadius: 2).fill()
+            }
+            pageX = 46
+        case .compact:
+            for i in 0..<5 {
+                faint(i == 1 ? 0.3 : 0.14).setFill()
+                NSBezierPath(roundedRect: NSRect(x: 4, y: 12 + CGFloat(i) * 11, width: 7, height: 7),
+                             xRadius: 1.5, yRadius: 1.5).fill()
+            }
+            pageX = 16
+        case .focus:
+            pageX = inset
+        }
+        let page = NSBezierPath(roundedRect: NSRect(x: pageX, y: inset, width: bounds.width - pageX - inset,
+                                                    height: bounds.height - inset * 2), xRadius: 4, yRadius: 4)
+        NSColor.white.setFill()
+        page.fill()
+        NSGraphicsContext.restoreGraphicsState()
+        (selected ? NSColor.controlAccentColor : faint(0.12)).setStroke()
+        shape.lineWidth = selected ? 2 : 1
+        shape.stroke()
+    }
+
+    override func mouseDown(with event: NSEvent) { (superview?.superview as? StyleChoice)?.onPick?() }
 }

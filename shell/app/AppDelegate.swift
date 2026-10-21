@@ -1,5 +1,4 @@
 import AppKit
-import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
@@ -41,7 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         if core.needsOnboarding() {
             store.importSheet = ImportRequest(firstLaunch: true)
-        } else if store.visibleTabID == nil || CommandBar.debugPreset != nil {
+        } else if store.visibleTabID == nil || CommandBarView.debugPreset != nil {
             store.commandBar = .newTab
         }
 
@@ -111,9 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         window.acceptsMouseMovedEvents = true
         window.isReleasedWhenClosed = false
         window.delegate = self
-        let host = NSHostingView(rootView: RootView().environmentObject(store))
-        host.sizingOptions = []
-        window.contentView = host
+        window.contentView = RootView(store: store)
         if !window.setFrameUsingName("MainWindow") { window.center() }
         window.setFrameAutosaveName("MainWindow")
         return window
