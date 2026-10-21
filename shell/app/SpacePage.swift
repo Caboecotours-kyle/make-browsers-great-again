@@ -690,7 +690,7 @@ final class FolderCellView: NSTableCellView, NSTextFieldDelegate {
     private let icon = NSImageView()
     private let name = Label.make()
     private let editor = NSTextField()
-    private let count = Label.make(size: 10.5, weight: .medium)
+    private let count = Label.chip()
     private var row: PinnedRow?
     private var expanded = false
 
@@ -711,9 +711,8 @@ final class FolderCellView: NSTableCellView, NSTextFieldDelegate {
         editor.placeholderString = "Folder name"
         editor.delegate = self
         count.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .medium)
-        count.alignment = .center
+        count.textColor = .labelColor
         count.alphaValue = 0.6
-        count.wantsLayer = true
         count.layer?.cornerRadius = 8.5
         for view in [icon, name, editor, count] as [NSView] { addSubview(view) }
     }
@@ -932,25 +931,20 @@ final class DropHintCellView: NSTableCellView {
     }
 }
 
-/// The space's emoji and name above its list, with its profile when there
-/// are several. Double-click to edit the space.
+/// The space's emoji and name above its list. Double-click to edit the
+/// space.
 final class SpaceHeaderView: FlippedView {
     private let store: BrowserStore
     private var space: SpaceInfo
     private let icon = Label.make(size: 14)
     private let name = Label.make(size: 13, weight: .semibold)
-    private let profile = Label.make(size: 10, weight: .medium)
 
     init(space: SpaceInfo, store: BrowserStore) {
         self.space = space
         self.store = store
         super.init(frame: .zero)
         name.alphaValue = 0.8
-        profile.alphaValue = 0.8
-        profile.alignment = .center
-        profile.wantsLayer = true
-        profile.layer?.cornerRadius = 8
-        for view in [icon, name, profile] { addSubview(view) }
+        for view in [icon, name] { addSubview(view) }
         update(space)
     }
 
@@ -961,20 +955,13 @@ final class SpaceHeaderView: FlippedView {
         // Only what changed: redrawing a page while it slides away blanks it.
         icon.setIfChanged(space.icon.isEmpty ? "•" : space.icon)
         name.setIfChanged(space.name)
-        profile.setIfChanged(store.profileName(space.profileId))
-        profile.isHidden = store.snapshot.profiles.count < 2
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            profile.layer?.backgroundColor = Theme.faint(0.08).cgColor
-        }
         needsLayout = true
     }
 
     override func layout() {
         super.layout()
         icon.frame = NSRect(x: 6, y: 3, width: 20, height: 18)
-        let profileWidth: CGFloat = profile.isHidden ? 0 : profile.textWidth + 12
-        profile.frame = NSRect(x: bounds.width - 6 - profileWidth, y: 4, width: profileWidth, height: 16)
-        name.frame = NSRect(x: 28, y: 4, width: max(bounds.width - 34 - profileWidth - 6, 0), height: 16)
+        name.frame = NSRect(x: 28, y: 4, width: max(bounds.width - 34, 0), height: 16)
     }
 
     override func mouseDown(with event: NSEvent) {

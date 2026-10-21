@@ -229,10 +229,6 @@ final class BrowserStore: NSObject {
 
     var visibleTab: TabInfo? { visibleTabID.flatMap { core.tab(id: $0) } }
 
-    func profileName(_ id: UInt64) -> String {
-        snapshot.profiles.first { $0.id == id }?.name ?? ""
-    }
-
     /// Tabs of the active space in sidebar order: favorites, pinned, today.
     var orderedTabs: [TabInfo] {
         let space = activeSpace

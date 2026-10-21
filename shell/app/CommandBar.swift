@@ -280,7 +280,8 @@ final class CommandBarView: NSView, NSTextFieldDelegate, NSTableViewDataSource, 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        if case .header = rows[row] { return 24 }
+        // A section title sits closer to its rows than to the ones above.
+        if case .header = rows[row] { return 30 }
         return 34
     }
 
@@ -297,7 +298,8 @@ final class CommandBarView: NSView, NSTextFieldDelegate, NSTableViewDataSource, 
         case .header(let title):
             let cell = NSTableCellView()
             let label = Label.make(title, size: 11, weight: .semibold, color: .secondaryLabelColor)
-            label.frame = NSRect(x: 10, y: 8, width: 300, height: 14)
+            // The cell isn't flipped: 3 pt from the bottom, 13 from the top.
+            label.frame = NSRect(x: 10, y: 3, width: 300, height: 14)
             cell.addSubview(label)
             return cell
         case .item(let item, _):
