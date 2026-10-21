@@ -552,6 +552,13 @@ final class DevPillView: HoverView {
     private let store: BrowserStore
     /// NSGlassEffectView, or a visual effect view before macOS 26.
     private let glass: NSView
+    /// Under the glass: the page blurred in a soft halo that fades out
+    /// around the pill, and a wide shadow with a tight one where it meets
+    /// the page, so it lifts off busy pages.
+    private let halo = NSVisualEffectView()
+    private let wideShadow = CALayer()
+    private let contactShadow = CALayer()
+    private static let haloSpread: CGFloat = 18
     private let content = FlippedView()
     private let host = Label.make(size: 12, weight: .medium)
     private let problem = Label.make(size: 12, weight: .semibold)
@@ -594,6 +601,16 @@ final class DevPillView: HoverView {
         }
         super.init(frame: .zero)
         layer?.masksToBounds = false
+        halo.material = .popover
+        halo.blendingMode = .withinWindow
+        halo.state = .active
+        halo.maskImage = Self.haloMask
+        addSubview(halo)
+        for shadow in [wideShadow, contactShadow] {
+            shadow.shadowColor = NSColor.black.cgColor
+            shadow.shadowOpacity = 1
+            layer?.addSublayer(shadow)
+        }
         addSubview(glass)
         content.wantsLayer = true
         content.layer?.masksToBounds = true
@@ -696,6 +713,13 @@ final class DevPillView: HoverView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let radius = bounds.height / 2
+        let spread = Self.haloSpread
+        halo.frame = bounds.insetBy(dx: -spread, dy: -spread).offsetBy(dx: 0, dy: 3)
+        let capsule = CGPath(roundedRect: bounds, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        for shadow in [wideShadow, contactShadow] {
+            shadow.frame = bounds
+            shadow.shadowPath = capsule
+        }
         glass.frame = bounds
         if #available(macOS 26.0, *), let glass = glass as? NSGlassEffectView {
             glass.cornerRadius = radius
@@ -744,13 +768,36 @@ final class DevPillView: HoverView {
     }
 
     override func updateLayer() {
-        // Liquid Glass draws its own edge and shadow.
-        if #available(macOS 26.0, *) { return }
-        layer?.shadowColor = NSColor.black.withAlphaComponent(effectiveAppearance.isDark ? 0.3 : 0.12).cgColor
-        layer?.shadowOpacity = 1
-        layer?.shadowRadius = 10
-        layer?.shadowOffset = CGSize(width: 0, height: -3)
+        let dark = effectiveAppearance.isDark
+        // The view is flipped: positive offsets fall below the pill.
+        wideShadow.shadowRadius = 20
+        wideShadow.shadowOffset = CGSize(width: 0, height: 10)
+        wideShadow.shadowColor = NSColor.black.withAlphaComponent(dark ? 0.6 : 0.28).cgColor
+        contactShadow.shadowRadius = 3
+        contactShadow.shadowOffset = CGSize(width: 0, height: 1)
+        contactShadow.shadowColor = NSColor.black.withAlphaComponent(dark ? 0.4 : 0.14).cgColor
     }
+
+    /// A capsule that fades out over the halo's spread, stretched to any
+    /// width (its middle repeats) so the pill can grow without a new mask.
+    private static let haloMask: NSImage = {
+        let spread = haloSpread, height: CGFloat = 32 + 2 * haloSpread
+        let size = NSSize(width: height * 2, height: height)
+        let image = NSImage(size: size, flipped: false) { rect in
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            let core = rect.insetBy(dx: spread, dy: spread)
+            let path = CGPath(roundedRect: core, cornerWidth: core.height / 2, cornerHeight: core.height / 2, transform: nil)
+            // A shadow drawn from far outside leaves only its soft edge here.
+            context.setShadow(offset: CGSize(width: 0, height: -2000), blur: spread * 0.9, color: NSColor.black.cgColor)
+            context.translateBy(x: 0, y: 2000)
+            context.addPath(path)
+            context.fillPath()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: height / 2, left: height / 2, bottom: height / 2 - 1, right: height / 2)
+        image.resizingMode = .stretch
+        return image
+    }()
 
     override func hoverChanged() {
         onHover?(hovering)
