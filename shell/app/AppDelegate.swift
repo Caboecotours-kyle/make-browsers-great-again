@@ -22,7 +22,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         store.updateTrafficLights()
         store.refresh()
         window.makeKeyAndOrderFront(nil)
-        if store.visibleTabID == nil { store.commandBar = .newTab }
+        if core.needsOnboarding() {
+            store.importSheet = ImportRequest(firstLaunch: true)
+        } else if store.visibleTabID == nil {
+            store.commandBar = .newTab
+        }
 
         // Two-finger swipes in the sidebar switch spaces.
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
@@ -102,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if NSApp.keyWindow === window { store.closeVisibleTab() } else { NSApp.keyWindow?.performClose(sender) }
     }
     @objc func newSpace(_ sender: Any?) { store.spaceEditor = SpaceEditorRequest(spaceID: nil) }
+    @objc func importFromBrowser(_ sender: Any?) { store.importSheet = ImportRequest(firstLaunch: false) }
     @objc func editSpace(_ sender: Any?) { store.spaceEditor = SpaceEditorRequest(spaceID: store.activeSpace.id) }
     @objc func newFolder(_ sender: Any?) { store.newFolder() }
     @objc func clearToday(_ sender: Any?) { store.clearToday(store.activeSpace.id) }
@@ -158,6 +163,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             m.item("Open Location…", #selector(openLocation(_:)), "l", target: self)
             m.item("New Folder", #selector(newFolder(_:)), "n", [.command, .option], target: self)
             m.item("New Space…", #selector(newSpace(_:)), "n", [.command, .shift], target: self)
+            m.addItem(.separator())
+            m.item("Import from Another Browser…", #selector(importFromBrowser(_:)), "", target: self)
             m.addItem(.separator())
             m.item("Close Tab", #selector(closeTab(_:)), "w", target: self)
             m.item("Clear Today Tabs", #selector(clearToday(_:)), "k", [.command, .shift], target: self)

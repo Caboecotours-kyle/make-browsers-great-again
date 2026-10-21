@@ -48,6 +48,10 @@ struct RootView: View {
             SpaceEditor(request: request)
                 .environmentObject(store)
         }
+        .sheet(item: $store.importSheet) { request in
+            ImportSheet(request: request)
+                .environmentObject(store)
+        }
     }
 }
 

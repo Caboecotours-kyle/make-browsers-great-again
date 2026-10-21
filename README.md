@@ -39,6 +39,15 @@ events back. Nothing in the UI layer keeps browser state of its own.
   open as tabs.
 - **Command bar** (⌘T / ⌘L): open a URL, search, or switch to an open tab.
 - **Sidebar**: hide it with ⌘S; hovering the left edge slides it back in.
+- **Import from other browsers**: at first launch (and from File ▸ Import from
+  Another Browser…) MBGA lists the browsers it finds on the Mac and what each
+  would bring. From Arc it takes spaces with their icons, colors and profiles,
+  pinned tabs and folders, favorites and Today tabs. From Chrome, Helium,
+  Brave, Edge, Vivaldi, Opera and any other Chromium-based browser it takes
+  each profile's bookmarks, pinned tabs and open tabs. From Firefox (and Zen,
+  LibreWolf, Waterfox) and Safari it takes bookmarks; Safari needs Full Disk
+  Access. Every source profile becomes an MBGA profile with its own space, and
+  bookmarks land in folders under its pinned tabs. Nothing loads until opened.
 
 ## Memory
 
@@ -113,6 +122,9 @@ keychain.
 ## Not yet built
 
 - Chrome extensions: CEF's embeddable browser style does not support them.
+- Importing history, passwords and cookies (MBGA has no history or password
+  store yet; cookies would need each browser's keychain key), and open tabs
+  from Firefox and Safari.
 - Further Arc features: automatic archiving of Today tabs, split view, Peek,
   Little Arc, Boosts, the archive/library view, and multi-color gradient
   themes.

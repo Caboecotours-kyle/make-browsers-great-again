@@ -55,6 +55,9 @@ final class BrowserStore: NSObject, ObservableObject {
         didSet { updateTrafficLights() }
     }
     @Published var spaceEditor: SpaceEditorRequest?
+    @Published var importSheet: ImportRequest? {
+        didSet { if importSheet != nil { releaseWebFocus() } }
+    }
     @Published var renamingFolder: UInt64? {
         didSet { if renamingFolder != nil { releaseWebFocus() } }
     }
