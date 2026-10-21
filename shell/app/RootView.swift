@@ -152,17 +152,21 @@ final class RootView: NSView {
     override func layout() {
         super.layout()
         backdrop.frame = bounds
-        card.frame = cardFrame(for: shownLayout)
+        card.frame = currentCardFrame
         card.isCard = chrome
         card.cornerRadius = max(store.windowRadius - inset, 6)
         emptyHint.frame = card.bounds
         dropPreview.frame = card.bounds
         sidebar.isHidden = !chrome && sidebar.superview === self
-        if sidebar.superview === self && shownLayout == .full {
-            sidebar.frame = NSRect(x: 0, y: 0, width: sidebarWidth, height: bounds.height)
+        if sidebar.superview === self {
+            let shown = sidebarShown
+            sidebar.frame = NSRect(x: -sidebarWidth * (1 - shown), y: 0, width: sidebarWidth, height: bounds.height)
+            sidebar.alphaValue = shown
         }
         if rail.superview === self {
-            rail.frame = NSRect(x: 0, y: 0, width: SidebarRail.width, height: bounds.height)
+            let shown = railShown
+            rail.frame = NSRect(x: -SidebarRail.width * (1 - shown), y: 0, width: SidebarRail.width, height: bounds.height)
+            rail.alphaValue = shown
             rail.isHidden = !chrome
         }
         handle.isHidden = !(chrome && shownLayout == .full)
@@ -175,42 +179,79 @@ final class RootView: NSView {
         commandBar?.frame = bounds
     }
 
+    // MARK: - Layout transitions
+
+    /// How far the sidebar and the rail are in (1) or out (0), as springs:
+    /// stepped frame by frame from wherever they are, so a quick second ⌘S
+    /// turns a change around smoothly, and a layout pass mid-way (a window
+    /// resize) can't snap anything into place early.
+    private lazy var sidebarSpring = Spring(store.layout == .full ? 1 : 0)
+    private lazy var railSpring = Spring(store.layout == .compact ? 1 : 0)
+    private lazy var layoutTicker = FrameTicker { [weak self] time in self?.stepLayout(at: time) }
+    private var lastLayoutStep: CFTimeInterval?
+
+    private var sidebarShown: CGFloat { sidebarSpring.value }
+    private var railShown: CGFloat { railSpring.value }
+
+    /// The card between the layouts, from how far the panels are in.
+    private var currentCardFrame: NSRect {
+        guard chrome else { return bounds }
+        let sidebar = sidebarSpring.value, rail = railSpring.value
+        let panels = min(sidebar + rail, 1)
+        let inset = 5 + 3 * panels
+        let leading = sidebar * (sidebarWidth + 8) + rail * SidebarRail.width + (1 - panels) * 5
+        return NSRect(x: leading, y: inset, width: max(bounds.width - leading - inset, 0),
+                      height: max(bounds.height - inset * 2, 0))
+    }
+
     /// Switches layouts: the sidebar or rail slides while the page's card
     /// follows its edge. The page itself lays out once, not on every frame.
     private func transitionLayout() {
-        let old = shownLayout, new = store.layout
-        guard old != new else { return }
+        let new = store.layout
+        guard new != shownLayout else { return }
         shownLayout = new
-        // The page's edge travels with the sidebar's.
-        card.cornerRadius = max(store.windowRadius - inset, 6)
-        card.move(to: cardFrame(for: new), curve: Motion.glide)
-        handle.isHidden = new != .full
+        if new == .full, sidebar.superview !== self {
+            // From the peek card, if it was there.
+            sidebar.removeFromSuperview()
+            addSubview(sidebar, positioned: .above, relativeTo: card)
+        }
+        if new == .compact, rail.superview !== self { addSubview(rail, positioned: .above, relativeTo: card) }
+        sidebarSpring.target = new == .full ? 1 : 0
+        railSpring.target = new == .compact ? 1 : 0
+        guard chrome, !Motion.reduced, window != nil else {
+            sidebarSpring.settle()
+            railSpring.settle()
+            finishLayoutMove()
+            return
+        }
+        card.beginResizing(toward: cardFrame(for: new))
+        if !layoutTicker.isRunning { lastLayoutStep = nil }
+        layoutTicker.start(on: self)
+        needsLayout = true
+    }
 
-        func slideOut(_ view: NSView) {
-            Motion.animate(Motion.glide) {
-                view.animator().frame.origin.x = -view.frame.width
-                view.animator().alphaValue = 0
-            } completion: {
-                // Gone unless it came back meanwhile.
-                if view.alphaValue == 0 { view.removeFromSuperview(); view.alphaValue = 1 }
-            }
+    private func stepLayout(at time: CFTimeInterval) {
+        let dt = lastLayoutStep.map { time - $0 } ?? 1.0 / 120
+        lastLayoutStep = time
+        sidebarSpring.step(dt)
+        railSpring.step(dt)
+        if sidebarSpring.isSettled, railSpring.isSettled {
+            finishLayoutMove()
+        } else {
+            needsLayout = true
+            layoutSubtreeIfNeeded()
         }
-        func slideIn(_ view: NSView, width: CGFloat) {
-            if view.superview !== self { addSubview(view, positioned: .above, relativeTo: card) }
-            view.frame = NSRect(x: -width, y: 0, width: width, height: bounds.height)
-            view.alphaValue = 0
-            Motion.animate(Motion.glide) {
-                view.animator().frame.origin.x = 0
-                view.animator().alphaValue = 1
-            }
-        }
-        if old == .full, sidebar.superview === self { slideOut(sidebar) }
-        if old == .compact { slideOut(rail) }
-        if new == .full {
-            if sidebar.superview === peek { sidebar.removeFromSuperview() }
-            slideIn(sidebar, width: sidebarWidth)
-        }
-        if new == .compact { slideIn(rail, width: SidebarRail.width) }
+    }
+
+    private func finishLayoutMove() {
+        layoutTicker.stop()
+        if shownLayout != .full, sidebar.superview === self { sidebar.removeFromSuperview() }
+        if shownLayout != .compact, rail.superview === self { rail.removeFromSuperview() }
+        sidebar.alphaValue = 1
+        rail.alphaValue = 1
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+        card.endResizing()
     }
 
     // MARK: - Peek
@@ -227,6 +268,7 @@ final class RootView: NSView {
             if sidebar.superview !== peek {
                 sidebar.removeFromSuperview()
                 peek.addSubview(sidebar)
+                sidebar.alphaValue = 1
             }
             peek.frame = peekFrame(shown: false)
             sidebar.frame = peek.bounds

@@ -40,10 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if ProcessInfo.processInfo.environment["MBGA_DEBUG_LITTLE_WINDOW"]?.isEmpty == false, let tab = store.visibleTabID {
             store.openInLittleWindow(tab)
         }
-        // MBGA_DEBUG_LAYOUTS switches between Full and Focus every few
-        // seconds, for captures of the transition.
-        if ProcessInfo.processInfo.environment["MBGA_DEBUG_LAYOUTS"]?.isEmpty == false {
-            let timer = Timer(timeInterval: 3, repeats: true) { [weak self] _ in
+        // MBGA_DEBUG_LAYOUTS=<seconds> switches between Full and Focus that
+        // often (every 3 s if not a number), for captures of the transition.
+        if let every = ProcessInfo.processInfo.environment["MBGA_DEBUG_LAYOUTS"], !every.isEmpty {
+            let timer = Timer(timeInterval: Double(every) ?? 3, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let store = self?.store else { return }
                     store.setLayout(store.layout == .full ? .focus : .full)

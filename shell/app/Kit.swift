@@ -48,6 +48,42 @@ class HoverView: FlippedView {
     }
 }
 
+/// Calls back on every display frame of a view's screen, with the time the
+/// frame will be shown, until stopped. For moves stepped frame by frame:
+/// views animated by Core Animation already sit at their destination as far
+/// as AppKit is concerned, and such moves can't turn around mid-way without
+/// jumping.
+@MainActor
+final class FrameTicker {
+    private var link: CADisplayLink?
+    private let tick: @MainActor (CFTimeInterval) -> Void
+
+    init(_ tick: @escaping @MainActor (CFTimeInterval) -> Void) { self.tick = tick }
+
+    var isRunning: Bool { link != nil }
+
+    func start(on view: NSView) {
+        guard link == nil else { return }
+        let link = view.displayLink(target: Target(self), selector: #selector(Target.step(_:)))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    func stop() {
+        link?.invalidate()
+        link = nil
+    }
+
+    /// The link's target, so the link doesn't keep the ticker alive.
+    private final class Target: NSObject {
+        weak var ticker: FrameTicker?
+
+        init(_ ticker: FrameTicker) { self.ticker = ticker }
+
+        @MainActor @objc func step(_ link: CADisplayLink) { ticker?.tick(link.targetTimestamp) }
+    }
+}
+
 extension NSView {
     /// Whether the pointer is over this view, and not something above it, in
     /// the key window. Tracking areas only report the pointer crossing them,

@@ -185,6 +185,8 @@ enum Motion {
     /// The sidebar's list moving to make room or close a gap: a gentle
     /// start, so what it moves over can fade first.
     static let reflow = Curve(duration: 0.3 * slow, timing: CAMediaTimingFunction(name: .easeInEaseOut))
+    /// How long a spring takes to (nearly) settle.
+    static let springResponse = 0.3 * slow
     /// A page giving way to another space's.
     static let fade = Curve(duration: 0.22 * slow, timing: CAMediaTimingFunction(name: .easeInEaseOut))
 
@@ -222,6 +224,44 @@ enum Motion {
         changes()
         CATransaction.commit()
         NSAnimationContext.endGrouping()
+    }
+}
+
+/// A critically damped spring for moves that can be turned around: it heads
+/// for its target without overshooting, and keeps its speed when the target
+/// changes mid-way, so a move reversed (a quick second ⌘S) slows and turns
+/// instead of snapping into the new direction.
+struct Spring {
+    var value: CGFloat
+    var velocity: CGFloat = 0
+    var target: CGFloat
+    let response: Double
+
+    init(_ value: CGFloat, response: Double = Motion.springResponse) {
+        self.value = value
+        target = value
+        self.response = response
+    }
+
+    var isSettled: Bool { abs(value - target) < 0.0005 && abs(velocity) < 0.005 }
+
+    /// Advances `dt` seconds (exactly, however long the frame was).
+    mutating func step(_ dt: Double) {
+        let w = 2 * Double.pi / response
+        let x0 = Double(value - target), v0 = Double(velocity)
+        let c = v0 + w * x0
+        let decay = exp(-w * dt)
+        value = target + CGFloat((x0 + c * dt) * decay)
+        velocity = CGFloat((v0 - w * c * dt) * decay)
+        if isSettled {
+            value = target
+            velocity = 0
+        }
+    }
+
+    mutating func settle() {
+        value = target
+        velocity = 0
     }
 }
 

@@ -20,6 +20,9 @@ enum SidebarLayout: String, CaseIterable {
     }
 
     static let defaultsKey = "sidebarLayout"
+    /// MBGA_DEBUG_LAYOUTS cycles layouts for captures; that must not change
+    /// the layout saved for real use (the preferences are shared).
+    static let debugCycling = ProcessInfo.processInfo.environment["MBGA_DEBUG_LAYOUTS"]?.isEmpty == false
 
     static var saved: SidebarLayout {
         let defaults = UserDefaults.standard
@@ -77,7 +80,9 @@ final class BrowserStore: NSObject {
     }
     private(set) var layout = SidebarLayout.saved {
         didSet {
-            UserDefaults.standard.set(layout.rawValue, forKey: SidebarLayout.defaultsKey)
+            if !SidebarLayout.debugCycling {
+                UserDefaults.standard.set(layout.rawValue, forKey: SidebarLayout.defaultsKey)
+            }
             if oldValue != .focus { layoutBeforeFocus = oldValue }
             sidebarPeek = false
             trafficLightsRevealed = false

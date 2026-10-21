@@ -50,7 +50,7 @@ final class PagerModel {
 
     // MARK: Animated moves
 
-    private var link: CADisplayLink?
+    private lazy var ticker = FrameTicker { [weak self] time in self?.step(at: time) }
     private var moveStart: CFTimeInterval = 0
     private var moveFrom: CGFloat = 0
 
@@ -59,15 +59,11 @@ final class PagerModel {
         moveStart = CACurrentMediaTime()
         destination = value
         travel = min(position, value)...max(position, value)
-        if link == nil, let view {
-            let link = view.displayLink(target: FrameTarget(self), selector: #selector(FrameTarget.step(_:)))
-            link.add(to: .main, forMode: .common)
-            self.link = link
-        }
+        if let view { ticker.start(on: view) }
         step(at: moveStart)
     }
 
-    fileprivate func step(at time: CFTimeInterval) {
+    private func step(at time: CFTimeInterval) {
         guard let destination else { return }
         let t = min(max((time - moveStart) / Motion.glide.duration, 0), 1)
         position = t >= 1 ? destination : moveFrom + (destination - moveFrom) * CGFloat(Motion.glide.progress(at: t))
@@ -76,8 +72,7 @@ final class PagerModel {
     }
 
     private func stopMoving() {
-        link?.invalidate()
-        link = nil
+        ticker.stop()
         destination = nil
         travel = nil
     }
@@ -212,18 +207,6 @@ final class PagerModel {
     }
 }
 
-/// Receives display frames for the pager without the display link keeping
-/// the pager alive.
-private final class FrameTarget: NSObject {
-    weak var pager: PagerModel?
-
-    init(_ pager: PagerModel) { self.pager = pager }
-
-    @MainActor @objc func step(_ link: CADisplayLink) {
-        pager?.step(at: link.targetTimestamp)
-    }
-}
-
 /// Holds the engine views of loaded tabs and shows the visible one. Hidden
 /// views are throttled by the engine automatically.
 final class WebContainerView: NSView {
@@ -339,52 +322,30 @@ final class PageCardView: NSView {
         container.cornerRadius = isCard ? cornerRadius : 0
     }
 
-    private var moves = 0
+    private var pinned: NSSize?
 
-    /// Moves to `target` along `curve` without the page laying out on every
-    /// frame. For the move the page takes the larger of its two sizes, pinned
-    /// to the card's trailing edge: a growing card uncovers it and a
-    /// shrinking one covers it, and its content stays put underneath. It
-    /// settles at the card's size once the move ends.
-    func move(to target: NSRect, curve: Motion.Curve) {
-        guard !Motion.reduced, frame.width > 0, target != frame else {
-            frame = target
-            return
-        }
-        let size = NSSize(width: max(frame.width, target.width), height: max(frame.height, target.height))
+    /// For a change of size stepped frame by frame: the page takes the
+    /// larger of the card's sizes now and at `target` (or keeps a larger one
+    /// from a change still under way), pinned to the card's trailing edge, so
+    /// it lays out once rather than on every frame. A growing card uncovers
+    /// it and a shrinking one covers it, and its content stays put.
+    func beginResizing(toward target: NSRect) {
+        let size = NSSize(width: max(frame.width, target.width, pinned?.width ?? 0),
+                          height: max(frame.height, target.height, pinned?.height ?? 0))
+        pinned = size
         for page in container.subviews {
             page.autoresizingMask = [.minXMargin, .maxYMargin]
             page.frame = NSRect(x: container.bounds.width - size.width, y: 0, width: size.width, height: size.height)
         }
-        moves += 1
-        let pages = container.subviews
-        let starts = pages.map { $0.layer?.position }
-        Motion.animate(curve) {
-            animator().frame = target
-            CATransaction.begin()
-            CATransaction.setAnimationDuration(curve.duration)
-            CATransaction.setAnimationTimingFunction(curve.timing)
-            shadowLayer.frame = NSRect(origin: .zero, size: target.size)
-            CATransaction.commit()
-        } completion: { [weak self] in
-            guard let self else { return }
-            moves -= 1
-            guard moves == 0 else { return }
-            for page in container.subviews {
-                page.autoresizingMask = [.width, .height]
-                page.frame = container.bounds
-            }
-        }
-        // AppKit moves the pages to their new place at once instead of along
-        // with the card; slide them so they keep to its trailing edge.
-        for (page, start) in zip(pages, starts) {
-            guard let layer = page.layer, let start, start != layer.position else { continue }
-            let slide = CABasicAnimation(keyPath: "position")
-            slide.fromValue = NSValue(point: start)
-            slide.toValue = NSValue(point: layer.position)
-            slide.duration = curve.duration
-            slide.timingFunction = curve.timing
-            layer.add(slide, forKey: "cardMove")
+    }
+
+    /// The page takes the card's size again.
+    func endResizing() {
+        guard pinned != nil else { return }
+        pinned = nil
+        for page in container.subviews {
+            page.autoresizingMask = [.width, .height]
+            page.frame = container.bounds
         }
     }
 
