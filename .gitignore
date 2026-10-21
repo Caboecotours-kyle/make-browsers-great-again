@@ -1,0 +1,7 @@
+/third_party/cef/
+/build/
+/core/target/
+.DS_Store
+/third_party/chromium/
+/third_party/chromium-dl/
+__pycache__/

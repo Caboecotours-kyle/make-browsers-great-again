@@ -1,0 +1,26 @@
+[package]
+name = "mbga_core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uniffi = "0.32"
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
