@@ -386,18 +386,28 @@ extension WebContainerView {
         let panel = NSRect(x: edge + 1, y: 0, width: bounds.width - edge - 1, height: bounds.height)
         let frame = window.convertToScreen(convert(panel, to: nil))
         if devTools.frame != frame { devTools.setFrame(frame, display: true) }
+        devTools.contentView?.layer?.cornerRadius = cornerRadius
         return NSRect(x: 0, y: 0, width: edge, height: bounds.height)
     }
 
     private func dock(_ devTools: NSWindow, in window: NSWindow) {
-        devTools.styleMask.insert(.fullSizeContentView)
-        devTools.titlebarAppearsTransparent = true
-        devTools.titleVisibility = .hidden
-        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            devTools.standardWindowButton(button)?.isHidden = true
-        }
+        // Borderless, so macOS doesn't round its corners: square against the
+        // page, and rounded only where it meets the card's own corners.
+        // (Chrome's window class still takes the keyboard when borderless.)
+        devTools.styleMask = [.borderless, .resizable]
+        devTools.isOpaque = false
+        devTools.backgroundColor = .clear
         devTools.isMovable = false
         devTools.hasShadow = false
+        if let content = devTools.contentView {
+            content.wantsLayer = true
+            content.layer?.cornerCurve = .continuous
+            content.layer?.maskedCorners = [.layerMaxXMinYCorner, .layerMaxXMaxYCorner]
+            content.layer?.masksToBounds = true
+        }
+        if ProcessInfo.processInfo.environment["MBGA_DEBUG_EVENTS"] != nil {
+            NSLog("docked DevTools: canBecomeKey=%d", devTools.canBecomeKey ? 1 : 0)
+        }
         devTools.collectionBehavior.insert(.fullScreenAuxiliary)
         window.addChildWindow(devTools, ordered: .above)
         devTools.orderFront(nil)
@@ -414,12 +424,11 @@ extension WebContainerView {
             devTools.orderOut(nil)
             return
         }
-        devTools.styleMask.remove(.fullSizeContentView)
-        devTools.titlebarAppearsTransparent = false
-        devTools.titleVisibility = .visible
-        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            devTools.standardWindowButton(button)?.isHidden = false
-        }
+        devTools.contentView?.layer?.cornerRadius = 0
+        devTools.contentView?.layer?.masksToBounds = false
+        devTools.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        devTools.isOpaque = true
+        devTools.backgroundColor = .windowBackgroundColor
         devTools.isMovable = true
         devTools.hasShadow = true
         devTools.setFrame(devTools.frame.insetBy(dx: -20, dy: -20).offsetBy(dx: -60, dy: 0), display: true)
