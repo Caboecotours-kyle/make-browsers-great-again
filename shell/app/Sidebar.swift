@@ -328,10 +328,12 @@ private struct SidebarBottomBar: View {
             }
             .help("Downloads")
             Spacer(minLength: 4)
-            HStack(spacing: 2) {
-                ForEach(store.snapshot.spaces, id: \.id) { space in
-                    SpaceDot(space: space, active: space.id == store.snapshot.activeSpace)
-                }
+            // Icons shrink, then turn into dots, then scroll, so many spaces
+            // never make the bar (and with it the sidebar) wider.
+            ViewThatFits(in: .horizontal) {
+                spaceDots(size: 24, icons: true)
+                spaceDots(size: 18, icons: true)
+                ScrollView(.horizontal, showsIndicators: false) { spaceDots(size: 14, icons: false) }
             }
             Spacer(minLength: 4)
             Menu {
@@ -348,24 +350,35 @@ private struct SidebarBottomBar: View {
         }
         .frame(height: 28)
     }
+
+    private func spaceDots(size: CGFloat, icons: Bool) -> some View {
+        HStack(spacing: 2) {
+            ForEach(store.snapshot.spaces, id: \.id) { space in
+                SpaceDot(space: space, active: space.id == store.snapshot.activeSpace, size: size, icon: icons)
+            }
+        }
+    }
 }
 
 private struct SpaceDot: View {
     @EnvironmentObject private var store: BrowserStore
     let space: SpaceInfo
     let active: Bool
+    var size: CGFloat = 24
+    /// False shows a dot even for spaces with an icon.
+    var icon = true
     @State private var hovering = false
 
     var body: some View {
         let key = "space-\(space.id)"
         Group {
-            if space.icon.isEmpty {
+            if space.icon.isEmpty || !icon {
                 Circle().fill(.primary).frame(width: 6, height: 6)
             } else {
-                Text(space.icon).font(.system(size: 13))
+                Text(space.icon).font(.system(size: size * 0.54))
             }
         }
-        .frame(width: 24, height: 24)
+        .frame(width: size, height: 24)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(.white.opacity(store.dropIndicator?.key == key ? 0.5 : hovering ? 0.3 : 0))
