@@ -41,7 +41,20 @@ final class SidebarRail: FlippedView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+    private var stale = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil, stale { update() }
+    }
+
     private func update() {
+        // Out of the window (another layout), it catches up when it's back.
+        guard window != nil else {
+            stale = true
+            return
+        }
+        stale = false
         let space = store.activeSpace
         let all = space.favorites + space.pinned.compactMap(\.tab) + space.today
         while tabs.count > all.count { tabs.removeLast().removeFromSuperview() }

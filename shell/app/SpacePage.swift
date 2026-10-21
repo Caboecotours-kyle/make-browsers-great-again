@@ -132,7 +132,8 @@ final class SpacePageView: FlippedView, NSTableViewDataSource, NSTableViewDelega
     // MARK: - Updating
 
     /// Shows a new state of the space, animating insertions and removals
-    /// along `animation` (tidying up), otherwise changing rows in place.
+    /// along `animation` (tidying up), otherwise changing only the rows that
+    /// changed.
     func update(_ space: SpaceInfo, animation: Motion.Curve?) {
         self.space = space
         header.update(space)
@@ -155,12 +156,6 @@ final class SpacePageView: FlippedView, NSTableViewDataSource, NSTableViewDelega
             }
             return
         }
-        guard let animation, !Motion.reduced else {
-            rows = next
-            table.reloadData()
-            return
-        }
-        // Removals and insertions slide and fade; then changed rows refresh.
         let diff = nextIDs.difference(from: oldIDs)
         var removed = IndexSet(), inserted = IndexSet()
         for change in diff {
@@ -169,18 +164,30 @@ final class SpacePageView: FlippedView, NSTableViewDataSource, NSTableViewDelega
             case .insert(let offset, _, _): inserted.insert(offset)
             }
         }
+        // A wholly different list (an import, say) is simply rebuilt; a few
+        // rows coming or going (the tidy-up offer as spaces switch) only
+        // touch those rows, which keeps a switch from rebuilding a long list.
+        guard removed.count + inserted.count <= max(8, next.count / 2) else {
+            rows = next
+            table.reloadData()
+            return
+        }
+        let animated = animation != nil && !Motion.reduced
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = animation.duration
-            context.timingFunction = animation.timing
+            // Removals and insertions slide and fade when tidying up.
+            context.duration = animated ? animation!.duration : 0
+            context.timingFunction = animation?.timing
             table.beginUpdates()
-            table.removeRows(at: removed, withAnimation: [.effectFade, .slideUp])
-            table.insertRows(at: inserted, withAnimation: .effectFade)
+            table.removeRows(at: removed, withAnimation: animated ? [.effectFade, .slideUp] : [])
+            table.insertRows(at: inserted, withAnimation: animated ? .effectFade : [])
             rows = next
             table.endUpdates()
         }
-        let kept = IndexSet(next.indices).subtracting(inserted)
-        table.reloadData(forRowIndexes: kept, columnIndexes: [0])
-        for i in kept { (table.rowView(atRow: i, makeIfNecessary: false) as? SidebarRowView)?.configure(rows[i]) }
+        // Then the kept rows whose content changed refresh.
+        let before = Dictionary(old.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let changed = IndexSet(next.indices.filter { !inserted.contains($0) && before[next[$0].id] != next[$0] })
+        table.reloadData(forRowIndexes: changed, columnIndexes: [0])
+        for i in changed { (table.rowView(atRow: i, makeIfNecessary: false) as? SidebarRowView)?.configure(rows[i]) }
     }
 
     /// Redraws rows whose look depends on store state outside the snapshot
@@ -596,7 +603,7 @@ final class TabCellView: NSTableCellView, HoverAware {
         title.alphaValue *= dim
         close.image = .symbol(data.pinned ? "minus" : "xmark", size: 9, weight: .bold)
         close.toolTip = data.pinned ? "Unload tab" : "Close tab"
-        toolTip = tab.displayTitle
+        toolTip = hovering ? tab.displayTitle : nil
         updateAccessory()
         needsLayout = true
     }
@@ -605,6 +612,9 @@ final class TabCellView: NSTableCellView, HoverAware {
 
     func setHovering(_ hovering: Bool) {
         self.hovering = hovering
+        // Only the hovered row has a tooltip: each one is a region AppKit
+        // recomputes on every frame a page slides.
+        toolTip = hovering ? data?.tab.displayTitle : nil
         updateAccessory()
         // Resting on a sleeping tab starts loading it, so the click shows it
         // (mostly) loaded.

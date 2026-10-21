@@ -157,17 +157,19 @@ final class RootView: NSView {
         card.cornerRadius = max(store.windowRadius - inset, 6)
         emptyHint.frame = card.bounds
         dropPreview.frame = card.bounds
-        sidebar.isHidden = !chrome && sidebar.superview === self
+        // Out of sight, the sidebar and rail stay attached but hidden:
+        // attaching the sidebar again costs a couple of frames as it slides in.
         if sidebar.superview === self {
             let shown = sidebarShown
             sidebar.frame = NSRect(x: -sidebarWidth * (1 - shown), y: 0, width: sidebarWidth, height: bounds.height)
             sidebar.alphaValue = shown
+            sidebar.isHidden = !chrome || shown == 0
         }
         if rail.superview === self {
             let shown = railShown
             rail.frame = NSRect(x: -SidebarRail.width * (1 - shown), y: 0, width: SidebarRail.width, height: bounds.height)
             rail.alphaValue = shown
-            rail.isHidden = !chrome
+            rail.isHidden = !chrome || shown == 0
         }
         handle.isHidden = !(chrome && shownLayout == .full)
         handle.frame = NSRect(x: sidebarWidth, y: 0, width: 8, height: bounds.height)
@@ -187,7 +189,7 @@ final class RootView: NSView {
     /// resize) can't snap anything into place early.
     private lazy var sidebarSpring = Spring(store.layout == .full ? 1 : 0)
     private lazy var railSpring = Spring(store.layout == .compact ? 1 : 0)
-    private lazy var layoutTicker = FrameTicker { [weak self] time in self?.stepLayout(at: time) }
+    private lazy var layoutTicker = FrameTicker("layout") { [weak self] time in self?.stepLayout(at: time) }
     private var lastLayoutStep: CFTimeInterval?
 
     private var sidebarShown: CGFloat { sidebarSpring.value }
@@ -245,10 +247,6 @@ final class RootView: NSView {
 
     private func finishLayoutMove() {
         layoutTicker.stop()
-        if shownLayout != .full, sidebar.superview === self { sidebar.removeFromSuperview() }
-        if shownLayout != .compact, rail.superview === self { rail.removeFromSuperview() }
-        sidebar.alphaValue = 1
-        rail.alphaValue = 1
         needsLayout = true
         layoutSubtreeIfNeeded()
         card.endResizing()
@@ -269,6 +267,7 @@ final class RootView: NSView {
                 sidebar.removeFromSuperview()
                 peek.addSubview(sidebar)
                 sidebar.alphaValue = 1
+                sidebar.isHidden = false
             }
             peek.frame = peekFrame(shown: false)
             sidebar.frame = peek.bounds
@@ -285,7 +284,8 @@ final class RootView: NSView {
                 if sidebar.superview === peek {
                     sidebar.removeFromSuperview()
                     sidebar.autoresizingMask = []
-                    if store.layout == .full { addSubview(sidebar, positioned: .above, relativeTo: card) }
+                    // Back in the window, hidden unless the layout shows it.
+                    addSubview(sidebar, positioned: .above, relativeTo: card)
                 }
                 needsLayout = true
             }

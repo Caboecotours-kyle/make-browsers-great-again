@@ -56,22 +56,78 @@ class HoverView: FlippedView {
 @MainActor
 final class FrameTicker {
     private var link: CADisplayLink?
+    private weak var window: NSWindow?
+    private let name: String
     private let tick: @MainActor (CFTimeInterval) -> Void
 
-    init(_ tick: @escaping @MainActor (CFTimeInterval) -> Void) { self.tick = tick }
+    init(_ name: String, _ tick: @escaping @MainActor (CFTimeInterval) -> Void) {
+        self.name = name
+        self.tick = tick
+    }
 
     var isRunning: Bool { link != nil }
 
     func start(on view: NSView) {
         guard link == nil else { return }
+        window = view.window
         let link = view.displayLink(target: Target(self), selector: #selector(Target.step(_:)))
         link.add(to: .main, forMode: .common)
         self.link = link
+        stats = Stats()
     }
 
     func stop() {
-        link?.invalidate()
-        link = nil
+        guard let link else { return }
+        link.invalidate()
+        self.link = nil
+        if Self.debug { stats.report(name, visible: window?.occlusionState.contains(.visible) == true) }
+    }
+
+    fileprivate func step(_ link: CADisplayLink) {
+        guard Self.debug else {
+            tick(link.targetTimestamp)
+            return
+        }
+        let start = CACurrentMediaTime()
+        tick(link.targetTimestamp)
+        stats.add(shown: link.timestamp, frame: link.targetTimestamp - link.timestamp, work: CACurrentMediaTime() - start)
+    }
+
+    // MARK: Frame timing (MBGA_DEBUG_FPS)
+
+    private static let debug = ProcessInfo.processInfo.environment["MBGA_DEBUG_FPS"]?.isEmpty == false
+    private var stats = Stats()
+
+    /// Logs, when a move ends, how many frames it took, how many came late
+    /// (a frame was skipped) and how long the work for each took.
+    private struct Stats {
+        var frames = 0
+        var late = 0
+        var longestGap: CFTimeInterval = 0
+        var frame: CFTimeInterval = 0
+        var work: CFTimeInterval = 0
+        var longestWork: CFTimeInterval = 0
+        var lastShown: CFTimeInterval?
+
+        mutating func add(shown: CFTimeInterval, frame: CFTimeInterval, work: CFTimeInterval) {
+            frames += 1
+            self.frame = frame
+            self.work += work
+            longestWork = max(longestWork, work)
+            if let lastShown {
+                let gap = shown - lastShown
+                longestGap = max(longestGap, gap)
+                if gap > frame * 1.5 { late += 1 }
+            }
+            lastShown = shown
+        }
+
+        func report(_ name: String, visible: Bool) {
+            guard frames > 0 else { return }
+            NSLog("MBGA fps %@: %d frames at %.0f Hz, %d late, longest gap %.1f ms, work avg %.2f ms max %.2f ms, visible %d",
+                  name, frames, frame > 0 ? 1 / frame : 0, late, longestGap * 1000, work / Double(frames) * 1000,
+                  longestWork * 1000, visible ? 1 : 0)
+        }
     }
 
     /// The link's target, so the link doesn't keep the ticker alive.
@@ -80,7 +136,7 @@ final class FrameTicker {
 
         init(_ ticker: FrameTicker) { self.ticker = ticker }
 
-        @MainActor @objc func step(_ link: CADisplayLink) { ticker?.tick(link.targetTimestamp) }
+        @MainActor @objc func step(_ link: CADisplayLink) { ticker?.step(link) }
     }
 }
 

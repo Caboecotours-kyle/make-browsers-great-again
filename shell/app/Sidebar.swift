@@ -544,26 +544,65 @@ private final class SpacePagerView: FlippedView {
         }
         ensurePages()
         layoutPages()
+        preparePages()
     }
 
     func refreshDecorations() {
         for page in pages.values { page.refreshDecorations() }
     }
 
+    /// Up to this many spaces every page is kept once made: making one
+    /// (a table and its rows) costs a few frames, too much mid-switch.
+    /// Beyond it, pages far from the current space are let go.
+    private let keepAll = 16
+
     private func wanted(_ index: Int) -> Bool {
         let span = store.pager.travel ?? store.pager.position...store.pager.position
         return CGFloat(index) > span.lowerBound - 1.2 && CGFloat(index) < span.upperBound + 1.2
     }
 
+    private func makePage(_ space: SpaceInfo) {
+        let page = SpacePageView(space: space, store: store)
+        pages[space.id] = page
+        addSubview(page)
+        if let index = store.snapshot.spaces.firstIndex(where: { $0.id == space.id }) {
+            Motion.instantly {
+                page.frame = NSRect(x: (CGFloat(index) - store.pager.position) * stride, y: 0,
+                                    width: bounds.width, height: bounds.height)
+            }
+        }
+    }
+
+    private var preparing = false
+
+    /// Makes the pages not made yet one at a time while nothing else is
+    /// going on, so switching to a space never has to make its page.
+    private func preparePages() {
+        guard !preparing, window != nil, store.snapshot.spaces.count <= keepAll,
+              store.snapshot.spaces.contains(where: { pages[$0.id] == nil })
+        else { return }
+        preparing = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self else { return }
+            preparing = false
+            // Not mid-move or under the fingers; try again shortly.
+            guard store.pager.travel == nil, !store.pager.isTracking else { return preparePages() }
+            guard let space = store.snapshot.spaces.first(where: { self.pages[$0.id] == nil }) else { return }
+            makePage(space)
+            preparePages()
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        preparePages()
+    }
+
     private func ensurePages() {
         for (index, space) in store.snapshot.spaces.enumerated() {
             if wanted(index) {
-                if pages[space.id] == nil {
-                    let page = SpacePageView(space: space, store: store)
-                    pages[space.id] = page
-                    addSubview(page)
-                }
-            } else if !store.isDragging, let page = pages.removeValue(forKey: space.id) {
+                if pages[space.id] == nil { makePage(space) }
+            } else if store.snapshot.spaces.count > keepAll, !store.isDragging, let page = pages.removeValue(forKey: space.id) {
                 // While dragging, the page the drag started from stays: a
                 // tab held over a space's icon switches spaces mid-drag.
                 page.removeFromSuperview()

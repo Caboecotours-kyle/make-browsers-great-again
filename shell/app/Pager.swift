@@ -50,22 +50,26 @@ final class PagerModel {
 
     // MARK: Animated moves
 
-    private lazy var ticker = FrameTicker { [weak self] time in self?.step(at: time) }
-    private var moveStart: CFTimeInterval = 0
+    private lazy var ticker = FrameTicker("space switch") { [weak self] time in self?.step(at: time) }
+    /// When the move's first frame was shown. Its clock starts there, so
+    /// work done as the move begins (switching the page) delays its start
+    /// by a moment instead of making it skip mid-way.
+    private var moveStart: CFTimeInterval?
     private var moveFrom: CGFloat = 0
 
     private func move(to value: CGFloat) {
         moveFrom = position
-        moveStart = CACurrentMediaTime()
+        moveStart = nil
         destination = value
         travel = min(position, value)...max(position, value)
         if let view { ticker.start(on: view) }
-        step(at: moveStart)
     }
 
     private func step(at time: CFTimeInterval) {
         guard let destination else { return }
-        let t = min(max((time - moveStart) / Motion.glide.duration, 0), 1)
+        let start = moveStart ?? time - 1.0 / 120
+        moveStart = start
+        let t = min(max((time - start) / Motion.glide.duration, 0), 1)
         position = t >= 1 ? destination : moveFrom + (destination - moveFrom) * CGFloat(Motion.glide.progress(at: t))
         if t >= 1 { stopMoving() }
         notify()

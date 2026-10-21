@@ -331,11 +331,42 @@ final class FaviconCache {
     private let cache = NSCache<NSString, NSImage>()
     /// Brand colors sampled from favicons; a stored nil means the icon has none.
     private var colors: [String: RGB?] = [:]
-    private static let globe = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)!
+    /// Drawn once as a bitmap, as the favicons are: a symbol image is drawn
+    /// from its vector shape every time a row is.
+    private static let globe: NSImage = {
+        let symbol = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)!
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .regular)) ?? NSImage()
+        let image = NSImage(size: NSSize(width: 16, height: 16))
+        let side = 32
+        if let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side, bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                         bytesPerRow: 0, bitsPerPixel: 0) {
+            bitmap.size = image.size
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+            let fit = symbol.size.width > 0 ? min(16 / symbol.size.width, 16 / symbol.size.height) : 1
+            let size = NSSize(width: symbol.size.width * fit, height: symbol.size.height * fit)
+            symbol.draw(in: NSRect(x: (16 - size.width) / 2, y: (16 - size.height) / 2, width: size.width, height: size.height))
+            NSGraphicsContext.restoreGraphicsState()
+            image.addRepresentation(bitmap)
+        }
+        image.isTemplate = true
+        return image
+    }()
 
+    /// Decoded once into a bitmap: an image read lazily from its file is
+    /// decoded and scaled again each time a row draws it, which made rows
+    /// sliding into view slow to draw.
     func image(atPath path: String) -> NSImage? {
         if let image = cache.object(forKey: path as NSString) { return image }
-        guard let image = NSImage(contentsOfFile: path) else { return nil }
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let decoded = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                  kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceThumbnailMaxPixelSize: 64,
+                  kCGImageSourceShouldCacheImmediately: true,
+              ] as CFDictionary)
+        else { return nil }
+        let image = NSImage(cgImage: decoded, size: NSSize(width: 16, height: 16))
         cache.setObject(image, forKey: path as NSString)
         return image
     }
