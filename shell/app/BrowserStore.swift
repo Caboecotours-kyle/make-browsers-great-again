@@ -1044,7 +1044,10 @@ final class BrowserStore: NSObject {
     /// shows where a little window would open.
     func dragMoved(to point: NSPoint) {
         guard let id = draggingItem else { return }
+        // In Focus the sidebar peeks over the page: there the drag is over
+        // the sidebar, not the page.
         let overPage = core.tab(id: id) != nil && pageFrameOnScreen?.contains(point) == true
+            && sidebarFrameOnScreen?.contains(point) != true
         dragOverPage = overPage ? id : nil
     }
 
@@ -1078,6 +1081,13 @@ final class BrowserStore: NSObject {
     private var pageFrameOnScreen: NSRect? {
         guard let window, webContainer.window === window else { return nil }
         return window.convertToScreen(webContainer.convert(webContainer.bounds, to: nil))
+    }
+
+    /// The sidebar, in screen coordinates, while it's shown.
+    private var sidebarFrameOnScreen: NSRect? {
+        guard let window, let sidebar = pager.sidebar, sidebar.window === window,
+              !sidebar.isHiddenOrHasHiddenAncestor else { return nil }
+        return window.convertToScreen(sidebar.convert(sidebar.bounds, to: nil))
     }
 
     // MARK: - Little windows

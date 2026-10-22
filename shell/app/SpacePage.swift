@@ -468,7 +468,11 @@ final class SidebarTableView: NSTableView {
     }
 
     override func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
-        super.draggingSession(session, movedTo: screenPoint)
+        // NSTableView doesn't implement this on every macOS; calling up to
+        // a missing method raises, and AppKit cancels the drag on the spot.
+        if NSTableView.instancesRespond(to: #selector(NSDraggingSource.draggingSession(_:movedTo:))) {
+            super.draggingSession(session, movedTo: screenPoint)
+        }
         guard let store else { return }
         store.dragMoved(to: screenPoint)
         let overPage = store.dragOverPage != nil
