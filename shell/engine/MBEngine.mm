@@ -3181,15 +3181,16 @@ class CookieKeys : public CefCookieVisitor {
   params->SetBool("awaitPromise", true);
   params->SetBool("returnByValue", true);
   __weak MBWebView* weakSelf = self;
-  _client->Call(
-      _browser, "Runtime.evaluate", params,
-      [weakSelf, turn, gesture](CefRefPtr<CefDictionaryValue> reply) {
-        CefRefPtr<CefDictionaryValue> result =
-            reply ? reply->GetDictionary("result") : nullptr;
-        std::string answer =
-            result ? result->GetString("value").ToString() : "";
-        [weakSelf pictureInPictureAnswered:answer turn:turn gesture:gesture];
-      });
+  _client->Call(_browser, "Runtime.evaluate", params,
+                [weakSelf, turn, gesture](CefRefPtr<CefDictionaryValue> reply) {
+                  CefRefPtr<CefDictionaryValue> result =
+                      reply ? reply->GetDictionary("result") : nullptr;
+                  std::string answer =
+                      result ? result->GetString("value").ToString() : "";
+                  [weakSelf pictureInPictureAnswered:answer
+                                                turn:turn
+                                             gesture:gesture];
+                });
 }
 
 - (void)pictureInPictureAnswered:(const std::string&)answer

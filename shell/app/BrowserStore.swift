@@ -424,12 +424,11 @@ final class BrowserStore: NSObject {
         nav = visible.flatMap { navStates[$0] } ?? NavState()
         publishBlockedCount()
         if lastVisibleTab != visible {
-            if let previous = lastVisibleTab {
-                // Picking an element ends with the page out of sight.
-                if devStates[previous]?.picking == true {
-                    devStates[previous]?.picking = false
-                    views[previous]?.setPicking(false)
-                }
+            if let previous = lastVisibleTab,
+               // Picking an element ends with the page out of sight.
+               devStates[previous]?.picking == true {
+                devStates[previous]?.picking = false
+                views[previous]?.setPicking(false)
             }
             lastVisibleTab = visible
             passwords.hide()
