@@ -14,7 +14,7 @@ project(mbga LANGUAGES C CXX Swift)
 
 set(MBGA_PRODUCT_NAME "MBGA")
 set(MBGA_BUNDLE_ID "dev.mbga.browser")
-set(MBGA_VERSION "0.1.0")
+set(MBGA_VERSION "0.0.2")
 option(MBGA_MOCK_KEYCHAIN "Use a mock keychain (avoids prompts on ad-hoc signed builds)" ON)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/out")
