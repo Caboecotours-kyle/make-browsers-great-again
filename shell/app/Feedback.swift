@@ -359,6 +359,46 @@ final class EmptySpaceHintView: FlippedView {
     }
 }
 
+/// In place of the page when the visible tab is on screen in another
+/// window: a page can show in one window at a time.
+@MainActor
+final class ElsewhereHintView: FlippedView {
+    private let icon = NSImageView()
+    private let title = Label.make("This tab is open in another window", size: 15, weight: .semibold)
+    private let moveHere = NSButton(title: "Show It Here", target: nil, action: nil)
+    private let goThere = NSButton(title: "Go to Window", target: nil, action: nil)
+
+    init(store: BrowserStore) {
+        super.init(frame: .zero)
+        // The page is white in either appearance, so this is too.
+        appearance = NSAppearance(named: .aqua)
+        icon.image = .symbol("macwindow.on.rectangle", size: 28)
+        icon.contentTintColor = .tertiaryLabelColor
+        title.alignment = .center
+        moveHere.bezelStyle = .push
+        moveHere.keyEquivalent = "\r"
+        moveHere.onAction { store.moveVisibleTabHere() }
+        goThere.bezelStyle = .push
+        goThere.onAction { store.showWindowWithVisibleTab() }
+        for view in [icon, title, moveHere, goThere] as [NSView] { addSubview(view) }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func layout() {
+        super.layout()
+        let top = bounds.midY - 70
+        icon.frame = NSRect(x: bounds.midX - 20, y: top, width: 40, height: 34)
+        title.frame = NSRect(x: 20, y: top + 46, width: bounds.width - 40, height: 20)
+        moveHere.sizeToFit()
+        goThere.sizeToFit()
+        let width = max(moveHere.frame.width, goThere.frame.width) + 12
+        let y = top + 82
+        goThere.frame = NSRect(x: bounds.midX - width - 4, y: y, width: width, height: goThere.frame.height)
+        moveHere.frame = NSRect(x: bounds.midX + 4, y: y, width: width, height: moveHere.frame.height)
+    }
+}
+
 /// Looks like the command bar's field; clicking it opens the bar.
 private final class EmptySearchField: HoverView {
     var onClick: (() -> Void)?

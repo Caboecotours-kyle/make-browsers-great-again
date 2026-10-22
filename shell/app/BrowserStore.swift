@@ -68,6 +68,8 @@ enum StoreChange {
     case agent
     /// The inspector opened, closed, changed panel or follows another tab.
     case inspector
+    /// The visible tab went on or off screen in another window.
+    case elsewhere
 }
 
 /// A network request, kept for agents (`mbga network`).
@@ -93,10 +95,11 @@ struct ConsoleEntry {
     let line: Int
 }
 
-/// The shell's single source of UI state. Browser data lives in the Rust core;
-/// this class mirrors it as a snapshot, owns the engine views of loaded tabs
-/// and turns user intents into core calls. Views observe it for the kinds of
-/// change they show.
+/// A window's source of UI state. Browser data lives in the Rust core; this
+/// class mirrors it as a snapshot, owns the engine views of the tabs loaded
+/// in its window and turns user intents into core calls. Views observe it
+/// for the kinds of change they show. Each window has one, all sharing the
+/// core.
 @MainActor
 final class BrowserStore: NSObject {
     let core: BrowserCore
@@ -259,10 +262,40 @@ final class BrowserStore: NSObject {
     /// The space whose page is on screen, to crossfade on a switch.
     private var shownSpace: UInt64?
 
-    init(core: BrowserCore) {
+    // MARK: Windows
+
+    /// The stores of the open windows.
+    private static let open = NSHashTable<BrowserStore>.weakObjects()
+    /// The store of the window in front. The core keeps one current space,
+    /// and one current tab in each space: this window's. The others keep
+    /// their own, and hand them to the core when they come forward.
+    private(set) static weak var front: BrowserStore?
+    var isFront: Bool { Self.front === self }
+    /// The space this window shows and the tab it shows in each space (nil:
+    /// none). Spaces missing follow the core.
+    private var ownSpace: UInt64
+    private var ownTabs: [UInt64: UInt64?]
+    /// The core's snapshot as last read, without this window's choices.
+    private var coreSnapshot: Snapshot
+    /// This window's tab, kept awake in the core while the window is behind.
+    private var keptAwake: UInt64?
+    /// The visible tab is on screen in another window.
+    private(set) var visibleTabElsewhere = false {
+        didSet { if visibleTabElsewhere != oldValue { changed(.elsewhere) } }
+    }
+
+    /// `newWindow` starts on an empty page in the front window's space.
+    init(core: BrowserCore, newWindow: Bool = false) {
         self.core = core
-        snapshot = core.snapshot()
+        let snapshot = core.snapshot()
+        coreSnapshot = snapshot
+        ownSpace = snapshot.activeSpace
+        ownTabs = Dictionary(uniqueKeysWithValues: snapshot.spaces.map { ($0.id, $0.activeTab) })
+        if newWindow { ownTabs[snapshot.activeSpace] = .some(nil) }
+        self.snapshot = snapshot
         super.init()
+        self.snapshot = ownView(of: snapshot)
+        Self.open.add(self)
         pager.pageCount = snapshot.spaces.count
         pager.setPosition(CGFloat(activeSpaceIndex), animated: false)
         pager.onSettle = { [weak self] index in
@@ -327,22 +360,37 @@ final class BrowserStore: NSObject {
     func refresh(animation: Motion.Curve? = nil) {
         refreshPending = false
         if core.revision() != snapshot.revision {
-            let next = core.snapshot()
-            pager.pageCount = next.spaces.count
-            snapshotAnimation = animation
-            snapshot = next
-            snapshotAnimation = nil
-            pager.show(activeSpaceIndex, animated: true)
+            noteCore(core.snapshot())
+            applyChoices(animation: animation)
             schedulePersist()
+            // The other windows show the change too.
+            for store in Self.open.allObjects where store !== self { store.setNeedsRefresh() }
         }
         syncWebViews()
+    }
+
+    /// Shows the core's snapshot with this window's choices.
+    private func applyChoices(animation: Motion.Curve? = nil) {
+        pager.pageCount = coreSnapshot.spaces.count
+        snapshotAnimation = animation
+        snapshot = ownView(of: coreSnapshot)
+        snapshotAnimation = nil
+        pager.show(activeSpaceIndex, animated: true)
     }
 
     private func syncWebViews() {
         let visible = visibleTabID
         if let id = visible, views[id] == nil, let tab = core.tab(id: id) {
-            createView(for: tab)
+            if let holder = Self.holder(of: id) {
+                // On screen in another window it stays there; loaded out of
+                // sight there, it comes here.
+                if !holder.isShowing(id) { adopt(id, from: holder) }
+            } else {
+                createView(for: tab)
+            }
         }
+        visibleTabElsewhere = visible.map { views[$0] == nil && Self.holder(of: $0) != nil } ?? false
+        keepAwake(isFront || window?.isVisible != true ? nil : visible.flatMap { views[$0] != nil ? $0 : nil })
         if let id = visible, core.thaw(id: id) {
             views[id]?.setFrozen(false)
         }
@@ -374,7 +422,8 @@ final class BrowserStore: NSObject {
     }
 
     private func createView(for tab: TabInfo) {
-        guard let profile = core.profileOfTab(tabId: tab.id) else { return }
+        // One page per tab: another window's is moved, not duplicated.
+        guard Self.holder(of: tab.id) == nil, let profile = core.profileOfTab(tabId: tab.id) else { return }
         let url = tab.url.isEmpty ? "about:blank" : tab.url
         let view = MBWebView(url: url, profilePath: core.profileDir(profileId: profile), tabID: tab.id)
         view.delegate = self
@@ -387,8 +436,13 @@ final class BrowserStore: NSObject {
         setNeedsRefresh()
     }
 
-    /// Destroys a tab's engine view, freeing its renderer.
+    /// Destroys a tab's engine view in whichever window has it, freeing its
+    /// renderer.
     private func destroyView(_ id: UInt64) {
+        for store in Self.open.allObjects { store.dropView(id) }
+    }
+
+    private func dropView(_ id: UInt64) {
         if let little = littleWindows.removeValue(forKey: id) {
             core.setShownElsewhere(id: id, shown: false)
             little.dismiss()
@@ -438,11 +492,31 @@ final class BrowserStore: NSObject {
             little.putBack()
             return
         }
-        let spaceID = spaceID ?? activeSpace.id
-        if spaceID != snapshot.activeSpace { core.setActiveSpace(id: spaceID) }
-        core.activateTab(spaceId: spaceID, tabId: tabID)
-        refresh()
+        if let holder = Self.holder(of: tabID), holder !== self {
+            // Another window's little window keeps it; that comes forward.
+            if let little = holder.littleWindows[tabID] { return little.show() }
+            // Chosen here, the page moves here from the other window.
+            adopt(tabID, from: holder)
+        }
+        choose(space: spaceID ?? activeSpace.id, tab: tabID)
         focusVisibleContent()
+    }
+
+    /// Shows `tabID` in space `spaceID`, or the space with its tab if nil.
+    /// In front, the core keeps the choice too.
+    private func choose(space spaceID: UInt64, tab tabID: UInt64?) {
+        ownSpace = spaceID
+        if let tabID { ownTabs[spaceID] = .some(tabID) }
+        if isFront {
+            if spaceID != coreSnapshot.activeSpace { core.setActiveSpace(id: spaceID) }
+            if let tabID { core.activateTab(spaceId: spaceID, tabId: tabID) }
+        }
+        refresh()
+        // Behind, or the core had it already: the core didn't change.
+        if ownView(of: coreSnapshot) != snapshot {
+            applyChoices()
+            syncWebViews()
+        }
     }
 
     func submit(_ input: String, mode: CommandBarMode) {
@@ -485,7 +559,7 @@ final class BrowserStore: NSObject {
 
     /// Unloads a tab but keeps it in the sidebar.
     func sleep(_ tabID: UInt64) {
-        guard views[tabID] != nil else { return }
+        guard Self.holder(of: tabID) != nil else { return }
         destroyView(tabID)
         core.setLive(id: tabID, live: false)
         refresh()
@@ -741,7 +815,8 @@ final class BrowserStore: NSObject {
         var found: (TabInfo, SpaceInfo)?
         for space in snapshot.spaces {
             for tab in space.favorites + space.pinned.compactMap(\.tab) + space.today
-            where tab.id != visibleTabID && tab.live && (tab.audible || tab.id == pausedMediaTab) {
+            where tab.id != visibleTabID && tab.live && (tab.audible || tab.id == pausedMediaTab)
+                && !Self.open.allObjects.contains(where: { $0.isShowing(tab.id) }) {
                 if tab.id == pausedMediaTab { return (tab, space) }
                 if found == nil { found = (tab, space) }
             }
@@ -751,7 +826,7 @@ final class BrowserStore: NSObject {
 
     func toggleMedia(_ tabID: UInt64) {
         let pause = pausedMediaTab != tabID
-        views[tabID]?.setMediaPaused(pause)
+        keeper(of: tabID).views[tabID]?.setMediaPaused(pause)
         pausedMediaTab = pause ? tabID : nil
     }
 
@@ -764,9 +839,8 @@ final class BrowserStore: NSObject {
 
     func activateSpace(_ id: UInt64) {
         guard id != snapshot.activeSpace else { return }
-        core.setActiveSpace(id: id)
-        _ = core.selectDefaultTab(spaceId: id)
-        refresh()
+        if isFront { _ = core.selectDefaultTab(spaceId: id) }
+        choose(space: id, tab: nil)
         updateCleanupOffer()
     }
 
@@ -817,8 +891,7 @@ final class BrowserStore: NSObject {
 
     func createSpace(name: String, icon: String, color: UInt32, profileID: UInt64) {
         let id = core.createSpace(name: name, icon: icon, color: color, profileId: profileID)
-        core.setActiveSpace(id: id)
-        refresh()
+        choose(space: id, tab: nil)
     }
 
     func updateSpace(_ id: UInt64, name: String, icon: String, color: UInt32, profileID: UInt64) {
@@ -942,7 +1015,9 @@ final class BrowserStore: NSObject {
             return
         }
         guard let tab = core.tab(id: tabID) else { return }
-        if views[tabID] == nil { createView(for: tab) }
+        if views[tabID] == nil {
+            if let holder = Self.holder(of: tabID) { adopt(tabID, from: holder) } else { createView(for: tab) }
+        }
         guard let view = views[tabID] else { return }
         if core.thaw(id: tabID) { view.setFrozen(false) }
         core.setShownElsewhere(id: tabID, shown: true)
@@ -1136,12 +1211,159 @@ final class BrowserStore: NSObject {
         let sleepers = core.collectSleepers(pressure: pressure)
         sleepers.forEach(destroyView)
         let freezers = core.collectFreezers()
-        for id in freezers { views[id]?.setFrozen(true) }
+        for id in freezers { keeper(of: id).views[id]?.setFrozen(true) }
         if !archived.isEmpty || !sleepers.isEmpty || !freezers.isEmpty { setNeedsRefresh() }
-        for (id, view) in views where id != visibleTabID {
-            view.probeMedia()
+        for store in Self.open.allObjects {
+            for (id, view) in store.views where id != store.visibleTabID { view.probeMedia() }
         }
         updateCleanupOffer()
+    }
+}
+
+// MARK: - Windows
+
+extension BrowserStore {
+    /// The core's snapshot with this window's space and tabs.
+    fileprivate func ownView(of core: Snapshot) -> Snapshot {
+        var view = core
+        if view.spaces.contains(where: { $0.id == ownSpace }) { view.activeSpace = ownSpace }
+        for i in view.spaces.indices {
+            guard let own = ownTabs[view.spaces[i].id] else { continue }
+            // A tab closed in another window leaves the space empty here.
+            view.spaces[i].activeTab = own.flatMap { id in Self.holds(view.spaces[i], id) ? id : nil }
+        }
+        return view
+    }
+
+    private static func holds(_ space: SpaceInfo, _ id: UInt64) -> Bool {
+        space.favorites.contains { $0.id == id } || space.pinned.contains { $0.tab?.id == id }
+            || space.today.contains { $0.id == id }
+    }
+
+    /// Reads the core's snapshot. In front, the core's choices changed since
+    /// the last read are this window's doing, so they become its own.
+    fileprivate func noteCore(_ next: Snapshot) {
+        if isFront {
+            if next.activeSpace != coreSnapshot.activeSpace { ownSpace = next.activeSpace }
+            for space in next.spaces {
+                let before = coreSnapshot.spaces.first { $0.id == space.id }
+                if before == nil || before?.activeTab != space.activeTab { ownTabs[space.id] = .some(space.activeTab) }
+            }
+        }
+        if !next.spaces.contains(where: { $0.id == ownSpace }) { ownSpace = next.activeSpace }
+        coreSnapshot = next
+    }
+
+    /// The window came forward: the core takes its space and tabs.
+    func becomeFront() {
+        guard !isFront else { return }
+        Self.front = self
+        let current = core.snapshot()
+        if snapshot.activeSpace != current.activeSpace { core.setActiveSpace(id: snapshot.activeSpace) }
+        for space in snapshot.spaces {
+            if let tab = space.activeTab, current.spaces.first(where: { $0.id == space.id })?.activeTab != tab {
+                core.activateTab(spaceId: space.id, tabId: tab)
+            }
+        }
+        // Those changes are this window's own already.
+        coreSnapshot = core.snapshot()
+        refresh()
+        // The window that was in front keeps its tab awake now.
+        Self.windowsChanged()
+    }
+
+    /// Windows were shown, hidden or closed: each looks again at what it
+    /// shows and what the others show.
+    static func windowsChanged() {
+        for store in open.allObjects { store.setNeedsRefresh() }
+    }
+
+    /// The window closed for good: its pages close, and its tabs stay in
+    /// the sidebar for the other windows.
+    func windowClosed() {
+        Self.open.remove(self)
+        if isFront { Self.front = nil }
+        keepAwake(nil)
+        for id in Array(views.keys) {
+            dropView(id)
+            core.setLive(id: id, live: false)
+        }
+        Self.windowsChanged()
+    }
+
+    /// The store whose window has the tab's page, if it's loaded.
+    fileprivate static func holder(of id: UInt64) -> BrowserStore? {
+        open.allObjects.first { $0.views[id] != nil }
+    }
+
+    /// The store whose window has the tab loaded, or this one.
+    fileprivate func keeper(of id: UInt64) -> BrowserStore {
+        Self.holder(of: id) ?? self
+    }
+
+    /// The tab's page is on screen in this store's window or a little one.
+    fileprivate func isShowing(_ id: UInt64) -> Bool {
+        littleWindows[id] != nil || (visibleTabID == id && window?.isVisible == true)
+    }
+
+    /// Brings the window showing the visible tab forward.
+    func showWindowWithVisibleTab() {
+        guard let id = visibleTabID, let holder = Self.holder(of: id), holder !== self else { return }
+        holder.window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Shows the visible tab here, moving it from the window showing it.
+    func moveVisibleTabHere() {
+        if let id = visibleTabID { select(id) }
+    }
+
+    /// What moves with a loaded tab from one window to another.
+    private struct LoadedTab {
+        let view: MBWebView
+        let nav: NavState?
+        let dev: DevTabState?
+        let report: DevPageReport?
+        let blocked: Int?
+        let console: [ConsoleEntry]?
+        let network: [NetworkEntry]?
+    }
+
+    /// Moves a loaded tab's page here from another window.
+    fileprivate func adopt(_ id: UInt64, from other: BrowserStore) {
+        guard let tab = other.release(id) else { return }
+        views[id] = tab.view
+        navStates[id] = tab.nav
+        devStates[id] = tab.dev
+        devReports[id] = tab.report
+        blockedCounts[id] = tab.blocked
+        consoleLogs[id] = tab.console
+        networkLogs[id] = tab.network
+        tab.view.delegate = self
+        webContainer.add(tab.view)
+    }
+
+    /// Lets another window have a loaded tab's page, unless it's in a little
+    /// window.
+    private func release(_ id: UInt64) -> LoadedTab? {
+        guard littleWindows[id] == nil, let view = views.removeValue(forKey: id) else { return nil }
+        let tab = LoadedTab(view: view, nav: navStates.removeValue(forKey: id), dev: devStates.removeValue(forKey: id),
+                            report: devReports.removeValue(forKey: id), blocked: blockedCounts.removeValue(forKey: id),
+                            console: consoleLogs.removeValue(forKey: id), network: networkLogs.removeValue(forKey: id))
+        inspectorSessions.removeValue(forKey: id)?.stop()
+        passwords.forget(id)
+        if pausedMediaTab == id { pausedMediaTab = nil }
+        setNeedsRefresh()
+        return tab
+    }
+
+    /// The core puts hidden tabs to sleep, and only the front window's are
+    /// visible to it; a window behind keeps its tab awake this way.
+    fileprivate func keepAwake(_ id: UInt64?) {
+        guard id != keptAwake else { return }
+        if let old = keptAwake { core.setShownElsewhere(id: old, shown: false) }
+        if let id { core.setShownElsewhere(id: id, shown: true) }
+        keptAwake = id
+        setNeedsRefresh()
     }
 }
 
@@ -1281,28 +1503,33 @@ extension BrowserStore {
 extension BrowserStore {
     /// The tab's engine view, made (and its page loaded) if it was asleep.
     func engineView(for id: UInt64) -> MBWebView? {
-        if views[id] == nil, let tab = core.tab(id: id), !tab.url.isEmpty { createView(for: tab) }
+        if let holder = Self.holder(of: id) { return holder.views[id] }
+        if let tab = core.tab(id: id), !tab.url.isEmpty { createView(for: tab) }
         return views[id]
     }
 
-    func isLoaded(_ id: UInt64) -> Bool { views[id] != nil && navStates[id] != nil }
+    func isLoaded(_ id: UInt64) -> Bool {
+        let store = keeper(of: id)
+        return store.views[id] != nil && store.navStates[id] != nil
+    }
 
     /// Lets a tab out of sight draw (behind the visible page) until the
     /// returned closure is called.
     func renderBehind(_ id: UInt64) -> () -> Void {
-        guard id != visibleTabID, let view = views[id] else { return {} }
-        return webContainer.renderBehind(view)
+        let store = keeper(of: id)
+        guard id != store.visibleTabID, let view = store.views[id] else { return {} }
+        return store.webContainer.renderBehind(view)
     }
 
-    func navState(of id: UInt64) -> NavState { navStates[id] ?? NavState() }
+    func navState(of id: UInt64) -> NavState { keeper(of: id).navStates[id] ?? NavState() }
 
-    func devReport(of id: UInt64) -> DevPageReport { devReports[id] ?? DevPageReport() }
+    func devReport(of id: UInt64) -> DevPageReport { keeper(of: id).devReports[id] ?? DevPageReport() }
 
-    func consoleEntries(of id: UInt64) -> [ConsoleEntry] { consoleLogs[id] ?? [] }
+    func consoleEntries(of id: UInt64) -> [ConsoleEntry] { keeper(of: id).consoleLogs[id] ?? [] }
 
-    func networkEntries(of id: UInt64) -> [NetworkEntry] { networkLogs[id] ?? [] }
+    func networkEntries(of id: UInt64) -> [NetworkEntry] { keeper(of: id).networkLogs[id] ?? [] }
 
-    func clearNetwork(of id: UInt64) { networkLogs[id] = nil }
+    func clearNetwork(of id: UInt64) { keeper(of: id).networkLogs[id] = nil }
 
     fileprivate func recordNetwork(_ tab: UInt64, _ method: String, _ request: String, _ params: [AnyHashable: Any]) {
         var log = networkLogs[tab] ?? []
@@ -1338,7 +1565,7 @@ extension BrowserStore {
         networkLogs[tab] = log
     }
 
-    func clearConsole(of id: UInt64) { consoleLogs[id] = nil }
+    func clearConsole(of id: UInt64) { keeper(of: id).consoleLogs[id] = nil }
 
     func spaceID(of tabID: UInt64) -> UInt64? {
         snapshot.spaces.first { space in
@@ -1351,8 +1578,8 @@ extension BrowserStore {
     func openTabForAgent(_ url: String, focus: Bool) -> UInt64? {
         let space = agentSpaceID()
         let onScreen = focus && space == activeSpace.id
-        guard !url.isEmpty, let id = core.openTab(spaceId: space, url: url, activate: onScreen) else { return nil }
-        if focus, !onScreen {
+        guard !url.isEmpty, let id = core.openTab(spaceId: space, url: url, activate: onScreen && isFront) else { return nil }
+        if focus, !onScreen || !isFront {
             select(id, in: space)
         } else {
             refresh()
@@ -1491,8 +1718,13 @@ extension BrowserStore: MBWebViewDelegate {
     nonisolated func webView(_ view: MBWebView, requestsNewTabWithURL url: String, foreground: Bool) {
         MainActor.assumeIsolated {
             let space = space(owning: view.tabID)?.id ?? activeSpace.id
-            _ = core.openTab(spaceId: space, url: url, activate: foreground)
-            refresh()
+            // From a window behind, the core's choice is the front window's.
+            let id = core.openTab(spaceId: space, url: url, activate: foreground && isFront)
+            if foreground, !isFront, let id {
+                select(id, in: space)
+            } else {
+                refresh()
+            }
         }
     }
 

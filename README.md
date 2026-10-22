@@ -51,6 +51,10 @@ events back. Nothing in the UI layer keeps browser state of its own.
 - **Little windows**: drag a tab from the sidebar onto the page (or choose
   Open in Little Window) to give it a small window of its own. It stays in
   its space and never sleeps while open; Open in Sidebar puts it back.
+- **Windows**: File ▸ New Window (⌘N) opens another window on the same
+  spaces and tabs, as in Arc. Each window has its own space and tab; a page
+  shows in one window at a time, so choosing a tab another window shows
+  moves it over, and that window offers to show it again.
 - **Undo**: closing a Today tab, Clear and deleting a folder can be undone
   with ⌘Z (when no page or text field takes it), ⇧⌘T or the toast's Undo.
 - **Tidying up**: when old Today tabs pile up, MBGA offers once to archive

@@ -3,12 +3,16 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     let core: BrowserCore
-    private(set) lazy var store = BrowserStore(core: core)
-    private var window: NSWindow?
+    /// The first window's store. Agents, Settings and imports work through
+    /// it, and its window hides rather than closes.
+    private(set) lazy var primary = BrowserStore(core: core)
+    /// The store of the window in front, which menu commands act on.
+    var store: BrowserStore { BrowserStore.front ?? primary }
+    /// The browser windows, the first window's first.
+    private var windows: [BrowserWindow] = []
     private var sleepTimer: Timer?
     private var pressureSource: DispatchSourceMemoryPressure?
     private var scrollMonitor: Any?
-    private var sidebarReveal: SidebarReveal?
     private var settings: SettingsWindowController?
     private var agentServer: AgentServer?
     /// Safari-style: the Develop menu is there only in Developer Mode.
@@ -27,19 +31,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         default: break
         }
         NSApp.mainMenu = buildMainMenu()
-        store.openSettings = { [weak self] pane in self?.showSettings(pane) }
-        agentServer = AgentServer(store: store, path: dataDirectory.appendingPathComponent("agent.sock").path)
+        agentServer = AgentServer(store: primary, path: dataDirectory.appendingPathComponent("agent.sock").path)
         updateDevelopMenu()
         NotificationCenter.default.addObserver(self, selector: #selector(updateDevelopMenu),
                                                name: UserDefaults.didChangeNotification, object: nil)
         AdBlocking.install(core: core)
         MBEngine.setFormScript(FormScript.source)
         AdBlocking.updateLists(core: core, loaded: AdBlocking.loadCached(core: core))
-        let window = makeWindow()
-        self.window = window
-        store.window = window
-        store.windowRadius = window.systemCornerRadius
-        store.updateTrafficLights()
+        let window = makeWindow(for: primary)
+        primary.becomeFront()
         _ = core.selectDefaultTab(spaceId: store.activeSpace.id)
         store.refresh()
         store.updateCleanupOffer()
@@ -140,11 +140,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             store.commandBar = .newTab
         }
 
-        sidebarReveal = SidebarReveal(store: store)
-
         // Two-finger swipes in the sidebar switch spaces.
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-            guard let self, let window = self.window, event.window === window else { return event }
+            guard let store = self?.windows.first(where: { $0.window === event.window })?.store else { return event }
             return store.pager.handle(event) ? nil : event
         }
 
@@ -174,22 +172,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { window?.makeKeyAndOrderFront(nil) }
+        if !flag { show(windows.first?.window) }
         return true
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls { store.openFromSystem(url.absoluteString) }
+        show(store.window)
+    }
+
+    private func show(_ window: NSWindow?) {
         window?.makeKeyAndOrderFront(nil)
+        BrowserStore.windowsChanged()
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        // Closing the window keeps the browser running, like other Mac apps.
+        // Closing the first window keeps the browser running, like other Mac
+        // apps; other windows close for good.
+        guard sender === windows.first?.window else { return true }
         sender.orderOut(nil)
+        BrowserStore.windowsChanged()
         return false
     }
 
-    private func makeWindow() -> NSWindow {
+    func windowWillClose(_ notification: Notification) {
+        guard let index = windows.indices.dropFirst().first(where: { windows[$0].window === notification.object as? NSWindow })
+        else { return }
+        let closed = windows.remove(at: index)
+        NotificationCenter.default.removeObserver(closed.frontObserver)
+        closed.store.windowClosed()
+    }
+
+    /// Another window on the spaces, its own space and tab chosen apart from
+    /// the others'. It starts on the front window's space, ready for an
+    /// address.
+    @objc func newWindow(_ sender: Any?) {
+        let store = BrowserStore(core: core, newWindow: true)
+        let window = makeWindow(for: store)
+        store.refresh()
+        window.makeKeyAndOrderFront(nil)
+        store.commandBar = .newTab
+    }
+
+    private func makeWindow(for store: BrowserStore) -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -205,13 +230,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentView = RootView(store: store)
-        if !window.setFrameUsingName("MainWindow") { window.center() }
-        window.setFrameAutosaveName("MainWindow")
+        if windows.isEmpty {
+            if !window.setFrameUsingName("MainWindow") { window.center() }
+            window.setFrameAutosaveName("MainWindow")
+        } else if let front = self.store.window {
+            // Down and right of the window in front, as other Mac apps do,
+            // smaller if that would run off the screen.
+            var frame = front.frame.offsetBy(dx: 24, dy: -24)
+            if let area = (front.screen ?? NSScreen.main)?.visibleFrame {
+                frame.size.width = min(frame.width, area.maxX - frame.minX)
+                frame.origin.y = max(frame.minY, area.minY)
+                frame.size.height = min(frame.height, front.frame.maxY - 24 - frame.minY)
+            }
+            window.setFrame(frame, display: false)
+        }
+        store.window = window
+        store.windowRadius = window.systemCornerRadius
+        store.openSettings = { [weak self] pane in self?.showSettings(pane) }
+        store.updateTrafficLights()
+        let frontObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeMainNotification, object: window, queue: .main) { [weak store] _ in
+            MainActor.assumeIsolated { store?.becomeFront() }
+        }
+        windows.append(BrowserWindow(store: store, window: window, sidebarReveal: SidebarReveal(store: store),
+                                     frontObserver: frontObserver))
         return window
     }
 
     func showSettings(_ pane: SettingsPane?) {
-        let settings = settings ?? SettingsWindowController(store: store)
+        let settings = settings ?? SettingsWindowController(store: primary)
         self.settings = settings
         settings.show(pane)
     }
@@ -256,7 +303,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func newTab(_ sender: Any?) { store.commandBar = .newTab }
     @objc func openLocation(_ sender: Any?) { store.commandBar = .editCurrent }
     @objc func closeTab(_ sender: Any?) {
-        if NSApp.keyWindow === window { store.closeVisibleTab() } else { NSApp.keyWindow?.performClose(sender) }
+        if let key = NSApp.keyWindow, let browser = windows.first(where: { $0.window === key }) {
+            browser.store.closeVisibleTab()
+        } else {
+            NSApp.keyWindow?.performClose(sender)
+        }
+    }
+    /// Closes the window even when its traffic lights are hidden (Focus
+    /// mode), which `performClose` won't.
+    @objc func closeWindow(_ sender: Any?) {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
+        if window.delegate?.windowShouldClose?(window) ?? true { window.close() }
     }
     @objc func newSpace(_ sender: Any?) { store.spaceEditor = SpaceEditorRequest(spaceID: nil) }
     @objc func importFromBrowser(_ sender: Any?) { store.importSheet = ImportRequest(firstLaunch: false) }
@@ -383,6 +440,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         main.addSubmenu("File") { m in
             m.item("New Tab", #selector(newTab(_:)), "t", target: self)
+            m.item("New Window", #selector(newWindow(_:)), "n", target: self)
             m.item("Open Location…", #selector(openLocation(_:)), "l", target: self)
             m.item("New Folder", #selector(newFolder(_:)), "n", [.command, .option], target: self)
             m.item("New Space…", #selector(newSpace(_:)), "n", [.command, .shift], target: self)
@@ -391,6 +449,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             m.item("Import Sign-ins…", #selector(importSignIns(_:)), "", target: self)
             m.addItem(.separator())
             m.item("Close Tab", #selector(closeTab(_:)), "w", target: self)
+            m.item("Close Window", #selector(closeWindow(_:)), "w", [.command, .shift], target: self)
             m.item("Reopen Closed Tab", #selector(reopenClosedTab(_:)), "t", [.command, .shift], target: self)
             m.item("Clear Today Tabs", #selector(clearToday(_:)), "k", [.command, .shift], target: self)
         }
@@ -519,6 +578,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSApp.windowsMenu = windowMenu
         return main
     }
+}
+
+/// A browser window: its store, the window, and what follows the pointer
+/// in it.
+@MainActor
+private struct BrowserWindow {
+    let store: BrowserStore
+    let window: NSWindow
+    let sidebarReveal: SidebarReveal
+    /// Brings the store forward as the window becomes main.
+    let frontObserver: NSObjectProtocol
 }
 
 private extension NSMenu {

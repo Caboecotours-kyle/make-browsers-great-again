@@ -11,6 +11,7 @@ final class RootView: NSView {
     private let handle = SidebarResizeHandle()
     private let card: PageCardView
     private let emptyHint: EmptySpaceHintView
+    private let elsewhereHint: ElsewhereHintView
     private let dropPreview = DropPreviewView()
     private let devToolbar: DevToolbarView
     private let inspector: InspectorView
@@ -28,6 +29,7 @@ final class RootView: NSView {
         sidebar = SidebarView(store: store)
         card = PageCardView(container: store.webContainer)
         emptyHint = EmptySpaceHintView(store: store)
+        elsewhereHint = ElsewhereHintView(store: store)
         devToolbar = DevToolbarView(store: store)
         inspector = InspectorView(store: store)
         toast = ToastView(store: store)
@@ -41,10 +43,12 @@ final class RootView: NSView {
         inspector.isHidden = !store.inspectorOpen
         inspectorHandle.onDrag = { [weak self] x in self?.resizeInspector(to: x) }
         card.addSubview(emptyHint)
+        card.addSubview(elsewhereHint)
         card.addSubview(dropPreview)
         card.addSubview(devToolbar)
         card.addSubview(agentGlow)
         emptyHint.autoresizingMask = [.width, .height]
+        elsewhereHint.autoresizingMask = [.width, .height]
         dropPreview.autoresizingMask = [.width, .height]
         dropPreview.isHidden = true
         // The peek card sits right under the sidebar, which never leaves this
@@ -92,6 +96,8 @@ final class RootView: NSView {
             updatePeek()
         case .commandBar:
             updateCommandBar()
+            updateEmptyHint()
+        case .elsewhere:
             updateEmptyHint()
         case .toast:
             updateToast()
@@ -162,6 +168,7 @@ final class RootView: NSView {
         let visible = store.visibleTabID == nil && store.commandBar == nil
         if visible { emptyHint.update() }
         emptyHint.setVisible(visible, animated: true, curve: Motion.fade)
+        elsewhereHint.setVisible(store.visibleTabElsewhere && store.commandBar == nil, animated: true, curve: Motion.fade)
     }
 
     // MARK: - Layout
@@ -193,6 +200,7 @@ final class RootView: NSView {
         let panels = min(sidebarSpring.value + railSpring.value, 1)
         card.cornerRadius = max(store.windowRadius - (5 + 3 * panels), 6)
         emptyHint.frame = card.bounds
+        elsewhereHint.frame = card.bounds
         dropPreview.frame = card.bounds
         // The card isn't flipped: the strip runs along its top.
         // Over the page only, not docked DevTools beside it.
