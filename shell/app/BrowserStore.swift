@@ -294,6 +294,14 @@ final class BrowserStore: NSObject {
     private(set) var visibleTabElsewhere = false {
         didSet { if visibleTabElsewhere != oldValue { changed(.elsewhere) } }
     }
+    /// A picture of the visible tab's page while it's on screen in another
+    /// window, taken there again every second so this window keeps up.
+    private(set) var elsewhereImage: NSImage? {
+        didSet { changed(.elsewhere) }
+    }
+    private var mirroredTab: UInt64?
+    private var mirrorTimer: Timer?
+    private var mirrorPending = false
 
     /// `newWindow` starts on an empty page in the front window's space.
     init(core: BrowserCore, newWindow: Bool = false) {
@@ -393,14 +401,15 @@ final class BrowserStore: NSObject {
         let visible = visibleTabID
         if let id = visible, views[id] == nil, let tab = core.tab(id: id) {
             if let holder = Self.holder(of: id) {
-                // On screen in another window it stays there; loaded out of
-                // sight there, it comes here.
-                if !holder.isShowing(id) { adopt(id, from: holder) }
+                // The page follows the window in front; on screen in a window
+                // behind it stays there, and this one shows a picture of it.
+                if isFront || !holder.isShowing(id) { adopt(id, from: holder) }
             } else {
                 createView(for: tab)
             }
         }
         visibleTabElsewhere = visible.map { views[$0] == nil && Self.holder(of: $0) != nil } ?? false
+        syncMirror()
         keepAwake(isFront || window?.isVisible != true ? nil : visible.flatMap { views[$0] != nil ? $0 : nil })
         if let id = visible, core.thaw(id: id) {
             views[id]?.setFrozen(false)
@@ -1350,15 +1359,39 @@ extension BrowserStore {
         littleWindows[id] != nil || (visibleTabID == id && window?.isVisible == true)
     }
 
-    /// Brings the window showing the visible tab forward.
-    func showWindowWithVisibleTab() {
-        guard let id = visibleTabID, let holder = Self.holder(of: id), holder !== self else { return }
-        holder.window?.makeKeyAndOrderFront(nil)
+    /// Starts or stops picturing the visible tab from the window showing it.
+    private func syncMirror() {
+        let id = visibleTabElsewhere && window?.isVisible == true ? visibleTabID : nil
+        guard id != mirroredTab else { return }
+        mirroredTab = id
+        mirrorTimer?.invalidate()
+        mirrorTimer = nil
+        elsewhereImage = nil
+        guard id != nil else { return }
+        captureMirror()
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.captureMirror() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        mirrorTimer = timer
     }
 
-    /// Shows the visible tab here, moving it from the window showing it.
-    func moveVisibleTabHere() {
-        if let id = visibleTabID { select(id) }
+    private func captureMirror() {
+        guard let id = mirroredTab, !mirrorPending, window?.occlusionState.contains(.visible) == true,
+              let view = Self.holder(of: id)?.views[id] else { return }
+        mirrorPending = true
+        let params = #"{"format":"jpeg","quality":85,"optimizeForSpeed":true}"#
+        view.sendDevToolsCommand("Page.captureScreenshot", params: params) { [weak self] result, _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.mirrorPending = false
+                guard self.mirroredTab == id, let data = result?.data(using: .utf8),
+                      let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                      let base64 = object["data"] as? String, let jpeg = Data(base64Encoded: base64),
+                      let image = NSImage(data: jpeg) else { return }
+                self.elsewhereImage = image
+            }
+        }
     }
 
     /// What moves with a loaded tab from one window to another.

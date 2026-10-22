@@ -98,6 +98,7 @@ final class RootView: NSView {
             updateCommandBar()
             updateEmptyHint()
         case .elsewhere:
+            elsewhereHint.update()
             updateEmptyHint()
         case .toast:
             updateToast()

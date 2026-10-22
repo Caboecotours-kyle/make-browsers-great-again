@@ -360,42 +360,52 @@ final class EmptySpaceHintView: FlippedView {
 }
 
 /// In place of the page when the visible tab is on screen in another
-/// window: a page can show in one window at a time.
+/// window: a page can be live in one window at a time, so this one shows a
+/// picture of it, kept up to date. It comes here when this window does.
 @MainActor
 final class ElsewhereHintView: FlippedView {
+    private let store: BrowserStore
     private let icon = NSImageView()
-    private let title = Label.make("This tab is open in another window", size: 15, weight: .semibold)
-    private let moveHere = NSButton(title: "Show It Here", target: nil, action: nil)
-    private let goThere = NSButton(title: "Go to Window", target: nil, action: nil)
+    private let title = Label.make("Showing in another window", size: 15, weight: .semibold)
+    private let picture = CALayer()
 
     init(store: BrowserStore) {
+        self.store = store
         super.init(frame: .zero)
+        wantsLayer = true
+        layer?.masksToBounds = true
         // The page is white in either appearance, so this is too.
         appearance = NSAppearance(named: .aqua)
         icon.image = .symbol("macwindow.on.rectangle", size: 28)
         icon.contentTintColor = .tertiaryLabelColor
         title.alignment = .center
-        moveHere.bezelStyle = .push
-        moveHere.keyEquivalent = "\r"
-        moveHere.onAction { store.moveVisibleTabHere() }
-        goThere.bezelStyle = .push
-        goThere.onAction { store.showWindowWithVisibleTab() }
-        for view in [icon, title, moveHere, goThere] as [NSView] { addSubview(view) }
+        title.textColor = .secondaryLabelColor
+        for view in [icon, title] as [NSView] { addSubview(view) }
+        picture.contentsGravity = .resize
+        picture.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        layer?.addSublayer(picture)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+    func update() {
+        let image = store.elsewhereImage
+        picture.contents = image?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        icon.isHidden = image != nil
+        title.isHidden = image != nil
+        needsLayout = true
+    }
+
     override func layout() {
         super.layout()
-        let top = bounds.midY - 70
+        let top = bounds.midY - 50
         icon.frame = NSRect(x: bounds.midX - 20, y: top, width: 40, height: 34)
         title.frame = NSRect(x: 20, y: top + 46, width: bounds.width - 40, height: 20)
-        moveHere.sizeToFit()
-        goThere.sizeToFit()
-        let width = max(moveHere.frame.width, goThere.frame.width) + 12
-        let y = top + 82
-        goThere.frame = NSRect(x: bounds.midX - width - 4, y: y, width: width, height: goThere.frame.height)
-        moveHere.frame = NSRect(x: bounds.midX + 4, y: y, width: width, height: moveHere.frame.height)
+        // The other window may be another size: the page keeps its top
+        // left, scaled to this one's width.
+        if let size = store.elsewhereImage?.size, size.width > 0 {
+            picture.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.width * size.height / size.width)
+        }
     }
 }
 
