@@ -1,0 +1,368 @@
+{
+  "format": 2,
+  "kind": "real-profile-as-launched",
+  "date": "2026-10-22 18:07",
+  "commit": "6e09104",
+  "subject": "Benchmark MBGA against Arc on your own profile, with every tab opened",
+  "machine": "arm64 Apple M1 Max",
+  "versions": {
+    "before": "/tmp/mbga-real/before/MBGA.app",
+    "mbga": "6e09104"
+  },
+  "results": {
+    "before": [
+      {
+        "first_window_s": 1.2950878143310547,
+        "tabs_opened": 0,
+        "open_all_s": 0.0,
+        "memory_loaded": {
+          "total_mb": 950.3417434692383,
+          "processes": 10,
+          "by_kind": {
+            "browser": {
+              "count": 1,
+              "mb": 182.7205352783203
+            },
+            "gpu-process": {
+              "count": 1,
+              "mb": 300.54813385009766
+            },
+            "utility": {
+              "count": 1,
+              "mb": 19.84466552734375
+            },
+            "renderer": {
+              "count": 7,
+              "mb": 447.22840881347656
+            }
+          }
+        },
+        "early": {
+          "seconds": 120.0,
+          "cpu_percent": 6.220083875340968,
+          "power_mw": 40.038826951819246,
+          "wakeups_per_s": 128.59719358409887,
+          "gpu_percent": 0.004773248273968665,
+          "energy_impact": 6.0,
+          "front_fraction": 1.0,
+          "by_kind": {
+            "browser": {
+              "cpu_percent": 0.4273798848356908,
+              "power_mw": 1.1942511661997894,
+              "wakeups_per_s": 3.4569138060241635,
+              "gpu_percent": 0.0,
+              "energy_impact": 0.4
+            },
+            "gpu-process": {
+              "cpu_percent": 0.2002883105872729,
+              "power_mw": 0.5575053525247207,
+              "wakeups_per_s": 10.287442290216486,
+              "gpu_percent": 0.004773248273968665,
+              "energy_impact": 0.2
+            },
+            "utility": {
+              "cpu_percent": 0.023132861687347333,
+              "power_mw": 0.03966047238384124,
+              "wakeups_per_s": 0.932950231987244,
+              "gpu_percent": 0.0,
+              "energy_impact": 0.0
+            },
+            "renderer": {
+              "cpu_percent": 5.569282818230658,
+              "power_mw": 38.2474099607109,
+              "wakeups_per_s": 113.91988725587099,
+              "gpu_percent": 0.0,
+              "energy_impact": 5.4
+            }
+          },
+          "memory": {
+            "total_mb": 2108.6521606445312,
+            "processes": 7,
+            "by_kind": {
+              "browser": {
+                "count": 1,
+                "mb": 179.5643310546875
+              },
+              "gpu-process": {
+                "count": 1,
+                "mb": 810.110954284668
+              },
+              "utility": {
+                "count": 2,
+                "mb": 45.83002471923828
+              },
+              "renderer": {
+                "count": 3,
+                "mb": 1073.1468505859375
+              }
+            }
+          },
+          "untouched": true,
+          "valid": true
+        },
+        "late": {
+          "seconds": 120.0,
+          "cpu_percent": 6.141878799535924,
+          "power_mw": 33.71748599033309,
+          "wakeups_per_s": 120.31164854128438,
+          "gpu_percent": 0.006305975692425433,
+          "energy_impact": 6.1,
+          "front_fraction": 1.0,
+          "by_kind": {
+            "browser": {
+              "cpu_percent": 0.18233180852205616,
+              "power_mw": 0.23143959954803967,
+              "wakeups_per_s": 2.024354701255512,
+              "gpu_percent": 0.0,
+              "energy_impact": 0.1
+            },
+            "gpu-process": {
+              "cpu_percent": 0.13248703825453004,
+              "power_mw": 0.35195749900987416,
+              "wakeups_per_s": 7.031092048805153,
+              "gpu_percent": 0.006305975692425433,
+              "energy_impact": 0.1
+            },
+            "utility": {
+              "cpu_percent": 0.012923485411221859,
+              "power_mw": 0.011153236375972833,
+              "wakeups_per_s": 0.758091678247949,
+              "gpu_percent": 0.0,
+              "energy_impact": 0.0
+            },
+            "renderer": {
+              "cpu_percent": 5.814136467348115,
+              "power_mw": 33.122935655399196,
+              "wakeups_per_s": 110.49811011297578,
+              "gpu_percent": 0.0,
+              "energy_impact": 5.9
+            }
+          },
+          "memory": {
+            "total_mb": 2109.1678771972656,
+            "processes": 7,
+            "by_kind": {
+              "browser": {
+                "count": 1,
+                "mb": 179.0955810546875
+              },
+              "gpu-process": {
+                "count": 1,
+                "mb": 810.079704284668
+              },
+              "utility": {
+                "count": 2,
+                "mb": 45.81439971923828
+              },
+              "renderer": {
+                "count": 3,
+                "mb": 1074.1781921386719
+              }
+            }
+          },
+          "untouched": true,
+          "valid": true
+        },
+        "memory_end": {
+          "total_mb": 2098.8553771972656,
+          "processes": 7,
+          "by_kind": {
+            "browser": {
+              "count": 1,
+              "mb": 179.0955810546875
+            },
+            "gpu-process": {
+              "count": 1,
+              "mb": 810.079704284668
+            },
+            "utility": {
+              "count": 2,
+              "mb": 45.81439971923828
+            },
+            "renderer": {
+              "count": 3,
+              "mb": 1063.8656921386719
+            }
+          }
+        }
+      }
+    ],
+    "mbga": [
+      {
+        "first_window_s": 1.2440457344055176,
+        "tabs_opened": 0,
+        "open_all_s": 0.0,
+        "memory_loaded": {
+          "total_mb": 925.7635955810547,
+          "processes": 10,
+          "by_kind": {
+            "browser": {
+              "count": 1,
+              "mb": 176.31423950195312
+            },
+            "gpu-process": {
+              "count": 1,
+              "mb": 253.11065673828125
+            },
+            "utility": {
+              "count": 1,
+              "mb": 19.891563415527344
+            },
+            "renderer": {
+              "count": 7,
+              "mb": 476.44713592529297
+            }
+          }
+        },
+        "early": {
+          "seconds": 120.1,
+          "cpu_percent": 2.7647562000971697,
+          "power_mw": 32.27548360069024,
+          "wakeups_per_s": 12.294583525357817,
+          "gpu_percent": 0.0,
+          "energy_impact": 2.6,
+          "front_fraction": 1.0,
+          "by_kind": {
+            "browser": {
+              "cpu_percent": 0.4353941553764209,
+              "power_mw": 1.27406871575907,
+              "wakeups_per_s": 3.165272181325183,
+              "gpu_percent": 0.0,
+              "energy_impact": 0.4
+            },
+            "gpu-process": {
+              "cpu_percent": 0.11169343092138348,
+              "power_mw": 0.09503274091828025,
+              "wakeups_per_s": 3.7566782994148884,
+              "gpu_percent": 0.0,
+              "energy_impact": 0.1
+            },
+            "utility": {
+              "cpu_percent": 0.022646828596400884,
+              "power_mw": 0.01936969986101949,
+              "wakeups_per_s": 0.8912740089520911,
+              "gpu_percent": 0.0,
+              "energy_impact": 0.0
+            },
+            "renderer": {
+              "cpu_percent": 2.1950217852029645,
+              "power_mw": 30.887012444151868,
+              "wakeups_per_s": 4.481359035665654,
+              "gpu_percent": 0.0,
+              "energy_impact": 2.1
+            }
+          },
+          "memory": {
+            "total_mb": 1632.4644775390625,
+            "processes": 7,
+            "by_kind": {
+              "browser": {
+                "count": 1,
+                "mb": 161.15798950195312
+              },
+              "gpu-process": {
+                "count": 1,
+                "mb": 476.2201461791992
+              },
+              "utility": {
+                "count": 2,
+                "mb": 46.00194549560547
+              },
+              "renderer": {
+                "count": 3,
+                "mb": 949.0843963623047
+              }
+            }
+          },
+          "untouched": true,
+          "valid": true
+        },
+        "late": {
+          "seconds": 120.1,
+          "cpu_percent": 0.9347128783985555,
+          "power_mw": 8.043577802950606,
+          "wakeups_per_s": 7.004986401131291,
+          "gpu_percent": 0.0,
+          "energy_impact": 0.7,
+          "front_fraction": 1.0,
+          "by_kind": {
+            "browser": {
+              "cpu_percent": 0.1608857341181706,
+              "power_mw": 0.36421598021996165,
+              "wakeups_per_s": 2.0656796997390727,
+              "gpu_percent": 0.0,
+              "energy_impact": 0.1
+            },
+            "gpu-process": {
+              "cpu_percent": 0.018110755977507775,
+              "power_mw": 0.013719661510912964,
+              "wakeups_per_s": 0.7413124728902317,
+              "gpu_percent": 0.0,
+              "energy_impact": 0.0
+            },
+            "utility": {
+              "cpu_percent": 0.013270464467368171,
+              "power_mw": 0.009211090673684481,
+              "wakeups_per_s": 0.7329831192622516,
+              "gpu_percent": 0.0,
+              "energy_impact": 0.0
+            },
+            "renderer": {
+              "cpu_percent": 0.742445923835509,
+              "power_mw": 7.656431070546047,
+              "wakeups_per_s": 3.4650111092397347,
+              "gpu_percent": 0.0,
+              "energy_impact": 0.6
+            }
+          },
+          "memory": {
+            "total_mb": 1623.0425109863281,
+            "processes": 7,
+            "by_kind": {
+              "browser": {
+                "count": 1,
+                "mb": 161.04861450195312
+              },
+              "gpu-process": {
+                "count": 1,
+                "mb": 476.2201461791992
+              },
+              "utility": {
+                "count": 2,
+                "mb": 46.00194549560547
+              },
+              "renderer": {
+                "count": 3,
+                "mb": 939.7718048095703
+              }
+            }
+          },
+          "untouched": true,
+          "valid": true
+        },
+        "memory_end": {
+          "total_mb": 1623.0425109863281,
+          "processes": 7,
+          "by_kind": {
+            "browser": {
+              "count": 1,
+              "mb": 161.04861450195312
+            },
+            "gpu-process": {
+              "count": 1,
+              "mb": 476.2201461791992
+            },
+            "utility": {
+              "count": 2,
+              "mb": 46.00194549560547
+            },
+            "renderer": {
+              "count": 3,
+              "mb": 939.7718048095703
+            }
+          }
+        }
+      }
+    ]
+  }
+}

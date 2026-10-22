@@ -15,7 +15,8 @@ on, and is measured while nobody touches it.
 
 Per launch: tabs opened, memory and renderers right after, and two idle
 windows (2:00-4:00 and 6:00-8:00 after) with CPU, power, GPU, wakeups and
-Energy Impact. A window counts only if the browser stayed in front and
+Energy Impact. --as-launched skips opening the tabs and measures each
+browser as it starts (0:40-2:40 and 2:40-4:40). A window counts only if the browser stayed in front and
 nobody used the keyboard or mouse during it; the summary leaves out the rest.
 
 Usage:
@@ -217,7 +218,7 @@ class MbgaCopy:
         shutil.rmtree(self.data, ignore_errors=True)
 
 
-def run_once(browser):
+def run_once(browser, open_all=True):
     wait_until_idle(IDLE_BEFORE)
     log(f"{browser.key}: launching")
     pid = browser.launch()
@@ -225,7 +226,7 @@ def run_once(browser):
     activate(pid)
     time.sleep(5)
     started = time.time()
-    result["tabs_opened"] = browser.open_all()
+    result["tabs_opened"] = browser.open_all() if open_all else 0
     result["open_all_s"] = round(time.time() - started, 1)
     t0 = time.time()
     result["memory_loaded"] = summarize(sample(pid))
@@ -239,7 +240,7 @@ def run_once(browser):
     sleep_until(t0, END)
     result["memory_end"] = summarize(sample(pid))
     e, l = result["early"], result["late"]
-    log(f"{browser.key}: {result['memory_end']['total_mb']:.0f} MB at {END / 60:g} min; "
+    log(f"{browser.key}: {result['memory_end']['total_mb']:.0f} MB at {clock(END)}; "
         f"idle {e['cpu_percent']:.1f}% / {l['cpu_percent']:.1f}% CPU, "
         f"{e['power_mw']:.0f} / {l['power_mw']:.0f} mW, "
         f"impact {e['energy_impact']:.1f} / {l['energy_impact']:.1f}")
@@ -248,9 +249,13 @@ def run_once(browser):
     return result
 
 
+def clock(seconds):
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
 def print_summary(results):
-    span = lambda start: f"idle {start / 60:g}-{(start + WINDOW) / 60:g} min"
-    head = ["browser", "tabs", "MB loaded", f"MB at {END / 60:g} min", span(EARLY), span(LATE)]
+    span = lambda start: f"idle {clock(start)}-{clock(start + WINDOW)}"
+    head = ["browser", "tabs", "MB loaded", f"MB at {clock(END)}", span(EARLY), span(LATE)]
     rows = []
     for key, runs in results.items():
         for i, r in enumerate(runs, 1):
@@ -268,7 +273,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--rounds", type=int, default=1)
     parser.add_argument("--browsers", default="arc,mbga")
+    parser.add_argument("--as-launched", action="store_true",
+                        help="measure each browser as it starts, without opening any tab "
+                             "(windows at 0:40-2:40 and 2:40-4:40)")
     args = parser.parse_args()
+    if args.as_launched and not QUICK:
+        global EARLY, LATE, END
+        EARLY, LATE, END = 40, 160, 280
 
     browsers = []
     for k in args.browsers.split(","):
@@ -290,7 +301,7 @@ def main():
                                     text=True).stdout.strip()
     results = {
         "format": 2,
-        "kind": "real-profile",
+        "kind": "real-profile-as-launched" if args.as_launched else "real-profile",
         "date": time.strftime("%Y-%m-%d %H:%M"),
         "commit": git("rev-parse", "--short", "HEAD"),
         "subject": git("log", "-1", "--format=%s"),
@@ -304,7 +315,7 @@ def main():
         order += browsers if r % 2 == 0 else list(reversed(browsers))
     try:
         for browser in order:
-            results["results"][browser.key].append(run_once(browser))
+            results["results"][browser.key].append(run_once(browser, open_all=not args.as_launched))
             with open(path, "w") as f:
                 json.dump(results, f, indent=2)
     finally:
