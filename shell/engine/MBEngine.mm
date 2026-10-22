@@ -2687,6 +2687,10 @@ class CookieKeys : public CefCookieVisitor {
   BOOL _pictureInPicture;
   BOOL _pipByPage;
   NSString* _pipNonce;
+  // An unanswered ownership scan outlives automatic-entry permission, so
+  // a hidden page's manual window can still be found after the deadline.
+  NSString* _pipScanNonce;
+  BOOL _pipScanChanged;
   NSString* _pipSession;
   int _pipContext;
   void (^_pipDone)(void);
@@ -3185,6 +3189,9 @@ class CookieKeys : public CefCookieVisitor {
 // Chromium has one picture-in-picture window, which a new request takes
 // from whoever has it: the view that has it, or is asking for it.
 static __weak MBWebView* g_pip_owner = nil;
+// An older scan cannot replace an owner observed or closed since it began.
+// Reserving automatic entry alone does not change this revision.
+static uint64_t g_pip_revision = 0;
 
 - (void)enterPictureInPicture:(void (^)(void))done {
   [self settlePictureInPicture];
@@ -3193,7 +3200,8 @@ static __weak MBWebView* g_pip_owner = nil;
     return;
   }
   _pipDone = done;
-  NSString* nonce = _pipNonce = NSUUID.UUID.UUIDString;
+  NSString* nonce = _pipNonce = _pipScanNonce = NSUUID.UUID.UUIDString;
+  uint64_t revision = g_pip_revision;
   double until = (NSDate.date.timeIntervalSince1970 + kPipWait) * 1000;
   __weak MBWebView* weakSelf = self;
   // However long the page takes, the request is over within a couple of
@@ -3211,14 +3219,23 @@ static __weak MBWebView* g_pip_owner = nil;
                         then:^(PipFrames frames) {
                           [weakSelf pictureInPictureScanned:frames
                                                       nonce:nonce
+                                                   revision:revision
                                                       until:until];
                         }];
 }
 
 - (void)pictureInPictureScanned:(PipFrames)frames
                           nonce:(NSString*)nonce
+                       revision:(uint64_t)revision
                           until:(double)until {
-  if (![nonce isEqualToString:_pipNonce]) {
+  if (![nonce isEqualToString:_pipScanNonce]) {
+    return;
+  }
+  _pipScanNonce = nil;
+  if (revision != g_pip_revision) {
+    if ([nonce isEqualToString:_pipNonce]) {
+      [self endPictureInPicture];
+    }
     return;
   }
   const PipFrame* best = nullptr;
@@ -3226,6 +3243,7 @@ static __weak MBWebView* g_pip_owner = nil;
   for (const PipFrame& frame : *frames) {
     if (frame.answer == "open") {
       // The page has one in the window already, of its own.
+      _pipNonce = nonce;
       [self ownPictureInPicture:frame byPage:YES];
       [self settlePictureInPicture];
       return;
@@ -3235,6 +3253,9 @@ static __weak MBWebView* g_pip_owner = nil;
       best = &frame;
       area = size;
     }
+  }
+  if (![nonce isEqualToString:_pipNonce]) {
+    return;
   }
   if (!best || g_pip_owner) {
     [self endPictureInPicture];
@@ -3274,6 +3295,7 @@ static __weak MBWebView* g_pip_owner = nil;
     return;
   }
   if ([answer isEqualToString:@"open"]) {
+    ++g_pip_revision;
     _pipByPage = NO;
     [self engineSetPictureInPicture:YES];
     [self settlePictureInPicture];
@@ -3283,8 +3305,8 @@ static __weak MBWebView* g_pip_owner = nil;
 }
 
 // Pages on screen that have a window open take it over. Ones being switched
-// away from, whose own scans will claim theirs, are only looked at: |then|
-// gets whether one has it.
+// away from, including hidden ones whose ownership scan is unanswered,
+// are only looked at: |then| gets whether one has it.
 - (void)findOtherPicturesInPicture:(void (^)(BOOL taken))then {
   NSMutableArray<MBWebView*>* shown = [NSMutableArray array];
   NSMutableArray<MBWebView*>* leaving = [NSMutableArray array];
@@ -3292,7 +3314,7 @@ static __weak MBWebView* g_pip_owner = nil;
     if (view == self || !view->_browser || view->_closing || view->_frozen) {
       continue;
     }
-    if (view->_pipDone) {
+    if (view->_pipDone || view->_pipScanNonce) {
       [leaving addObject:view];
     } else if (view.window && !view.isHiddenOrHasHiddenAncestor) {
       [shown addObject:view];
@@ -3316,15 +3338,19 @@ static __weak MBWebView* g_pip_owner = nil;
                           }];
   }
   for (MBWebView* view in shown) {
-    NSString* nonce = view->_pipNonce = NSUUID.UUID.UUIDString;
+    NSString* nonce = view->_pipScanNonce = NSUUID.UUID.UUIDString;
+    uint64_t revision = g_pip_revision;
     __weak MBWebView* weakView = view;
     [view scanPictureInPicture:nonce
                           then:^(PipFrames frames) {
                             MBWebView* other = weakView;
                             if (other &&
-                                [nonce isEqualToString:other->_pipNonce]) {
+                                [nonce isEqualToString:other->_pipScanNonce]) {
+                              other->_pipScanNonce = nil;
                               for (const PipFrame& frame : *frames) {
-                                if (frame.answer == "open") {
+                                if (frame.answer == "open" &&
+                                    revision == g_pip_revision) {
+                                  other->_pipNonce = nonce;
                                   [other ownPictureInPicture:frame byPage:YES];
                                   break;
                                 }
@@ -3344,6 +3370,7 @@ static __weak MBWebView* g_pip_owner = nil;
   if (previous && previous != self) {
     [previous endPictureInPicture];
   }
+  ++g_pip_revision;
   g_pip_owner = self;
   _pipByPage = byPage;
   _pipSession = frame.session;
@@ -3358,6 +3385,13 @@ static __weak MBWebView* g_pip_owner = nil;
   }
   NSString* session = _pipSession;
   int context = g_pip_owner == self ? _pipContext : 0;
+  if (_pipScanNonce && !context) {
+    // Entry is cancelled, but the scan may still identify a manual window.
+    // Keep its watch separate from the now-expired automatic callbacks.
+    _pipNonce = nil;
+    [self settlePictureInPicture];
+    return;
+  }
   if (!_pipNonce && !context) {
     return;
   }
@@ -3377,7 +3411,12 @@ static __weak MBWebView* g_pip_owner = nil;
 // asks for it.
 - (void)endPictureInPicture {
   _pipNonce = nil;
+  _pipScanNonce = nil;
+  _pipScanChanged = NO;
   if (g_pip_owner == self) {
+    if (_pictureInPicture) {
+      ++g_pip_revision;
+    }
     g_pip_owner = nil;
   }
   _pipByPage = NO;
@@ -3402,8 +3441,22 @@ static __weak MBWebView* g_pip_owner = nil;
 // processes of their own, reached through sessions of their own.
 - (void)scanPictureInPicture:(NSString*)nonce
                         then:(void (^)(PipFrames frames))then {
+  if (nonce && [nonce isEqualToString:_pipScanNonce]) {
+    _pipScanChanged = NO;
+  }
   PipFrames frames = std::make_shared<std::vector<PipFrame>>();
   __weak MBWebView* weakSelf = self;
+  dispatch_block_t finish = ^{
+    MBWebView* view = weakSelf;
+    if (view && nonce && [nonce isEqualToString:view->_pipScanNonce] &&
+        view->_pipScanChanged) {
+      // A subframe changed under this scan. Recheck the current frames,
+      // retaining both ownership discovery and the original entry deadline.
+      [view scanPictureInPicture:nonce then:then];
+      return;
+    }
+    then(frames);
+  };
   [self
       pipCall:@"Page.getFrameTree"
        params:@{}
@@ -3419,9 +3472,7 @@ static __weak MBWebView* g_pip_owner = nil;
                         nonce:nonce
                       session:nil
                          into:frames
-                         then:^{
-                           then(frames);
-                         }];
+                         then:finish];
              return;
            }
            [view followFrames:^{
@@ -3433,7 +3484,7 @@ static __weak MBWebView* g_pip_owner = nil;
              __block NSUInteger waiting = sessions.count + 1;
              dispatch_block_t one = ^{
                if (--waiting == 0) {
-                 then(frames);
+                 finish();
                }
              };
              [again scanFrames:tree
@@ -3618,6 +3669,9 @@ static __weak MBWebView* g_pip_owner = nil;
   }
   _prompts = nil;
   // Closing takes the window with it, and mustn't hold up other tabs'.
+  if (g_pip_owner == self && _pictureInPicture) {
+    ++g_pip_revision;
+  }
   _pictureInPicture = NO;
   [self endPictureInPicture];
   if (_frozen) {
@@ -3719,6 +3773,7 @@ static __weak MBWebView* g_pip_owner = nil;
     NSLog(@"tab %llu: DoClose / teardown", _tabID);
   }
   _closing = YES;
+  [self endPictureInPicture];
   // Commands waiting for a browser that won't come fail now.
   NSArray<dispatch_block_t>* pending = _pendingCommands;
   _pendingCommands = nil;
@@ -3760,8 +3815,10 @@ static __weak MBWebView* g_pip_owner = nil;
 
 // The video left the window: a report of the scan or request with |nonce|.
 - (void)engineLeftPictureInPicture:(NSString*)nonce {
-  if (g_pip_owner == self && _pictureInPicture &&
-      [nonce isEqualToString:_pipNonce]) {
+  if ([nonce isEqualToString:_pipScanNonce] ||
+      (g_pip_owner == self && _pictureInPicture &&
+       [nonce isEqualToString:_pipNonce])) {
+    ++g_pip_revision;
     [self endPictureInPicture];
   }
 }
@@ -3770,11 +3827,14 @@ static __weak MBWebView* g_pip_owner = nil;
 // request; a frame's only if it was the frame the video is in.
 - (void)engineDocumentChanged:(BOOL)main {
   if (main) {
-    if (_pipNonce || g_pip_owner == self) {
+    if (_pipNonce || _pipScanNonce || g_pip_owner == self) {
       [self endPictureInPicture];
     }
     return;
   }
+  // The owner frame is not known yet. Keep the source discoverable, but
+  // require a fresh scan before accepting these frames' earlier answers.
+  _pipScanChanged = _pipScanNonce != nil;
   if (g_pip_owner != self || !_pictureInPicture) {
     return;
   }
