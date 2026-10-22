@@ -51,11 +51,8 @@ fn parse_navigation(p: &[u8]) -> Option<(i32, i32, String, String)> {
     let url = String::from_utf8_lossy(p.get(16..16 + url_len)?).into_owned();
     let at = 16 + url_len.next_multiple_of(4);
     let title_len = usize::try_from(i32_at(p, at)?).ok()?;
-    let units: Vec<u16> = p
-        .get(at + 4..at + 4 + title_len * 2)?
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-        .collect();
+    let units: Vec<u16> =
+        p.get(at + 4..at + 4 + title_len * 2)?.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
     Some((tab, index, url, String::from_utf16_lossy(&units)))
 }
 
@@ -152,21 +149,10 @@ pub fn parse(data: &[u8]) -> Option<Vec<SessionTab>> {
         if !normal || closed_windows.contains(&t.window) {
             continue;
         }
-        let current = t
-            .selected
-            .and_then(|s| t.navigations.get(&s))
-            .or_else(|| t.navigations.values().next_back());
+        let current = t.selected.and_then(|s| t.navigations.get(&s)).or_else(|| t.navigations.values().next_back());
         let Some((url, title)) = current else { continue };
         let window_rank = window_order.iter().position(|&w| w == t.window).unwrap_or(usize::MAX);
-        open.push((
-            window_rank,
-            t.index,
-            SessionTab {
-                url: url.clone(),
-                title: title.clone(),
-                pinned: t.pinned,
-            },
-        ));
+        open.push((window_rank, t.index, SessionTab { url: url.clone(), title: title.clone(), pinned: t.pinned }));
     }
     open.sort_by_key(|(window, index, _)| (*window, *index));
     Some(open.into_iter().map(|(_, _, tab)| tab).collect())

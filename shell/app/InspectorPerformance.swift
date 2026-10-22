@@ -481,7 +481,7 @@ enum TraceSummarizer {
                 stack[stack.count - 1].children += task.duration
             }
             stack.append((task.start + task.duration, task.name, task.duration, 0))
-            if (task.name == "RunTask" || task.name == "ThreadControllerImpl::RunTask") && task.duration > 50_000 {
+            if task.name == "RunTask" || task.name == "ThreadControllerImpl::RunTask", task.duration > 50_000 {
                 summary.longTasks.append(.init(start: (task.start - first) / 1000, duration: task.duration / 1000))
             }
         }
@@ -573,6 +573,7 @@ final class PerformancePanel: InspectorPanelView {
         update()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -816,6 +817,7 @@ private final class MetricTile: FlippedView {
         for view in [title, value, detail, chart] { addSubview(view) }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -865,6 +867,7 @@ private final class Sparkline: NSView {
         super.init(frame: .zero)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var isFlipped: Bool { true }
@@ -957,6 +960,7 @@ private final class TraceSectionView: SectionView {
         for view in [heading, summary, bar, tasksHeading, saveButton, revealButton, perfettoButton, hint] as [NSView] { addSubview(view) }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func show(_ model: PerformanceModel) {
@@ -1083,6 +1087,7 @@ private final class MemorySectionView: SectionView {
         for view in [heading, usage, snapshot, revealButton, hint] as [NSView] { addSubview(view) }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func show(_ model: PerformanceModel) {
@@ -1130,6 +1135,7 @@ private final class CoverageSectionView: SectionView {
         addSubview(summary)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func show(_ model: PerformanceModel) {
@@ -1190,6 +1196,7 @@ private final class CoverageRow: HoverView {
         for view in [name, numbers, bar] as [NSView] { addSubview(view) }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {

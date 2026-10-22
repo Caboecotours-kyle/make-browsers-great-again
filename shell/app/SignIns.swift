@@ -97,7 +97,7 @@ enum SignIns {
         if let key = browserKeys[service] { return .success(key) }
         let name = source.name
         let result = await Task.detached(operation: { keychainPassword(service: service, browser: name) }).value
-        guard case .success(let key) = result else { return result.map { $0 } }
+        guard case .success(let key) = result else { return result.map(\.self) }
         browserKeys[service] = key
         Task {
             try? await Task.sleep(for: .seconds(120))

@@ -55,7 +55,7 @@ final class Updater {
     private static let lastVersionKey = "LastRunVersion"
     /// Arc looks a few times a day; so does MBGA, when the Mac isn't busy.
     private static let interval: TimeInterval = 4 * 3600
-    nonisolated private static let staging = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+    private nonisolated static let staging = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("dev.mbga.browser/Update", isDirectory: true)
 
     private init() {
@@ -213,7 +213,7 @@ final class Updater {
         }
     }
 
-    nonisolated private static func latest(from feed: URL) async throws -> Release {
+    private nonisolated static func latest(from feed: URL) async throws -> Release {
         var request = URLRequest(url: feed, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
         request.setValue("MBGA", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -223,7 +223,7 @@ final class Updater {
     }
 
     /// Downloads, verifies and unpacks the release into the staging folder.
-    nonisolated private static func download(_ release: Release, publicKey: Curve25519.Signing.PublicKey,
+    private nonisolated static func download(_ release: Release, publicKey: Curve25519.Signing.PublicKey,
                                              current: String) async throws {
         let (file, response) = try await URLSession.shared.download(from: release.url)
         defer { try? FileManager.default.removeItem(at: file) }
@@ -241,7 +241,7 @@ final class Updater {
             try fm.createDirectory(at: unpacked, withIntermediateDirectories: true)
             guard run("/usr/bin/ditto", ["-x", "-k", file.path, unpacked.path]),
                   let app = try fm.contentsOfDirectory(at: unpacked, includingPropertiesForKeys: nil)
-                    .first(where: { $0.pathExtension == "app" }),
+                      .first(where: { $0.pathExtension == "app" }),
                   let info = info(of: app),
                   info["CFBundleIdentifier"] as? String == Bundle.main.bundleIdentifier
             else { throw Failure.unpack }
@@ -255,7 +255,7 @@ final class Updater {
         }.value
     }
 
-    nonisolated private static func sha256(of file: URL) throws -> SHA256.Digest {
+    private nonisolated static func sha256(of file: URL) throws -> SHA256.Digest {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
         var hash = SHA256()
@@ -265,7 +265,7 @@ final class Updater {
         return hash.finalize()
     }
 
-    nonisolated private static func run(_ tool: String, _ arguments: [String]) -> Bool {
+    private nonisolated static func run(_ tool: String, _ arguments: [String]) -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: tool)
         process.arguments = arguments
@@ -274,12 +274,12 @@ final class Updater {
         return process.terminationStatus == 0
     }
 
-    nonisolated private static func stagedVersion() -> String? {
+    private nonisolated static func stagedVersion() -> String? {
         info(of: staging.appendingPathComponent("MBGA.app"))?["CFBundleShortVersionString"] as? String
     }
 
     /// Read afresh: Bundle remembers what it read at a path.
-    nonisolated private static func info(of app: URL) -> [String: Any]? {
+    private nonisolated static func info(of app: URL) -> [String: Any]? {
         (try? Data(contentsOf: app.appendingPathComponent("Contents/Info.plist")))
             .flatMap { try? PropertyListSerialization.propertyList(from: $0, format: nil) as? [String: Any] }
     }
@@ -295,7 +295,7 @@ final class Updater {
         return false
     }
 
-    nonisolated private static func systemSupports(_ minimum: String) -> Bool {
+    private nonisolated static func systemSupports(_ minimum: String) -> Bool {
         let os = ProcessInfo.processInfo.operatingSystemVersion
         return !isNewer(minimum, than: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)")
     }
@@ -323,15 +323,15 @@ final class Updater {
         let staged = Self.staging.appendingPathComponent("MBGA.app")
         guard FileManager.default.fileExists(atPath: staged.path) else { return }
         let script = """
-            while kill -0 "$1" 2>/dev/null; do sleep 0.1; done
-            old="$2.replaced-$$"
-            if mv "$2" "$old"; then
-              if mv "$3" "$2"; then rm -rf "$old"; else mv "$old" "$2"; fi
-            fi
-            app="$2"; again="$4"; shift 4
-            [ "$again" = 1 ] && open "$@" "$app"
-            exit 0
-            """
+        while kill -0 "$1" 2>/dev/null; do sleep 0.1; done
+        old="$2.replaced-$$"
+        if mv "$2" "$old"; then
+          if mv "$3" "$2"; then rm -rf "$old"; else mv "$old" "$2"; fi
+        fi
+        app="$2"; again="$4"; shift 4
+        [ "$again" = 1 ] && open "$@" "$app"
+        exit 0
+        """
         // Opened again with the same MBGA_ settings, such as another data
         // folder: `open` doesn't pass on the environment.
         let environment = ProcessInfo.processInfo.environment

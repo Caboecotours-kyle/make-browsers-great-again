@@ -45,7 +45,8 @@ pub struct Read {
 /// Where one profile of a Chromium-based `source` keeps its passwords.
 fn chromium_databases(source: &Source, profile_id: &str) -> Vec<PathBuf> {
     let data_dir = Path::new(&source.id);
-    let profile = if source.kind == Kind::Arc { data_dir.join("User Data") } else { data_dir.to_path_buf() }.join(profile_id);
+    let profile =
+        if source.kind == Kind::Arc { data_dir.join("User Data") } else { data_dir.to_path_buf() }.join(profile_id);
     ["Login Data", "Login Data For Account"].iter().map(|f| profile.join(f)).filter(|p| p.exists()).collect()
 }
 
@@ -67,8 +68,9 @@ pub fn count(source: &Source, profile_id: &str) -> u32 {
                 .ok()
             })
             .sum(),
-        Kind::Firefox => firefox_logins(&firefox::profile_path(Path::new(&source.id), profile_id))
-            .map_or(0, |l| l.len() as u32),
+        Kind::Firefox => {
+            firefox_logins(&firefox::profile_path(Path::new(&source.id), profile_id)).map_or(0, |l| l.len() as u32)
+        }
         Kind::Safari => 0,
     }
 }
@@ -101,7 +103,8 @@ pub fn read(source: &Source, profile_id: &str, password: Option<&[u8]>) -> Resul
     }
 }
 
-pub const SAFARI: &str = "Safari's passwords are in the Passwords app. Choose File ▸ Export All Passwords there, then import the file.";
+pub const SAFARI: &str =
+    "Safari's passwords are in the Passwords app. Choose File ▸ Export All Passwords there, then import the file.";
 
 fn read_chromium(db: &Connection, key: &[u8]) -> rusqlite::Result<Read> {
     let columns = columns(db, "logins")?;
@@ -156,7 +159,11 @@ fn read_chromium(db: &Connection, key: &[u8]) -> rusqlite::Result<Read> {
 }
 
 fn chromium_ms(us: i64) -> u64 {
-    if us <= UNIX_EPOCH_US { 0 } else { ((us - UNIX_EPOCH_US) / 1000) as u64 }
+    if us <= UNIX_EPOCH_US {
+        0
+    } else {
+        ((us - UNIX_EPOCH_US) / 1000) as u64
+    }
 }
 
 // ------------------------------------------------------------------ Firefox
@@ -363,9 +370,11 @@ fn decrypt_login_field(key: &[u8], blob: &[u8]) -> Option<Vec<u8>> {
 /// by their names.
 pub fn read_csv(text: &str) -> Result<Read, String> {
     let mut rows = parse_csv(text.trim_start_matches('\u{feff}')).into_iter();
-    let header: Vec<String> = rows.next().ok_or("The file is empty.")?.iter().map(|h| h.trim().to_lowercase()).collect();
+    let header: Vec<String> =
+        rows.next().ok_or("The file is empty.")?.iter().map(|h| h.trim().to_lowercase()).collect();
     let find = |names: &[&str]| header.iter().position(|h| names.contains(&h.as_str()));
-    let url = find(&["url", "login_uri", "website", "web site", "hostname", "origin", "login url", "uri", "web address"]);
+    let url =
+        find(&["url", "login_uri", "website", "web site", "hostname", "origin", "login url", "uri", "web address"]);
     let username = find(&["username", "login_username", "user name", "login name", "login", "user", "email", "e-mail"]);
     let password = find(&["password", "login_password"]);
     let (Some(url), Some(password)) = (url, password) else {
@@ -448,8 +457,10 @@ pub(super) mod test_support {
         let iv = [&[0x04, 0x0e], iv14].concat();
         let ciphertext = crypto::cbc(true, Cipher::Aes, &key, &iv, plain).unwrap();
         let hmac = seq(&[tlv(0x06, &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x09])]);
-        let kdf = seq(&[tlv(0x06, &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0c]),
-                        seq(&[tlv(0x04, salt), tlv(0x02, &[1]), tlv(0x02, &[32]), hmac])]);
+        let kdf = seq(&[
+            tlv(0x06, &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0c]),
+            seq(&[tlv(0x04, salt), tlv(0x02, &[1]), tlv(0x02, &[32]), hmac]),
+        ]);
         let scheme = seq(&[tlv(0x06, oid::AES256_CBC), tlv(0x04, iv14)]);
         seq(&[seq(&[tlv(0x06, oid::PBES2), seq(&[kdf, scheme])]), tlv(0x04, &ciphertext)])
     }
@@ -458,8 +469,11 @@ pub(super) mod test_support {
     pub fn login_field(key: &[u8], plain: &str) -> String {
         let iv = [7u8; 8];
         let ciphertext = crypto::cbc(true, Cipher::TripleDes, &key[..24], &iv, plain.as_bytes()).unwrap();
-        let blob = seq(&[tlv(0x04, &[0xf8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
-                         seq(&[tlv(0x06, oid::DES_EDE3_CBC), tlv(0x04, &iv)]), tlv(0x04, &ciphertext)]);
+        let blob = seq(&[
+            tlv(0x04, &[0xf8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
+            seq(&[tlv(0x06, oid::DES_EDE3_CBC), tlv(0x04, &iv)]),
+            tlv(0x04, &ciphertext),
+        ]);
         base64::engine::general_purpose::STANDARD.encode(blob)
     }
 

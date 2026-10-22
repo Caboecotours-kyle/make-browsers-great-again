@@ -27,9 +27,8 @@ pub fn load(arc_dir: &Path) -> Result<Vec<ImportedProfile>, String> {
         .and_then(|c| c.iter().find(|c| c.get("spaces").is_some() && c.get("items").is_some()))
         .ok_or("Arc's sidebar file has no spaces")?;
 
-    let items: HashMap<&str, &Value> = objects(&container["items"])
-        .filter_map(|item| Some((item["id"].as_str()?, item)))
-        .collect();
+    let items: HashMap<&str, &Value> =
+        objects(&container["items"]).filter_map(|item| Some((item["id"].as_str()?, item))).collect();
     let names = profile_names(&arc_dir.join("User Data"));
     let mut profiles: Vec<ImportedProfile> = Vec::new();
     let profile = |dir: String, profiles: &mut Vec<ImportedProfile>| -> usize {
@@ -37,7 +36,11 @@ pub fn load(arc_dir: &Path) -> Result<Vec<ImportedProfile>, String> {
             return i;
         }
         let name = names.get(&dir).cloned().unwrap_or_else(|| {
-            if dir == "Default" { "Personal".to_string() } else { dir.clone() }
+            if dir == "Default" {
+                "Personal".to_string()
+            } else {
+                dir.clone()
+            }
         });
         profiles.push(ImportedProfile { id: dir, name, spaces: Vec::new(), favorites: Vec::new() });
         profiles.len() - 1
@@ -94,10 +97,7 @@ fn profile_names(user_data: &Path) -> HashMap<String, String> {
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
         .and_then(|v| v["profile"]["info_cache"].as_object().cloned())
         .map(|cache| {
-            cache
-                .into_iter()
-                .filter_map(|(dir, info)| Some((dir, info["name"].as_str()?.to_string())))
-                .collect()
+            cache.into_iter().filter_map(|(dir, info)| Some((dir, info["name"].as_str()?.to_string()))).collect()
         })
         .unwrap_or_default()
 }

@@ -219,9 +219,8 @@ fn use_scriptlets(engine: &mut Engine, dir: &Path) {
     // The reader panics on files it doesn't understand; a broken download
     // must not take the browser down.
     #[allow(deprecated)]
-    let resources = std::panic::catch_unwind(|| {
-        adblock::resources::resource_assembler::assemble_scriptlet_resources(&path)
-    });
+    let resources =
+        std::panic::catch_unwind(|| adblock::resources::resource_assembler::assemble_scriptlet_resources(&path));
     if let Ok(resources) = resources {
         engine.use_resources(resources);
     }

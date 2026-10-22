@@ -79,10 +79,7 @@ impl History {
                 }
                 let site_prefix = address.starts_with(&query);
                 let bonus = if site_prefix { 1000.0 } else { 0.0 };
-                Some((
-                    score(v, now) + bonus,
-                    Match { url: v.url.clone(), title: v.title.clone(), site_prefix },
-                ))
+                Some((score(v, now) + bonus, Match { url: v.url.clone(), title: v.title.clone(), site_prefix }))
             })
             .collect();
         ranked.sort_by(|a, b| b.0.total_cmp(&a.0));

@@ -72,6 +72,7 @@ final class RootView: NSView {
         updateEmptyHint()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var isFlipped: Bool { true }
@@ -500,6 +501,7 @@ final class BackdropView: NSView {
         layer?.addSublayer(gradient)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -548,6 +550,7 @@ final class AgentGlowView: NSView {
         isHidden = true
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -583,9 +586,9 @@ final class AgentGlowView: NSView {
             ring.add(breathe, forKey: "breathe")
         } else if !active {
             DispatchQueue.main.asyncAfter(deadline: .now() + fade.duration) { [weak self] in
-                guard let self, self.ring.opacity == 0 else { return }
-                self.ring.removeAnimation(forKey: "breathe")
-                self.isHidden = true
+                guard let self, ring.opacity == 0 else { return }
+                ring.removeAnimation(forKey: "breathe")
+                isHidden = true
             }
         }
     }
@@ -606,6 +609,7 @@ final class PeekContainerView: FlippedView {
         backdrop.layer?.cornerCurve = .continuous
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -670,6 +674,7 @@ final class MotionSmearView: NSView {
         layer?.addSublayer(fill)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }

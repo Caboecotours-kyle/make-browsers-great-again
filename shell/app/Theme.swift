@@ -398,7 +398,7 @@ final class FaviconCache {
         guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size,
                                             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                                             colorSpaceName: .deviceRGB, bytesPerRow: size * 4, bitsPerPixel: 32),
-              let context = NSGraphicsContext(bitmapImageRep: bitmap)
+            let context = NSGraphicsContext(bitmapImageRep: bitmap)
         else { return nil }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context

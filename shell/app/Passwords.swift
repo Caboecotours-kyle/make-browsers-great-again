@@ -346,11 +346,10 @@ enum PasswordImport {
         panel.allowedContentTypes = [.commaSeparatedText]
         panel.message = "Choose passwords exported from the Passwords app, another browser or a password manager."
         panel.prompt = "Import"
-        let response: NSApplication.ModalResponse
-        if let window {
-            response = await panel.beginSheetModal(for: window)
+        let response: NSApplication.ModalResponse = if let window {
+            await panel.beginSheetModal(for: window)
         } else {
-            response = panel.runModal()
+            panel.runModal()
         }
         guard response == .OK, let url = panel.url else { return nil }
         let core = store.core

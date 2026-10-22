@@ -140,13 +140,7 @@ impl From<DropTarget> for Container {
     fn from(t: DropTarget) -> Container {
         match t {
             DropTarget::Favorites { profile_id } => Container::Favorites { profile_id },
-            DropTarget::Pinned {
-                space_id,
-                folder_id,
-            } => Container::Pinned {
-                space_id,
-                folder_id,
-            },
+            DropTarget::Pinned { space_id, folder_id } => Container::Pinned { space_id, folder_id },
             DropTarget::Today { space_id } => Container::Today { space_id },
         }
     }
@@ -212,13 +206,7 @@ pub struct ImportedProfileLink {
 }
 
 fn import_counts(c: import::Counts, profiles: Vec<ImportedProfileLink>) -> ImportSummary {
-    ImportSummary {
-        spaces: c.spaces,
-        pinned: c.pinned,
-        favorites: c.favorites,
-        today: c.today,
-        profiles,
-    }
+    ImportSummary { spaces: c.spaces, pinned: c.pinned, favorites: c.favorites, today: c.today, profiles }
 }
 
 /// A cookie of another browser, for the engine to set.
@@ -270,7 +258,9 @@ pub enum PasswordOffer {
     Nothing,
     Save,
     /// The saved login with that username has another password now.
-    Update { login_id: u64 },
+    Update {
+        login_id: u64,
+    },
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
@@ -330,10 +320,7 @@ pub struct BrowserCore {
 }
 
 fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 const STATE_FILE: &str = "state.json";
@@ -341,17 +328,11 @@ const HISTORY_FILE: &str = "history.json";
 const PASSWORDS_FILE: &str = "passwords.json";
 
 fn load_history(dir: &Path) -> history::History {
-    fs::read(dir.join(HISTORY_FILE))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    fs::read(dir.join(HISTORY_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
 fn load_passwords(dir: &Path) -> passwords::Store {
-    fs::read(dir.join(PASSWORDS_FILE))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    fs::read(dir.join(PASSWORDS_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
 /// Writes `value` as JSON next to its final path, then renames it into place.
@@ -427,12 +408,7 @@ fn flatten(state: &State, nodes: &[Node], depth: u32, parent: Option<Id>, out: &
                     });
                 }
             }
-            Node::Folder {
-                id,
-                name,
-                expanded,
-                children,
-            } => {
+            Node::Folder { id, name, expanded, children } => {
                 out.push(PinnedRow {
                     id: *id,
                     depth,
@@ -544,11 +520,7 @@ impl BrowserCore {
                         .filter_map(|id| s.tabs.get(id).map(|t| tab_info(s, t)))
                         .collect(),
                     pinned,
-                    today: space
-                        .today
-                        .iter()
-                        .filter_map(|id| s.tabs.get(id).map(|t| tab_info(s, t)))
-                        .collect(),
+                    today: space.today.iter().filter_map(|id| s.tabs.get(id).map(|t| tab_info(s, t))).collect(),
                     active_tab: space.active_tab,
                 }
             })
@@ -595,9 +567,7 @@ impl BrowserCore {
     }
 
     pub fn profile_dir(&self, profile_id: u64) -> String {
-        profile_dir_in(&self.lock().data_dir, profile_id)
-            .to_string_lossy()
-            .into_owned()
+        profile_dir_in(&self.lock().data_dir, profile_id).to_string_lossy().into_owned()
     }
 
     pub fn profile_of_tab(&self, tab_id: u64) -> Option<u64> {
@@ -675,8 +645,7 @@ impl BrowserCore {
             return;
         };
         // Engines repeat the same title/URL often; skip no-op updates.
-        let changed = url.as_ref().is_some_and(|u| *u != t.url)
-            || title.as_ref().is_some_and(|x| *x != t.title);
+        let changed = url.as_ref().is_some_and(|u| *u != t.url) || title.as_ref().is_some_and(|x| *x != t.title);
         if changed {
             let url_changed = url.as_ref().is_some_and(|u| *u != t.url);
             inner.state.update_tab(id, url.as_deref(), title.as_deref());
@@ -722,8 +691,7 @@ impl BrowserCore {
 
     /// Undoes the most recent close, clear, tidy-up or folder deletion.
     pub fn undo_close(&self) -> Option<ReopenOutcome> {
-        self.mutate(|s, _| s.reopen_last())
-            .map(|(space_id, tabs)| ReopenOutcome { space_id, tabs })
+        self.mutate(|s, _| s.reopen_last()).map(|(space_id, tabs)| ReopenOutcome { space_id, tabs })
     }
 
     /// Reopens one closed tab at the top of Today. Returns its space.
@@ -974,7 +942,11 @@ impl BrowserCore {
         let old = {
             let mut blocker = self.blocker.write().unwrap_or_else(|e| e.into_inner());
             blocker.enabled = enabled;
-            if enabled { None } else { blocker.unload() }
+            if enabled {
+                None
+            } else {
+                blocker.unload()
+            }
         };
         // Freed outside the lock, which requests wait on.
         drop(old);
@@ -1268,7 +1240,13 @@ impl BrowserCore {
     /// Imports the passwords of a profile found by `detect_browsers` into
     /// MBGA's profile `into`. Chromium-based browsers need the password from
     /// their keychain item. Call it off the main thread, once unlocked.
-    pub fn import_browser_passwords(&self, source_id: String, profile_id: String, password: Option<Vec<u8>>, into: u64) -> PasswordImportOutcome {
+    pub fn import_browser_passwords(
+        &self,
+        source_id: String,
+        profile_id: String,
+        password: Option<Vec<u8>>,
+        into: u64,
+    ) -> PasswordImportOutcome {
         let source = self.lock().detected.iter().find(|s| s.id == source_id).cloned();
         let Some(source) = source else { return PasswordImportOutcome::failed("That browser is no longer there.") };
         match import::passwords::read(&source, &profile_id, password.as_deref()) {
@@ -1345,7 +1323,9 @@ impl BrowserCore {
 
     fn merge_logins(&self, read: import::passwords::Read, into: u64) -> PasswordImportOutcome {
         let mut inner = self.lock();
-        let Some(key) = inner.password_key.clone() else { return PasswordImportOutcome::failed("Passwords are locked.") };
+        let Some(key) = inner.password_key.clone() else {
+            return PasswordImportOutcome::failed("Passwords are locked.");
+        };
         let merged = inner.passwords.merge(&key, into, &read.logins, &read.never, now_ms());
         inner.passwords_dirty = true;
         PasswordImportOutcome {

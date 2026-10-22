@@ -10,8 +10,7 @@ import statistics
 import time
 
 from browsers import MBGA
-from common import (WORK, DevTools, activate, log, page_url, sample, sleep_until, summarize,
-                    wait_for_window)
+from common import WORK, DevTools, activate, log, page_url, sample, sleep_until, summarize, wait_for_window
 
 STARTUPS = 3
 SPEEDOMETER = "https://browserbench.org/Speedometer3.1/?startAutomatically=true"
@@ -43,8 +42,7 @@ def run_startup(browser):
         "memory_mb": statistics.median(r["memory"]["total_mb"] for r in runs),
         "runs": runs,
     }
-    log(f"{browser.key} startup: window {result['first_window_s']:.2f}s, "
-        f"{result['memory_mb']:.0f} MB")
+    log(f"{browser.key} startup: window {result['first_window_s']:.2f}s, {result['memory_mb']:.0f} MB")
     return result
 
 
@@ -60,12 +58,12 @@ def run_speedometer(browser):
         while time.time() - t0 < SPEEDOMETER_TIMEOUT:
             time.sleep(10)
             done = devtools.evaluate(
-                "location.hash === '#summary' && document.querySelector('#result-number')?.textContent")
+                "location.hash === '#summary' && document.querySelector('#result-number')?.textContent"
+            )
             if done:
                 score = float(done)
                 break
-        detail = devtools.evaluate(
-            "document.querySelector('#confidence-number')?.textContent || ''")
+        detail = devtools.evaluate("document.querySelector('#confidence-number')?.textContent || ''")
     finally:
         devtools.close()
         browser.quit(proc)

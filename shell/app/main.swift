@@ -7,8 +7,8 @@ let hasBrowserDevTools = MBEngine.claimDevToolsPipe()
 let dataDirectory = ProcessInfo.processInfo.environment["MBGA_DATA_DIR"]
     .map { URL(fileURLWithPath: $0, isDirectory: true) }
     ?? FileManager.default
-        .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("MBGA", isDirectory: true)
+    .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("MBGA", isDirectory: true)
 let core = BrowserCore(dataDir: dataDirectory.path)
 // Extensions need the helper to see MBGA's tabs; without any, it'd only cost.
 let loadsExtensionHelper = hasBrowserDevTools && core.snapshot().profiles.contains {

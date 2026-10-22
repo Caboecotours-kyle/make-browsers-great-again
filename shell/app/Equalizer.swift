@@ -31,6 +31,7 @@ final class EqualizerView: NSView {
         }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var intrinsicContentSize: NSSize { NSSize(width: 12, height: 11) }

@@ -58,8 +58,17 @@ mod sys {
         // kCCPRFHmacAlgSHA1 and kCCPRFHmacAlgSHA256.
         let prf = if hash == Hash::Sha1 { 1 } else { 3 };
         let status = unsafe {
-            CCKeyDerivationPBKDF(PBKDF2, password.as_ptr(), password.len(), salt.as_ptr(), salt.len(), prf, rounds,
-                                 out.as_mut_ptr(), out.len())
+            CCKeyDerivationPBKDF(
+                PBKDF2,
+                password.as_ptr(),
+                password.len(),
+                salt.as_ptr(),
+                salt.len(),
+                prf,
+                rounds,
+                out.as_mut_ptr(),
+                out.len(),
+            )
         };
         status == 0
     }
@@ -70,8 +79,19 @@ mod sys {
         let mut out = vec![0u8; data.len() + 16];
         let mut moved = 0usize;
         let status = unsafe {
-            CCCrypt(if encrypt { 0 } else { 1 }, alg, PKCS7, key.as_ptr().cast(), key.len(), iv.as_ptr().cast(),
-                    data.as_ptr().cast(), data.len(), out.as_mut_ptr().cast(), out.len(), &mut moved)
+            CCCrypt(
+                if encrypt { 0 } else { 1 },
+                alg,
+                PKCS7,
+                key.as_ptr().cast(),
+                key.len(),
+                iv.as_ptr().cast(),
+                data.as_ptr().cast(),
+                data.len(),
+                out.as_mut_ptr().cast(),
+                out.len(),
+                &mut moved,
+            )
         };
         if status != 0 {
             return None;

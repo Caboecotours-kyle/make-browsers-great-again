@@ -53,7 +53,7 @@ snapshot. Prefer snapshot/read/find over screenshots: far fewer tokens.
 
 let socketPath = ProcessInfo.processInfo.environment["MBGA_SOCKET"]
     ?? FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/MBGA/agent.sock").path
+    .appendingPathComponent("Library/Application Support/MBGA/agent.sock").path
 
 enum Failure: Error {
     case message(String)

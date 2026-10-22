@@ -56,9 +56,11 @@ def quit_app(pid, timeout=60):
     """Quits this process the way Cmd+Q does (a quit Apple event to it
     alone, so another copy of the same app keeps running). Returns whether
     it exited in time."""
-    script = (f"ObjC.import('AppKit'); "
-              f"var app = $.NSRunningApplication.runningApplicationWithProcessIdentifier({pid}); "
-              f"app.isNil() ? false : app.terminate")
+    script = (
+        f"ObjC.import('AppKit'); "
+        f"var app = $.NSRunningApplication.runningApplicationWithProcessIdentifier({pid}); "
+        f"app.isNil() ? false : app.terminate"
+    )
     subprocess.run(["osascript", "-l", "JavaScript", "-e", script], capture_output=True, timeout=30)
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -79,8 +81,7 @@ def quit_app(pid, timeout=60):
 def wait_for_window(pid, timeout=30):
     start = time.time()
     while time.time() - start < timeout:
-        out = subprocess.run([os.path.join(TOOLS, "windows"), str(pid)],
-                             capture_output=True, text=True).stdout.strip()
+        out = subprocess.run([os.path.join(TOOLS, "windows"), str(pid)], capture_output=True, text=True).stdout.strip()
         if out and int(out) > 0:
             return time.time() - start
         time.sleep(0.05)
@@ -93,17 +94,16 @@ def activate(pid):
 
 
 def window_bounds(pid):
-    out = subprocess.run([os.path.join(TOOLS, "windows"), str(pid), "--bounds"],
-                         capture_output=True, text=True).stdout
+    out = subprocess.run([os.path.join(TOOLS, "windows"), str(pid), "--bounds"], capture_output=True, text=True).stdout
     return json.loads(out or "[]")
 
 
 # ----------------------------------------------------------------- sampling
 
+
 def sample(pid):
     """Footprint, CPU time, energy and wakeups of every process in the tree."""
-    out = subprocess.run([os.path.join(TOOLS, "sample"), str(pid)],
-                         capture_output=True, text=True, check=True).stdout
+    out = subprocess.run([os.path.join(TOOLS, "sample"), str(pid)], capture_output=True, text=True, check=True).stdout
     return json.loads(out)
 
 
@@ -128,8 +128,9 @@ def summarize(s):
 def gpu_times():
     """Accumulated GPU time per process in ns, as Activity Monitor's GPU
     column reads it from the graphics driver's user clients."""
-    out = subprocess.run(["ioreg", "-l", "-w0", "-r", "-c", "AGXDeviceUserClient"],
-                         capture_output=True, text=True).stdout
+    out = subprocess.run(
+        ["ioreg", "-l", "-w0", "-r", "-c", "AGXDeviceUserClient"], capture_output=True, text=True
+    ).stdout
     times = {}
     for block in out.split("+-o AGXDeviceUserClient")[1:]:
         m = re.search(r'"IOUserClientCreator" = "pid (\d+)', block)
@@ -145,9 +146,12 @@ class EnergyImpact:
     over a window that starts when this object is created."""
 
     def __init__(self, seconds):
-        self.proc = subprocess.Popen(["top", "-l", "2", "-s", str(int(seconds)),
-                                      "-stats", "pid,power"],
-                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        self.proc = subprocess.Popen(
+            ["top", "-l", "2", "-s", str(int(seconds)), "-stats", "pid,power"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
 
     def result(self):
         out, _ = self.proc.communicate(timeout=60)
@@ -171,8 +175,9 @@ def measure_window(pid, seconds):
     top = EnergyImpact(seconds)
     # Whether the browser stayed in front: another app's windows covering it
     # would hide its pages and make the window meaningless.
-    front = subprocess.Popen([os.path.join(TOOLS, "frontwatch"), str(pid), str(seconds - 1)],
-                             stdout=subprocess.PIPE, text=True)
+    front = subprocess.Popen(
+        [os.path.join(TOOLS, "frontwatch"), str(pid), str(seconds - 1)], stdout=subprocess.PIPE, text=True
+    )
     time.sleep(seconds)
     b, gb = sample(pid), gpu_times()
     impact = top.result()
@@ -180,8 +185,7 @@ def measure_window(pid, seconds):
     elapsed = b["t"] - a["t"]
     before = {p["pid"]: p for p in a["procs"]}
     zero = {"cpu_ns": 0, "energy_nj": 0, "wakeups": 0}
-    total = {"cpu_percent": 0.0, "power_mw": 0.0, "wakeups_per_s": 0.0, "gpu_percent": 0.0,
-             "energy_impact": 0.0}
+    total = {"cpu_percent": 0.0, "power_mw": 0.0, "wakeups_per_s": 0.0, "gpu_percent": 0.0, "energy_impact": 0.0}
     kinds = {}
     for p in b["procs"]:
         q = before.get(p["pid"], zero)
@@ -192,17 +196,23 @@ def measure_window(pid, seconds):
             "gpu_percent": (gb.get(p["pid"], 0) - ga.get(p["pid"], 0)) / (elapsed * 1e9) * 100,
             "energy_impact": impact.get(p["pid"], 0.0),
         }
-        k = kinds.setdefault(kind_of(p), {key: 0.0 for key in total})
+        k = kinds.setdefault(kind_of(p), dict.fromkeys(total, 0.0))
         for key, value in row.items():
             total[key] += value
             k[key] += value
     if front_fraction < 0.95:
         log(f"WARNING: the browser was in front only {front_fraction:.0%} of this window")
-    return {"seconds": round(elapsed, 1), **total, "front_fraction": front_fraction,
-            "by_kind": kinds, "memory": summarize(b)}
+    return {
+        "seconds": round(elapsed, 1),
+        **total,
+        "front_fraction": front_fraction,
+        "by_kind": kinds,
+        "memory": summarize(b),
+    }
 
 
 # --------------------------------------------------------------- test pages
+
 
 def ensure_media():
     """Test videos, generated once: a 1080p30 VP9 movie and a small ad."""
@@ -217,10 +227,34 @@ def ensure_media():
         if os.path.exists(out):
             continue
         log(f"generating {name}")
-        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", src,
-                        "-t", str(secs), "-vf", vf, "-c:v", "libvpx-vp9", "-b:v", rate,
-                        "-deadline", "realtime", "-cpu-used", "8", "-row-mt", "1",
-                        out + ".tmp.webm"], check=True)
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                src,
+                "-t",
+                str(secs),
+                "-vf",
+                vf,
+                "-c:v",
+                "libvpx-vp9",
+                "-b:v",
+                rate,
+                "-deadline",
+                "realtime",
+                "-cpu-used",
+                "8",
+                "-row-mt",
+                "1",
+                out + ".tmp.webm",
+            ],
+            check=True,
+        )
         os.rename(out + ".tmp.webm", out)
 
 
@@ -256,14 +290,14 @@ def page_url(name):
 
 # ----------------------------------------------------------------- DevTools
 
+
 def page_targets(port):
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=10) as r:
         return [t for t in json.load(r) if t.get("type") == "page"]
 
 
 def listening_pid(port):
-    out = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp"],
-                         capture_output=True, text=True).stdout
+    out = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp"], capture_output=True, text=True).stdout
     pids = [int(line[1:]) for line in out.splitlines() if line.startswith("p")]
     return pids[0] if pids else None
 
@@ -292,12 +326,16 @@ class DevTools:
                 raise RuntimeError(f"no page target matching {match!r}")
             time.sleep(0.5)
         url = pages[0]["webSocketDebuggerUrl"]
-        host_port, path = url[len("ws://"):].split("/", 1)
+        host_port, path = url[len("ws://") :].split("/", 1)
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
         key = base64.b64encode(os.urandom(16)).decode()
-        self.sock.sendall((f"GET /{path} HTTP/1.1\r\nHost: {host_port}\r\nUpgrade: websocket\r\n"
-                           f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
-                           "Sec-WebSocket-Version: 13\r\n\r\n").encode())
+        self.sock.sendall(
+            (
+                f"GET /{path} HTTP/1.1\r\nHost: {host_port}\r\nUpgrade: websocket\r\n"
+                f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+                "Sec-WebSocket-Version: 13\r\n\r\n"
+            ).encode()
+        )
         response = b""
         while b"\r\n\r\n" not in response:
             response += self.sock.recv(4096)
@@ -349,8 +387,7 @@ class DevTools:
 
     def call(self, method, params=None):
         self.next_id += 1
-        self._send(json.dumps({"id": self.next_id, "method": method,
-                               "params": params or {}}).encode())
+        self._send(json.dumps({"id": self.next_id, "method": method, "params": params or {}}).encode())
         while True:
             msg = self._recv_message()
             if msg.get("id") == self.next_id:
@@ -359,8 +396,9 @@ class DevTools:
                 return msg["result"]
 
     def evaluate(self, expression, await_promise=False):
-        result = self.call("Runtime.evaluate", {"expression": expression, "returnByValue": True,
-                                                "awaitPromise": await_promise})
+        result = self.call(
+            "Runtime.evaluate", {"expression": expression, "returnByValue": True, "awaitPromise": await_promise}
+        )
         return result["result"].get("value")
 
     def close(self):

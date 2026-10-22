@@ -1,0 +1,26 @@
+# Python lives in bench/. scripts/check.sh runs `ruff format --check` and
+# `ruff check`; scripts/check.sh --fix applies both.
+line-length = 120
+target-version = "py312"
+extend-exclude = ["build", "third_party"]
+
+[lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # import order
+    "B",        # likely bugs
+    "UP",       # modern syntax
+    "SIM",      # simpler forms
+    "C4",       # comprehensions
+    "PL",       # pylint, including size and complexity limits
+    "RUF",
+]
+ignore = [
+    "PLR2004",  # benchmarks compare against thresholds they name in place
+    "RUF001",   # the reports print typographic characters on purpose
+]
+
+[lint.pylint]
+max-args = 7
+max-positional-args = 7

@@ -149,6 +149,7 @@ private final class LittleWindowView: FlippedView {
         update()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func host(_ view: NSView, cornerRadius: CGFloat) {

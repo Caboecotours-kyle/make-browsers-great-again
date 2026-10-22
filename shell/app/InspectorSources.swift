@@ -553,7 +553,7 @@ private enum PrettyPrinter {
             if token.newlineBefore, wordLike, prevWordLike, depth == (braces.last?.depth ?? 0) { newline() }
             var space = false
             if let previous {
-                if (previous.kind == .word || previous.kind == .string) && wordLike { space = true }
+                if previous.kind == .word || previous.kind == .string, wordLike { space = true }
                 if previous.kind == .word, spacedKeywords.contains(previous.text),
                    ![";", ",", ".", ")", "]", "?."].contains(string), !(previous.text == "function" && string == "(") {
                     space = true
@@ -871,6 +871,7 @@ final class SourcesPanel: InspectorPanelView, NSTextViewDelegate {
         updateControls()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     private static func scroll(_ outline: NSOutlineView) -> NSScrollView {
@@ -1595,6 +1596,7 @@ private final class IconCell: NSTableCellView {
         imageView = icon
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func set(symbol: String, tint: NSColor, text: NSAttributedString) {
@@ -1624,6 +1626,7 @@ private final class SourceTitleView: HoverView {
         addSubview(label)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func set(_ name: String?, detail: String?) {
@@ -1668,6 +1671,7 @@ private final class PausedBanner: FlippedView {
         addSubview(label)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -2137,6 +2141,7 @@ private final class BreakpointCell: NSTableCellView {
         textField = label
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func configure(enabled: Bool, text: NSAttributedString, toggle: @escaping (Bool) -> Void) {

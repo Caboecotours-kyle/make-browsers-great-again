@@ -221,10 +221,9 @@ final class AgentServer {
     }
 
     private nonisolated static func encode(_ reply: AgentReply) -> Data {
-        let object: [String: Any]
-        switch reply {
-        case .success(let text): object = ["ok": true, "text": text]
-        case .failure(let error): object = ["ok": false, "error": error]
+        let object: [String: Any] = switch reply {
+        case .success(let text): ["ok": true, "text": text]
+        case .failure(let error): ["ok": false, "error": error]
         }
         return (try? JSONSerialization.data(withJSONObject: object)) ?? Data("{\"ok\":false}".utf8)
     }

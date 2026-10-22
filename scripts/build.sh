@@ -13,8 +13,14 @@ for arg in "$@"; do
   case "$arg" in
     --run) RUN=1 ;;
     # MBGA_SIGN_IDENTITY: the identity to sign with (ad hoc if unset).
-    --release) DIR="$BUILD/release"; FLAGS+=(-DMBGA_UPDATES=ON "-DMBGA_SIGN_IDENTITY=${MBGA_SIGN_IDENTITY:--}") ;;
-    *) echo "usage: $0 [--run] [--release]" >&2; exit 2 ;;
+    --release)
+      DIR="$BUILD/release"
+      FLAGS+=(-DMBGA_UPDATES=ON "-DMBGA_SIGN_IDENTITY=${MBGA_SIGN_IDENTITY:--}")
+      ;;
+    *)
+      echo "usage: $0 [--run] [--release]" >&2
+      exit 2
+      ;;
   esac
 done
 

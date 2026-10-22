@@ -26,47 +26,33 @@ pub fn profiles(data_dir: &Path) -> Vec<(String, String)> {
         out.push(("Default".into(), "Default".into()));
     }
     // "Default" first, then "Profile 1", "Profile 2", ... numerically.
-    out.sort_by_key(|(dir, _)| {
-        dir.strip_prefix("Profile ").and_then(|n| n.parse::<u32>().ok()).map_or(0, |n| n + 1)
-    });
+    out.sort_by_key(|(dir, _)| dir.strip_prefix("Profile ").and_then(|n| n.parse::<u32>().ok()).map_or(0, |n| n + 1));
     out
 }
 
 /// Electron apps keep a "Local State" too; only browsers have profiles with
 /// bookmarks, history or sessions.
 fn is_browser_profile(dir: &Path) -> bool {
-    ["Bookmarks", "History", "Sessions", "Current Session"]
-        .iter()
-        .any(|f| dir.join(f).exists())
+    ["Bookmarks", "History", "Sessions", "Current Session"].iter().any(|f| dir.join(f).exists())
 }
 
 /// One profile's bookmarks and open tabs as a space named `space_name`.
 pub fn load(data_dir: &Path, dir: &str, name: &str, space_name: &str) -> ImportedProfile {
     let profile = data_dir.join(dir);
-    let tabs = newest_session(&profile)
-        .and_then(|p| fs::read(p).ok())
-        .and_then(|b| snss::parse(&b))
-        .unwrap_or_default();
-    let mut pinned: Vec<Item> = tabs
-        .iter()
-        .filter(|t| t.pinned && super::importable(&t.url))
-        .map(|t| Item::tab(&t.url, &t.title))
-        .collect();
-    let today = tabs
-        .iter()
-        .filter(|t| !t.pinned && super::importable(&t.url))
-        .map(|t| Item::tab(&t.url, &t.title))
-        .collect();
+    let tabs =
+        newest_session(&profile).and_then(|p| fs::read(p).ok()).and_then(|b| snss::parse(&b)).unwrap_or_default();
+    let mut pinned: Vec<Item> =
+        tabs.iter().filter(|t| t.pinned && super::importable(&t.url)).map(|t| Item::tab(&t.url, &t.title)).collect();
+    let today =
+        tabs.iter().filter(|t| !t.pinned && super::importable(&t.url)).map(|t| Item::tab(&t.url, &t.title)).collect();
     if let Some(roots) = fs::read(profile.join("Bookmarks"))
         .ok()
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
         .map(|v| v["roots"].clone())
     {
-        for (key, folder) in [
-            ("bookmark_bar", "Bookmarks Bar"),
-            ("other", "Other Bookmarks"),
-            ("synced", "Mobile Bookmarks"),
-        ] {
+        for (key, folder) in
+            [("bookmark_bar", "Bookmarks Bar"), ("other", "Other Bookmarks"), ("synced", "Mobile Bookmarks")]
+        {
             let children = bookmark_items(&roots[key]["children"]);
             if !children.is_empty() {
                 pinned.push(Item::folder(folder, children, false));
@@ -119,11 +105,7 @@ fn newest_session(profile: &Path) -> Option<PathBuf> {
         .flatten()
         .flatten()
         .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("Session_"))
-        })
+        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("Session_")))
         .collect();
     candidates.push(profile.join("Current Session"));
     candidates

@@ -38,13 +38,15 @@ from common import DEVTOOLS_PORT, PAGE_PORT, ROOT, WORK, build_tools, listening_
 
 GROUPS = {
     "heavy": ["heavy", "heavy-sleep"],
-    "battery": ["battery-static", "battery-busy", "battery-video", "battery-background",
-                "battery-pinned"],
+    "battery": ["battery-static", "battery-busy", "battery-video", "battery-background", "battery-pinned"],
     "speed": ["startup", "speedometer"],
 }
 GROUPS["all"] = GROUPS["heavy"] + GROUPS["battery"] + GROUPS["speed"]
-MODULES = {**{s: heavy for s in GROUPS["heavy"]}, **{s: battery for s in GROUPS["battery"]},
-           **{s: speed for s in GROUPS["speed"]}}
+MODULES = {
+    **dict.fromkeys(GROUPS["heavy"], heavy),
+    **dict.fromkeys(GROUPS["battery"], battery),
+    **dict.fromkeys(GROUPS["speed"], speed),
+}
 MBGA_ONLY = {"heavy-sleep", "battery-pinned"}
 
 
@@ -61,16 +63,20 @@ def preflight(browsers):
             raise SystemExit(f"port {port} is in use")
     for b in browsers:
         if not b.available():
-            raise SystemExit(f"{b.key} not found ({getattr(b, 'binary', '')}); "
-                             "see scripts/fetch-chromium.sh and scripts/build.sh")
+            raise SystemExit(
+                f"{b.key} not found ({getattr(b, 'binary', '')}); see scripts/fetch-chromium.sh and scripts/build.sh"
+            )
     if MBGA in browsers:
         built = os.path.getmtime(MBGA.binary)
-        sources = [os.path.join(d, f) for top in ("shell", "core/src")
-                   for d, _, files in os.walk(os.path.join(ROOT, top)) for f in files]
+        sources = [
+            os.path.join(d, f)
+            for top in ("shell", "core/src")
+            for d, _, files in os.walk(os.path.join(ROOT, top))
+            for f in files
+        ]
         stale = [s for s in sources if os.path.getmtime(s) > built]
         if stale:
-            raise SystemExit(f"MBGA.app is older than {os.path.relpath(stale[0], ROOT)}; "
-                             "run scripts/build.sh")
+            raise SystemExit(f"MBGA.app is older than {os.path.relpath(stale[0], ROOT)}; run scripts/build.sh")
 
 
 def main():
@@ -78,8 +84,9 @@ def main():
     parser.add_argument("scenarios", nargs="*", default=["all"])
     parser.add_argument("--browsers", default="chromium,mbga")
     parser.add_argument("--label", help="what changed (default: the commit subject)")
-    parser.add_argument("--append", metavar="FILE",
-                        help="add these scenarios to an earlier results file of the same build")
+    parser.add_argument(
+        "--append", metavar="FILE", help="add these scenarios to an earlier results file of the same build"
+    )
     args = parser.parse_args()
 
     scenarios = []

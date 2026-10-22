@@ -62,6 +62,7 @@ final class SettingsWindowController: NSWindowController {
         }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func show(_ pane: SettingsPane?) {
@@ -124,16 +125,16 @@ private final class SettingsPaneController: NSViewController {
         title = pane.title
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func loadView() {
-        let rows: [[NSView]]
-        switch pane {
-        case .general: rows = generalRows()
-        case .privacy: rows = privacyRows()
-        case .passwords: rows = passwordRows()
-        case .developer: rows = developerRows()
-        case .agents: rows = agentRows()
+        let rows: [[NSView]] = switch pane {
+        case .general: generalRows()
+        case .privacy: privacyRows()
+        case .passwords: passwordRows()
+        case .developer: developerRows()
+        case .agents: agentRows()
         }
         let grid = NSGridView(views: rows)
         grid.translatesAutoresizingMaskIntoConstraints = false

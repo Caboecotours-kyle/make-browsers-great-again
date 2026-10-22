@@ -191,7 +191,7 @@ final class ImportSheet: NSObject {
         store.core.finishOnboarding()
         store.refresh()
         // Starting fresh opens the address bar, as any launch with no tab does.
-        if !imported && store.visibleTabID == nil { store.commandBar = .newTab }
+        if !imported, store.visibleTabID == nil { store.commandBar = .newTab }
     }
 
     // MARK: - Rendering
@@ -482,6 +482,7 @@ private final class SourceRow: NSView {
         alphaValue = source.error == nil ? 1 : 0.75
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -573,6 +574,7 @@ private final class StylePicker: NSStackView {
         refresh()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     private static func detail(_ layout: SidebarLayout) -> String {
@@ -630,6 +632,7 @@ private final class StyleChoice: NSView {
         ])
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func mouseDown(with event: NSEvent) { onPick?() }
@@ -649,6 +652,7 @@ private final class StylePreview: NSView {
         super.init(frame: .zero)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var isFlipped: Bool { true }

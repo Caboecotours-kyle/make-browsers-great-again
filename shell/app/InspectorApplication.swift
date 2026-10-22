@@ -378,6 +378,7 @@ final class ApplicationPanel: InspectorPanelView, NSOutlineViewDataSource, NSOut
         rebuildItems()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func updateLayer() {
@@ -656,6 +657,7 @@ private final class NavCell: NSTableCellView {
         addSubview(label)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func configure(title: String, symbol: String) {
@@ -686,6 +688,7 @@ private class AppSectionView: FlippedView {
         addSubview(toolbar)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     /// The area below the toolbar.
@@ -776,11 +779,10 @@ private final class AppTable: NSObject, NSTableViewDataSource, NSTableViewDelega
         var list = needle.isEmpty ? rows : rows.filter { $0.values.values.contains { $0.lowercased().contains(needle) } }
         if let descriptor = table.sortDescriptors.first, let key = descriptor.key {
             list.sort { a, b in
-                let order: Bool
-                if let x = a.numbers[key], let y = b.numbers[key] {
-                    order = x < y
+                let order: Bool = if let x = a.numbers[key], let y = b.numbers[key] {
+                    x < y
                 } else {
-                    order = (a.values[key] ?? "").localizedStandardCompare(b.values[key] ?? "") == .orderedAscending
+                    (a.values[key] ?? "").localizedStandardCompare(b.values[key] ?? "") == .orderedAscending
                 }
                 return descriptor.ascending ? order : !order
             }
@@ -854,6 +856,7 @@ private final class ValuePreview: FlippedView {
         show(nil)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -914,6 +917,7 @@ private class TableSection: AppSectionView {
         filterField.onChange = { [weak self] text in self?.list.filter = text }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -972,6 +976,7 @@ private final class DOMStorageSection: TableSection {
         status.alignment = .right
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func reload() {
@@ -1072,6 +1077,7 @@ private final class CookiesSection: TableSection {
         status.alignment = .right
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func modelChanged(_ change: ApplicationChange) {
@@ -1082,7 +1088,7 @@ private final class CookiesSection: TableSection {
     override func reload() {
         guard let session, let model else { return }
         let host = model.host
-        session.call("Network.getAllCookies") { [weak self] result, error in
+        session.call("Network.getAllCookies") { [weak self] result, _ in
             guard let self else { return }
             guard let all = result?.list("cookies") else {
                 // Older engines only answer for URLs.
@@ -1115,7 +1121,7 @@ private final class CookiesSection: TableSection {
                 "secure": cookie.bool("secure") ? "✓" : "", "sameSite": cookie.str("sameSite") ?? "",
                 "partition": partition, "priority": cookie.str("priority") ?? "Medium",
             ], colors: ["name": InspectorTheme.property], numbers: ["size": cookie.num("size") ?? 0, "expires": session ? .infinity : expires],
-                          payload: cookie)
+            payload: cookie)
         })
         status.stringValue = "\(cookies.count) cookie\(cookies.count == 1 ? "" : "s")"
         updatePreview()
@@ -1249,6 +1255,7 @@ private final class DatabasesSection: TableSection {
         toolbar.add(filterField, width: nil)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     @objc private func openDatabase() {
@@ -1300,6 +1307,7 @@ private final class DatabaseSection: AppSectionView {
         toolbar.add(delete, width: 110)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -1337,7 +1345,8 @@ private final class DatabaseSection: AppSectionView {
             for index in store.list("indexes") {
                 children.append(GroupNode(name: "Index " + (index.str("name") ?? ""), value: text(
                     Self.keyPath(index.obj("keyPath")) + (index.bool("unique") ? " · unique" : "") + (index.bool("multiEntry") ? " · multi-entry" : ""),
-                    .secondaryLabelColor)))
+                    .secondaryLabelColor
+                )))
             }
             return GroupNode(name: store.str("name") ?? "", value: text("object store", .secondaryLabelColor), children: children)
         }
@@ -1401,6 +1410,7 @@ private final class ObjectStoreSection: TableSection {
         status.alignment = .right
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     private var baseParams: JSON {
@@ -1456,7 +1466,7 @@ private final class ObjectStoreSection: TableSection {
                 "n": "\(i)", "key": RemoteValue.summary(key), "primary": RemoteValue.summary(primary),
                 "value": RemoteValue.summary(value),
             ], colors: ["n": .tertiaryLabelColor, "key": RemoteValue.color(key), "primary": RemoteValue.color(primary)],
-                          numbers: ["n": Double(i)], payload: entry)
+            numbers: ["n": Double(i)], payload: entry)
         })
         more.isEnabled = hasMore
         status.stringValue = "\(entries.count)\(hasMore ? "+" : "") entr\(entries.count == 1 ? "y" : "ies")"
@@ -1521,6 +1531,7 @@ private final class CachesSection: TableSection {
         toolbar.add(filterField, width: nil)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     @objc private func openCache() {
@@ -1593,6 +1604,7 @@ private final class CacheSection: TableSection {
         toolbar.add(more, width: 80)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -1640,7 +1652,7 @@ private final class CacheSection: TableSection {
         guard let entry = row?.payload as? JSON, let session else { return preview.show(nil) }
         let headers = entry.list("requestHeaders").map { ["name": $0.str("name") ?? "", "value": $0.str("value") ?? ""] }
         session.call("CacheStorage.requestCachedResponse", ["cacheId": id, "requestURL": entry.str("requestURL") ?? "",
-                                                             "requestHeaders": headers]) { [weak self] result, error in
+                                                            "requestHeaders": headers]) { [weak self] result, error in
             guard let self, list.selected.first?.id == row?.id else { return }
             let data = result?.obj("response")?.str("body").flatMap { Data(base64Encoded: $0) } ?? Data()
             let type = Self.header(entry, "content-type")
@@ -1679,6 +1691,7 @@ private final class ManifestSection: AppSectionView {
         toolbar.add(InspectorButton("arrow.clockwise", tip: "Refresh") { [weak self] in self?.reload() }, width: 24)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -1704,9 +1717,10 @@ private final class ManifestSection: AppSectionView {
             if !errors.isEmpty {
                 nodes.append(GroupNode(name: "Errors", value: NSMutableAttributedString().add("\(errors.count)", InspectorTheme.error),
                                        children: errors.map { error in
-                    GroupNode(name: error.bool("critical") ? "critical" : "warning", value: NSMutableAttributedString().add(
-                        (error.str("message") ?? "") + (error.int("line").map { " (line \($0 + 1))" } ?? ""), InspectorTheme.error))
-                }))
+                                           GroupNode(name: error.bool("critical") ? "critical" : "warning", value: NSMutableAttributedString().add(
+                                               (error.str("message") ?? "") + (error.int("line").map { " (line \($0 + 1))" } ?? ""), InspectorTheme.error
+                                           ))
+                                       }))
             }
             if let value = try? JSONSerialization.jsonObject(with: Data(data.utf8)) {
                 let node = JSONValueNode(name: "Manifest", value: value)
@@ -1778,6 +1792,7 @@ private final class ServiceWorkersSection: AppSectionView, NSTableViewDataSource
         toolbar.add(forceUpdate, width: 130)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -1874,6 +1889,7 @@ private final class FramesSection: AppSectionView {
         toolbar.add(InspectorButton("arrow.clockwise", tip: "Refresh") { [weak self] in self?.reload() }, width: 24)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -1961,6 +1977,7 @@ private final class StorageOverviewSection: AppSectionView {
         toolbar.add(InspectorButton("arrow.clockwise", tip: "Refresh") { [weak self] in self?.reload() }, width: 24)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func modelChanged(_ change: ApplicationChange) {

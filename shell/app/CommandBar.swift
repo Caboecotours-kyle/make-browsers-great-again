@@ -89,6 +89,7 @@ final class CommandBarView: NSView, NSTextFieldDelegate, NSTableViewDataSource, 
         reload()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var isFlipped: Bool { true }
@@ -432,6 +433,7 @@ private final class CommandBarCard: FlippedView {
         layer?.masksToBounds = false
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -465,6 +467,7 @@ private final class CommandRowView: NSTableRowView {
         layer?.addSublayer(fill)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -500,6 +503,7 @@ private final class CommandItemCell: NSTableCellView {
         for view in [icon, emoji, title, subtitle, chip] as [NSView] { addSubview(view) }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -627,18 +631,18 @@ struct CommandAction {
             if let site = tab.site, store.blockAds {
                 list.append(CommandAction(id: "ads", title: tab.adsAllowed ? "Block Ads on \(site)" : "Allow Ads on \(site)",
                                           symbol: "shield.lefthalf.filled", keywords: ["adblock", "trackers", "blocker"]) {
-                    store.setAdsAllowed(!tab.adsAllowed, for: tab)
-                })
+                        store.setAdsAllowed(!tab.adsAllowed, for: tab)
+                    })
             }
             list.append(CommandAction(id: "tab-awake", title: tab.alwaysAwake ? "Let This Tab Sleep" : "Keep This Tab Always Awake",
                                       symbol: tab.alwaysAwake ? "moon.zzz" : "sun.max", keywords: ["sleep", "awake", "live", "unload"]) {
-                store.setAlwaysAwake(!tab.alwaysAwake, for: tab.id)
-            })
+                    store.setAlwaysAwake(!tab.alwaysAwake, for: tab.id)
+                })
             if let site = tab.site {
                 list.append(CommandAction(id: "awake", title: tab.keepAwake ? "Let \(site) Sleep" : "Keep \(site) Awake",
                                           symbol: tab.keepAwake ? "moon.zzz" : "sun.max", keywords: ["sleep", "awake"]) {
-                    store.setKeepAwake(!tab.keepAwake, for: tab)
-                })
+                        store.setKeepAwake(!tab.keepAwake, for: tab)
+                    })
             }
         }
         list += [
@@ -711,13 +715,13 @@ struct CommandAction {
         let matchPage = UserDefaults.standard.bool(forKey: TintStyle.matchPageKey)
         list.append(CommandAction(id: "match-page", title: matchPage ? "Use Space Colour" : "Match Page Colour",
                                   symbol: "eyedropper", keywords: ["theme", "tint", "color", "colour"]) {
-            UserDefaults.standard.set(!matchPage, forKey: TintStyle.matchPageKey)
-        })
+                UserDefaults.standard.set(!matchPage, forKey: TintStyle.matchPageKey)
+            })
         for style in TintStyle.allCases {
             list.append(CommandAction(id: "tint-\(style.rawValue)", title: "Sidebar Colour: \(style.title)", symbol: "paintpalette",
                                       keywords: ["theme", "tint", "color", "appearance"]) {
-                UserDefaults.standard.set(style.rawValue, forKey: TintStyle.defaultsKey)
-            })
+                    UserDefaults.standard.set(style.rawValue, forKey: TintStyle.defaultsKey)
+                })
         }
         return list
     }
@@ -758,8 +762,8 @@ struct CommandAction {
         for scheme in [ColorSchemePreview.dark, .light, .system] where scheme != state.colorScheme {
             list.append(CommandAction(id: "scheme-\(scheme.rawValue)", title: "Preview Colour Scheme: \(scheme.title)", symbol: scheme.symbol,
                                       keywords: keywords + ["dark", "light", "mode", "appearance", "color"]) {
-                store.updateDev { $0.colorScheme = scheme }
-            })
+                    store.updateDev { $0.colorScheme = scheme }
+                })
         }
         for preset in DevicePreset.all where preset != state.device {
             list.append(CommandAction(id: "device-\(preset.name)", title: "Preview on \(preset.name)", symbol: preset.symbol,

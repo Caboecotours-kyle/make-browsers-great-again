@@ -392,6 +392,7 @@ final class DevToolbarView: NSView {
         update()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var isFlipped: Bool { true }
@@ -485,9 +486,9 @@ final class DevToolbarView: NSView {
     /// Where the pill's centre sits at its anchor at `width`.
     private func anchorCenter(width: CGFloat) -> CGFloat {
         switch anchor {
-        case .leading: return 12 + width / 2
-        case .center: return bounds.width / 2
-        case .trailing: return bounds.width - 12 - width / 2
+        case .leading: 12 + width / 2
+        case .center: bounds.width / 2
+        case .trailing: bounds.width - 12 - width / 2
         }
     }
 
@@ -649,6 +650,7 @@ final class DevPillView: HoverView {
         more.action = { [weak self] in self?.showMenu(self?.moreMenu(), under: self?.more) }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     // MARK: Content
@@ -1014,6 +1016,7 @@ final class DevButton: HoverView {
         setSymbol(symbol)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func setSymbol(_ name: String) {
@@ -1063,6 +1066,7 @@ final class DevCount: HoverView {
         addSubview(label)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     var preferredWidth: CGFloat { 4 + 12 + 3 + label.textWidth }
@@ -1117,6 +1121,7 @@ final class DevPhoneViewController: NSViewController {
         super.init(nibName: nil, bundle: nil)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func loadView() {

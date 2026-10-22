@@ -51,7 +51,10 @@ impl Key {
         if secret.len() < 32 {
             return None;
         }
-        Some(Key { cipher: crypto::hmac(Hash::Sha256, secret, b"cipher"), mac: crypto::hmac(Hash::Sha256, secret, b"mac") })
+        Some(Key {
+            cipher: crypto::hmac(Hash::Sha256, secret, b"cipher"),
+            mac: crypto::hmac(Hash::Sha256, secret, b"mac"),
+        })
     }
 
     pub fn seal(&self, plain: &str) -> Option<String> {
@@ -176,7 +179,9 @@ impl Store {
     pub fn save(&mut self, key: &Key, profile: Id, url: &str, username: &str, password: &str, now: u64) -> Option<u64> {
         let origin = origin_of(url)?;
         let sealed = key.seal(password)?;
-        if let Some(l) = self.logins.iter_mut().find(|l| l.profile == profile && l.origin == origin && l.username == username) {
+        if let Some(l) =
+            self.logins.iter_mut().find(|l| l.profile == profile && l.origin == origin && l.username == username)
+        {
             l.password = sealed;
             l.changed_ms = now;
             l.used_ms = now;
@@ -186,7 +191,16 @@ impl Store {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn insert(&mut self, profile: Id, origin: String, username: &str, sealed: String, created: u64, used: u64, changed: u64) -> u64 {
+    fn insert(
+        &mut self,
+        profile: Id,
+        origin: String,
+        username: &str,
+        sealed: String,
+        created: u64,
+        used: u64,
+        changed: u64,
+    ) -> u64 {
         self.next_id += 1;
         let id = self.next_id;
         self.logins.push(Login {
@@ -243,7 +257,9 @@ impl Store {
             match existing {
                 Some(i) => {
                     let current = &self.logins[i];
-                    if key.open(&current.password).as_deref() == Some(login.password.as_str()) || changed <= current.changed_ms {
+                    if key.open(&current.password).as_deref() == Some(login.password.as_str())
+                        || changed <= current.changed_ms
+                    {
                         merged.kept += 1;
                         continue;
                     }

@@ -282,7 +282,7 @@ final class BrowserStore: NSObject {
     /// The store of the window in front. The core keeps one current space,
     /// and one current tab in each space: this window's. The others keep
     /// their own, and hand them to the core when they come forward.
-    private(set) static weak var front: BrowserStore?
+    private(set) weak static var front: BrowserStore?
     var isFront: Bool { Self.front === self }
     /// The space this window shows and the tab it shows in each space (nil:
     /// none). Spaces missing follow the core.
@@ -674,7 +674,7 @@ final class BrowserStore: NSObject {
         for (n, id) in core.alwaysAwakeTabs().enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5 + Double(n) * 0.5) { [weak self] in
                 guard let self, Self.holder(of: id) == nil else { return }
-                self.warmTab(id)
+                warmTab(id)
             }
         }
     }
@@ -889,7 +889,7 @@ final class BrowserStore: NSObject {
         var found: (TabInfo, SpaceInfo)?
         for space in snapshot.spaces {
             for tab in space.favorites + space.pinned.compactMap(\.tab) + space.today
-            where tab.id != visibleTabID && tab.live && (tab.audible || tab.id == pausedMediaTab)
+                where tab.id != visibleTabID && tab.live && (tab.audible || tab.id == pausedMediaTab)
                 && !Self.open.allObjects.contains(where: { $0.isShowing(tab.id) }) {
                 if tab.id == pausedMediaTab { return (tab, space) }
                 if found == nil { found = (tab, space) }
@@ -1244,7 +1244,8 @@ final class BrowserStore: NSObject {
             for (_, button) in buttons {
                 button.postsFrameChangedNotifications = true
                 lightsObservers.append(NotificationCenter.default.addObserver(
-                    forName: NSView.frameDidChangeNotification, object: button, queue: .main) { [weak self] _ in
+                    forName: NSView.frameDidChangeNotification, object: button, queue: .main
+                ) { [weak self] _ in
                     MainActor.assumeIsolated {
                         guard let self else { return }
                         // Moved while the others were being placed: after.
@@ -1324,7 +1325,7 @@ final class BrowserStore: NSObject {
 
 extension BrowserStore {
     /// The core's snapshot with this window's space and tabs.
-    fileprivate func ownView(of core: Snapshot) -> Snapshot {
+    private func ownView(of core: Snapshot) -> Snapshot {
         var view = core
         if view.spaces.contains(where: { $0.id == ownSpace }) { view.activeSpace = ownSpace }
         for i in view.spaces.indices {
@@ -1342,7 +1343,7 @@ extension BrowserStore {
 
     /// Reads the core's snapshot. In front, the core's choices changed since
     /// the last read are this window's doing, so they become its own.
-    fileprivate func noteCore(_ next: Snapshot) {
+    private func noteCore(_ next: Snapshot) {
         if isFront {
             if next.activeSpace != coreSnapshot.activeSpace { ownSpace = next.activeSpace }
             for space in next.spaces {
@@ -1410,12 +1411,12 @@ extension BrowserStore {
     }
 
     /// The store whose window has the tab loaded, or this one.
-    fileprivate func keeper(of id: UInt64) -> BrowserStore {
+    private func keeper(of id: UInt64) -> BrowserStore {
         Self.holder(of: id) ?? self
     }
 
     /// The tab's page is on screen in this store's window or a little one.
-    fileprivate func isShowing(_ id: UInt64) -> Bool {
+    private func isShowing(_ id: UInt64) -> Bool {
         littleWindows[id] != nil || (visibleTabID == id && window?.isVisible == true)
     }
 
@@ -1466,7 +1467,7 @@ extension BrowserStore {
     }
 
     /// Moves a loaded tab's page here from another window.
-    fileprivate func adopt(_ id: UInt64, from other: BrowserStore) {
+    private func adopt(_ id: UInt64, from other: BrowserStore) {
         guard let tab = other.release(id) else { return }
         views[id] = tab.view
         navStates[id] = tab.nav
@@ -1495,7 +1496,7 @@ extension BrowserStore {
 
     /// The core puts hidden tabs to sleep, and only the front window's are
     /// visible to it; a window behind keeps its tab awake this way.
-    fileprivate func keepAwake(_ id: UInt64?) {
+    private func keepAwake(_ id: UInt64?) {
         guard id != keptAwake else { return }
         if let old = keptAwake { core.setShownElsewhere(id: old, shown: false) }
         if let id { core.setShownElsewhere(id: id, shown: true) }
@@ -1616,7 +1617,7 @@ extension BrowserStore {
     }
 
     /// Turning Developer Mode off drops every emulation with the toolbar.
-    @objc fileprivate func defaultsChanged() {
+    @objc private func defaultsChanged() {
         webContainer.placeCurrent()
         if !DeveloperSettings.enabled, !devStates.isEmpty {
             for (id, state) in devStates { views[id]?.apply(DevTabState(), from: state) }
@@ -1627,7 +1628,7 @@ extension BrowserStore {
         changed(.developer)
     }
 
-    fileprivate func updateDevReport(_ id: UInt64, _ change: (inout DevPageReport) -> Void) {
+    private func updateDevReport(_ id: UInt64, _ change: (inout DevPageReport) -> Void) {
         var report = devReports[id] ?? DevPageReport()
         change(&report)
         guard report != devReports[id] else { return }
@@ -1669,7 +1670,7 @@ extension BrowserStore {
 
     func clearNetwork(of id: UInt64) { keeper(of: id).networkLogs[id] = nil }
 
-    fileprivate func recordNetwork(_ tab: UInt64, _ method: String, _ request: String, _ params: [AnyHashable: Any]) {
+    private func recordNetwork(_ tab: UInt64, _ method: String, _ request: String, _ params: [AnyHashable: Any]) {
         var log = networkLogs[tab] ?? []
         let index = log.lastIndex { $0.requestID == request }
         switch method {
@@ -1879,10 +1880,10 @@ extension BrowserStore: MBWebViewDelegate {
             guard isCurrent(view), let window, view.window === window else { return }
             contentFullscreen = fullscreen
             let windowFullscreen = window.styleMask.contains(.fullScreen)
-            if fullscreen && !windowFullscreen {
+            if fullscreen, !windowFullscreen {
                 enteredFullscreenForContent = true
                 window.toggleFullScreen(nil)
-            } else if !fullscreen && windowFullscreen && enteredFullscreenForContent {
+            } else if !fullscreen, windowFullscreen, enteredFullscreenForContent {
                 enteredFullscreenForContent = false
                 window.toggleFullScreen(nil)
             }

@@ -265,7 +265,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         store.openSettings = { [weak self] pane in self?.showSettings(pane) }
         store.updateTrafficLights()
         let frontObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.didBecomeMainNotification, object: window, queue: .main) { [weak store] _ in
+            forName: NSWindow.didBecomeMainNotification, object: window, queue: .main
+        ) { [weak store] _ in
             MainActor.assumeIsolated { store?.becomeFront() }
         }
         windows.append(BrowserWindow(store: store, window: window, sidebarReveal: SidebarReveal(store: store),
@@ -437,7 +438,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         sender.state = strict ? .on : .off
         let alert = NSAlert()
         alert.messageText = strict ? "Strict site isolation turns on at next launch"
-                                   : "Strict site isolation turns off at next launch"
+            : "Strict site isolation turns off at next launch"
         alert.informativeText = strict
             ? "Every site will get its own renderer process, as in desktop Chrome. This is the strongest protection against one site reading another's data, and uses about 30% more memory."
             : "Sites will share a few renderer processes, as in Chrome on Android. Sign-in pages and sites that ask for isolation keep their own process. This saves about a fifth of memory."

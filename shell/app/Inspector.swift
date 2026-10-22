@@ -103,6 +103,7 @@ final class InspectorView: FlippedView {
     /// Test copies' agents select a row of the panel shown (`mbga inspector row N`).
     static let debugRow = Notification.Name("MBGAInspectorDebugRow")
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -194,6 +195,7 @@ final class InspectorCardView: NSView {
         addSubview(content)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     var cornerRadius: CGFloat = 8 {
@@ -271,6 +273,7 @@ final class InspectorHeaderView: WindowDragView {
         }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     private weak var console: ConsoleModel?
@@ -375,6 +378,7 @@ final class InspectorTabButton: HoverView {
         updateColors()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     var fullWidth: CGFloat { title.textWidth + 34 + (badge == nil ? 0 : 18) }

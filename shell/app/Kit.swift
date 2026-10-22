@@ -20,6 +20,7 @@ class HoverView: FlippedView {
         wantsLayer = true
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -83,7 +84,7 @@ final class FrameTicker {
         if Self.debug { stats.report(name, visible: window?.occlusionState.contains(.visible) == true) }
     }
 
-    fileprivate func step(_ link: CADisplayLink) {
+    private func step(_ link: CADisplayLink) {
         guard Self.debug else {
             tick(link.targetTimestamp)
             return
@@ -179,6 +180,7 @@ final class FillLayer: CALayer {
 
     override init(layer: Any) { super.init(layer: layer) }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func action(forKey event: String) -> CAAction? {
@@ -296,6 +298,7 @@ final class SymbolButton: HoverView {
         alphaValue = 0.8
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func setSymbol(_ name: String, size: CGFloat = 13) {
@@ -407,12 +410,12 @@ extension NSView {
 
     /// Fades a view in or out, hiding it once it is gone.
     func fade(visible: Bool, curve: Motion.Curve = Motion.quick) {
-        if visible && isHidden {
+        if visible, isHidden {
             alphaValue = 0
             isHidden = false
         }
         Motion.animate(curve) { animator().alphaValue = visible ? 1 : 0 } completion: { [weak self] in
-            if !visible, let self, self.alphaValue == 0 { self.isHidden = true }
+            if !visible, let self, alphaValue == 0 { isHidden = true }
         }
     }
 }

@@ -37,8 +37,20 @@ import subprocess
 import time
 
 from browsers import MBGA
-from common import (ROOT, TOOLS, WORK, activate, build_tools, log, measure_window, quit_app, sample,
-                    sleep_until, summarize, wait_for_window)
+from common import (
+    ROOT,
+    TOOLS,
+    WORK,
+    activate,
+    build_tools,
+    log,
+    measure_window,
+    quit_app,
+    sample,
+    sleep_until,
+    summarize,
+    wait_for_window,
+)
 
 QUICK = bool(os.environ.get("BENCH_QUICK"))
 WINDOW = 20 if QUICK else 120
@@ -53,8 +65,7 @@ FAVORITE_KEYS = [18, 19, 20, 21, 23, 22, 26, 28]  # 1-8: Cmd+9 is the last tab
 
 def hid_idle_seconds():
     """How long since the last keyboard or mouse input."""
-    out = subprocess.run(["ioreg", "-c", "IOHIDSystem", "-d", "4"], capture_output=True,
-                         text=True).stdout
+    out = subprocess.run(["ioreg", "-c", "IOHIDSystem", "-d", "4"], capture_output=True, text=True).stdout
     m = re.search(r'"HIDIdleTime" = (\d+)', out)
     return int(m.group(1)) / 1e9 if m else 0.0
 
@@ -76,14 +87,15 @@ def measure(pid, seconds):
     window["untouched"] = hid_idle_seconds() >= seconds
     window["valid"] = window["untouched"] and window["front_fraction"] >= 0.95
     if not window["valid"]:
-        log(f"INVALID window: in front {window['front_fraction']:.0%}, "
-            f"{'untouched' if window['untouched'] else 'keyboard or mouse used'}")
+        log(
+            f"INVALID window: in front {window['front_fraction']:.0%}, "
+            f"{'untouched' if window['untouched'] else 'keyboard or mouse used'}"
+        )
     return window
 
 
 def running(binary):
-    out = subprocess.run(["pgrep", "-f", f"^{re.escape(binary)}$"], capture_output=True,
-                         text=True).stdout
+    out = subprocess.run(["pgrep", "-f", f"^{re.escape(binary)}$"], capture_output=True, text=True).stdout
     return [int(p) for p in out.split()]
 
 
@@ -92,13 +104,19 @@ class Arc:
     binary = os.path.join(ARC_APP, "Contents", "MacOS", "Arc")
 
     def version(self):
-        return subprocess.run(["defaults", "read", os.path.join(ARC_APP, "Contents", "Info.plist"),
-                               "CFBundleShortVersionString"], capture_output=True,
-                              text=True).stdout.strip()
+        return subprocess.run(
+            ["defaults", "read", os.path.join(ARC_APP, "Contents", "Info.plist"), "CFBundleShortVersionString"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
 
     def script(self, source, timeout=60):
-        out = subprocess.run(["osascript", "-e", f'tell application "Arc"\n{source}\nend tell'],
-                             capture_output=True, text=True, timeout=timeout)
+        out = subprocess.run(
+            ["osascript", "-e", f'tell application "Arc"\n{source}\nend tell'],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
         if out.returncode:
             raise RuntimeError(f"arc: {out.stderr.strip()}")
         return out.stdout.strip()
@@ -140,16 +158,20 @@ class Arc:
             time.sleep(1.5)
             for code in FAVORITE_KEYS:
                 activate(pid)
-                subprocess.run([os.path.join(TOOLS, "key"), "--to", ARC_BUNDLE, str(code), "cmd"],
-                               check=True)
+                subprocess.run([os.path.join(TOOLS, "key"), "--to", ARC_BUNDLE, str(code), "cmd"], check=True)
                 time.sleep(SELECT_PAUSE)
-            opened += int(self.script(f"""
+            opened += int(
+                self.script(
+                    f"""
                 set n to count of tabs of space {i} of front window
                 repeat with j from 1 to n
                     tell tab j of space {i} of front window to select
                     delay {SELECT_PAUSE}
                 end repeat
-                return n""", timeout=600))
+                return n""",
+                    timeout=600,
+                )
+            )
         self.script(f"tell space {here} of front window to focus")
         return opened
 
@@ -170,22 +192,29 @@ class MbgaCopy:
 
     def version(self):
         if os.path.abspath(self.app) == MBGA.app:
-            return subprocess.run(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"],
-                                  capture_output=True, text=True).stdout.strip()
+            return subprocess.run(
+                ["git", "-C", ROOT, "rev-parse", "--short", "HEAD"], capture_output=True, text=True
+            ).stdout.strip()
         return self.app
 
     def launch(self):
         shutil.rmtree(self.data, ignore_errors=True)
-        subprocess.run(["rsync", "-a", "--exclude", "Singleton*", "--exclude", "agent.sock",
-                        MBGA_DATA + "/", self.data + "/"], check=True)
-        self.proc = subprocess.Popen([self.binary], env={
-            **os.environ, "MBGA_DATA_DIR": self.data, "MBGA_DEBUG_AGENT": "1"},
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            ["rsync", "-a", "--exclude", "Singleton*", "--exclude", "agent.sock", MBGA_DATA + "/", self.data + "/"],
+            check=True,
+        )
+        self.proc = subprocess.Popen(
+            [self.binary],
+            env={**os.environ, "MBGA_DATA_DIR": self.data, "MBGA_DEBUG_AGENT": "1"},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         return self.proc.pid
 
     def mbga(self, *args):
-        out = subprocess.run(["mbga", *args], env={**os.environ, "MBGA_SOCKET": self.socket},
-                             capture_output=True, text=True, timeout=60)
+        out = subprocess.run(
+            ["mbga", *args], env={**os.environ, "MBGA_SOCKET": self.socket}, capture_output=True, text=True, timeout=60
+        )
         if out.returncode:
             raise RuntimeError(f"mbga {' '.join(args)}: {out.stdout}{out.stderr}".strip())
         return out.stdout
@@ -231,8 +260,10 @@ def run_once(browser, open_all=True):
     t0 = time.time()
     result["memory_loaded"] = summarize(sample(pid))
     r = result["memory_loaded"]["by_kind"].get("renderer", {"count": 0, "mb": 0})
-    log(f"{browser.key}: opened {result['tabs_opened']} tabs in {result['open_all_s']:.0f} s; "
-        f"{result['memory_loaded']['total_mb']:.0f} MB, {r['count']} renderers ({r['mb']:.0f} MB)")
+    log(
+        f"{browser.key}: opened {result['tabs_opened']} tabs in {result['open_all_s']:.0f} s; "
+        f"{result['memory_loaded']['total_mb']:.0f} MB, {r['count']} renderers ({r['mb']:.0f} MB)"
+    )
     sleep_until(t0, EARLY)
     result["early"] = measure(pid, WINDOW)
     sleep_until(t0, LATE)
@@ -240,10 +271,12 @@ def run_once(browser, open_all=True):
     sleep_until(t0, END)
     result["memory_end"] = summarize(sample(pid))
     e, l = result["early"], result["late"]
-    log(f"{browser.key}: {result['memory_end']['total_mb']:.0f} MB at {clock(END)}; "
+    log(
+        f"{browser.key}: {result['memory_end']['total_mb']:.0f} MB at {clock(END)}; "
         f"idle {e['cpu_percent']:.1f}% / {l['cpu_percent']:.1f}% CPU, "
         f"{e['power_mw']:.0f} / {l['power_mw']:.0f} mW, "
-        f"impact {e['energy_impact']:.1f} / {l['energy_impact']:.1f}")
+        f"impact {e['energy_impact']:.1f} / {l['energy_impact']:.1f}"
+    )
     browser.quit(pid)
     time.sleep(5)
     return result
@@ -259,11 +292,18 @@ def print_summary(results):
     rows = []
     for key, runs in results.items():
         for i, r in enumerate(runs, 1):
-            rows.append([f"{key} #{i}", str(r["tabs_opened"]),
-                         f"{r['memory_loaded']['total_mb']:.0f}",
-                         f"{r['memory_end']['total_mb']:.0f}"] +
-                        [f"{w['cpu_percent']:.1f}% CPU, {w['power_mw']:.0f} mW"
-                         if w["valid"] else "invalid" for w in (r["early"], r["late"])])
+            rows.append(
+                [
+                    f"{key} #{i}",
+                    str(r["tabs_opened"]),
+                    f"{r['memory_loaded']['total_mb']:.0f}",
+                    f"{r['memory_end']['total_mb']:.0f}",
+                ]
+                + [
+                    f"{w['cpu_percent']:.1f}% CPU, {w['power_mw']:.0f} mW" if w["valid"] else "invalid"
+                    for w in (r["early"], r["late"])
+                ]
+            )
     widths = [max(len(x) for x in col) for col in zip(head, *rows)]
     for row in [head] + rows:
         print("  ".join(c.ljust(w) for c, w in zip(row, widths)))
@@ -273,9 +313,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--rounds", type=int, default=1)
     parser.add_argument("--browsers", default="arc,mbga")
-    parser.add_argument("--as-launched", action="store_true",
-                        help="measure each browser as it starts, without opening any tab "
-                             "(windows at 0:40-2:40 and 2:40-4:40)")
+    parser.add_argument(
+        "--as-launched",
+        action="store_true",
+        help="measure each browser as it starts, without opening any tab (windows at 0:40-2:40 and 2:40-4:40)",
+    )
     args = parser.parse_args()
     if args.as_launched and not QUICK:
         global EARLY, LATE, END
@@ -297,8 +339,7 @@ def main():
     build_tools()
     os.makedirs(WORK, exist_ok=True)
 
-    git = lambda *a: subprocess.run(["git", "-C", ROOT, *a], capture_output=True,
-                                    text=True).stdout.strip()
+    git = lambda *a: subprocess.run(["git", "-C", ROOT, *a], capture_output=True, text=True).stdout.strip()
     results = {
         "format": 2,
         "kind": "real-profile-as-launched" if args.as_launched else "real-profile",

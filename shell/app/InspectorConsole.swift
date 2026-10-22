@@ -563,6 +563,7 @@ final class ConsolePanel: InspectorPanelView, NSOutlineViewDataSource, NSOutline
         addSubview(prompt)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -819,27 +820,27 @@ final class ConsolePanel: InspectorPanelView, NSOutlineViewDataSource, NSOutline
 
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
         switch item {
-        case nil: return shown.count
-        case let message as ConsoleMessage: return children(of: message).count
-        case let node as ValueNode: return node.children?.count ?? 0
-        default: return 0
+        case nil: shown.count
+        case let message as ConsoleMessage: children(of: message).count
+        case let node as ValueNode: node.children?.count ?? 0
+        default: 0
         }
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
         switch item {
-        case nil: return shown[index]
-        case let message as ConsoleMessage: return children(of: message)[index]
-        case let node as ValueNode: return node.children![index]
-        default: return NSNull()
+        case nil: shown[index]
+        case let message as ConsoleMessage: children(of: message)[index]
+        case let node as ValueNode: node.children![index]
+        default: NSNull()
         }
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
         switch item {
-        case let message as ConsoleMessage: return !children(of: message).isEmpty
-        case let node as ValueNode: return node.isExpandable
-        default: return false
+        case let message as ConsoleMessage: !children(of: message).isEmpty
+        case let node as ValueNode: node.isExpandable
+        default: false
         }
     }
 
@@ -976,6 +977,7 @@ private final class ConsoleMessageCell: NSTableCellView {
         addSubview(badge)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     /// The text's width in a row `width` wide: what's left of the glyph,
@@ -1108,6 +1110,7 @@ final class ConsolePrompt: FlippedView, NSTextViewDelegate {
         completions.isHidden = true
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -1370,6 +1373,7 @@ private final class CompletionList: NSView, NSTableViewDataSource, NSTableViewDe
         addSubview(scroll)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
