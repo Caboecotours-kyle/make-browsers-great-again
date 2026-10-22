@@ -998,6 +998,9 @@ class WebClient : public BaseClient,
                       CefRefPtr<CefRequest> request,
                       bool user_gesture,
                       bool is_redirect) override {
+    if (OpenExternally(browser, request->GetURL())) {
+      return true;
+    }
     if (frame->IsMain()) {
       navigation_started_ = CFAbsoluteTimeGetCurrent();
       load_error_ = 0;
@@ -1010,6 +1013,35 @@ class WebClient : public BaseClient,
       }
     }
     return false;
+  }
+
+  // Links into other apps (zoomus:, mailto:, slack:...) go to the app that
+  // claims the scheme, once the person allows it, like other browsers.
+  // Returns true if the navigation belongs to another app.
+  bool OpenExternally(CefRefPtr<CefBrowser> browser, const CefString& url) {
+    NSURL* target = [NSURL URLWithString:ToNS(url)];
+    NSString* scheme = target.scheme.lowercaseString;
+    static NSSet<NSString*>* web = [NSSet setWithArray:@[
+      @"http", @"https", @"file", @"about", @"data", @"blob", @"javascript",
+      @"filesystem", @"ws", @"wss", @"chrome", @"chrome-extension",
+      @"devtools", @"view-source"
+    ]];
+    if (!scheme || [web containsObject:scheme]) {
+      return false;
+    }
+    NSURL* app = [NSWorkspace.sharedWorkspace URLForApplicationToOpenURL:target];
+    if (!app) {
+      return false;
+    }
+    NSString* name = [NSFileManager.defaultManager displayNameAtPath:app.path]
+                         .stringByDeletingPathExtension;
+    AskPermission(browser, browser->GetMainFrame()->GetURL(),
+                  [NSString stringWithFormat:@"open %@", name], ^(BOOL allowed) {
+                    if (allowed) {
+                      [NSWorkspace.sharedWorkspace openURL:target];
+                    }
+                  });
+    return true;
   }
 
   // Registers the page script for the document the main frame is about to
