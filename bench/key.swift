@@ -1,12 +1,18 @@
-// Sends one key press to MBGA, refusing if another app is frontmost.
-// Usage: key <keycode> [cmd] [ctrl] [shift] [opt]
+// Sends one key press to MBGA (or the app --to names), refusing if another
+// app is frontmost.
+// Usage: key [--to <bundle id>] <keycode> [cmd] [ctrl] [shift] [opt]
 import AppKit
 
-guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "dev.mbga.browser" else {
-    FileHandle.standardError.write("MBGA is not frontmost\n".data(using: .utf8)!)
+var args = Array(CommandLine.arguments.dropFirst())
+var target = "dev.mbga.browser"
+if args.first == "--to", args.count > 1 {
+    target = args[1]
+    args.removeFirst(2)
+}
+guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == target else {
+    FileHandle.standardError.write("\(target) is not frontmost\n".data(using: .utf8)!)
     exit(2)
 }
-let args = Array(CommandLine.arguments.dropFirst())
 var flags: CGEventFlags = []
 for m in args.dropFirst() {
     switch m {
