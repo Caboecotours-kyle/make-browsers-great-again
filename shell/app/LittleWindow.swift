@@ -29,6 +29,9 @@ final class LittleWindow: NSObject, NSWindowDelegate {
         content.putBack = { [weak self] in self?.putBack() }
         window.contentView = content
         content.host(view, cornerRadius: max(window.systemCornerRadius - 6, 6))
+        // On screen again, the page takes back a video it was moving to, or
+        // had in, the picture-in-picture window.
+        view.exitPictureInPicture()
         place(near: point)
     }
 
@@ -158,6 +161,10 @@ private final class LittleWindowView: FlippedView {
         view.frame = container.bounds
         view.autoresizingMask = [.width, .height]
         view.isHidden = false
+        // It may be fading out, or held unseen, from the main window.
+        view.layer?.removeAnimation(forKey: "opacity")
+        view.alphaValue = 1
+        view.layer?.zPosition = 0
         container.addSubview(view)
     }
 
