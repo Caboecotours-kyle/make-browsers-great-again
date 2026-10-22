@@ -86,6 +86,9 @@ pub struct Snapshot {
     /// Today tabs untouched this long are archived; 0 is off.
     pub archive_after_hours: u32,
     pub cleanup_answered: bool,
+    /// Sites whose tabs are never put to sleep or frozen, with their
+    /// subdomains.
+    pub keep_awake_sites: Vec<String>,
 }
 
 /// A page from history for the command bar.
@@ -571,6 +574,7 @@ impl BrowserCore {
             block_ads: s.block_ads,
             archive_after_hours: s.policy.archive_after_hours,
             cleanup_answered: s.cleanup_answered,
+            keep_awake_sites: s.keep_awake.clone(),
         }
     }
 
@@ -872,6 +876,12 @@ impl BrowserCore {
     /// Exempts the site of `url` from sleeping and freezing, or stops doing so.
     pub fn set_keep_awake(&self, url: String, keep: bool) {
         self.mutate(|s, _| s.set_keep_awake(&url, keep))
+    }
+
+    /// Replaces the sites kept awake: domains or addresses, each covering
+    /// its subdomains.
+    pub fn set_keep_awake_sites(&self, sites: Vec<String>) {
+        self.mutate(|s, _| s.set_keep_awake_sites(&sites))
     }
 
     /// Keeps one tab loaded whatever the sleep policy: never put to sleep,

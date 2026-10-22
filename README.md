@@ -84,8 +84,10 @@ events back. Nothing in the UI layer keeps browser state of its own.
   player at the bottom of the sidebar. Right-click a tab to choose how it
   sleeps: Keep Tab Always Awake keeps that one tab loaded (never slept,
   frozen or archived, and loaded at launch), Keep <site> Awake does the same
-  for every tab of its site, and Sleep Tab unloads it now. Tabs left alone
-  sleep by the policy below.
+  for every tab of its site, and Sleep Tab unloads it now. Settings ▸
+  General ▸ Keep awake lists those sites; type in more (each covers its
+  subdomains, so slack.com keeps app.slack.com awake). Tabs left alone sleep
+  by the policy below.
 - **Look**: the page sits in a card whose corners follow the window's; space
   colors are a calm wash that fades when the window is inactive (View ▸
   Sidebar Colour: Vivid, Calm or Neutral, or Match Page Colour to take each

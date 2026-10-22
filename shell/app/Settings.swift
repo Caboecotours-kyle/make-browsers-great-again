@@ -203,12 +203,19 @@ private final class SettingsPaneController: NSViewController {
             archive.selectItem(at: intervals.firstIndex { $0.1 == store.archiveAfterHours } ?? 0)
         }
 
+        let awake = sitesField(placeholder: "mail.google.com, slack.com") { [store] sites in store.setKeepAwakeSites(sites) }
+        refreshers.append { [store] in
+            if awake.currentEditor() == nil { awake.stringValue = store.keepAwakeSites.joined(separator: ", ") }
+        }
+
         return [
             [label("Sidebar:"), layout],
             [label("Sidebar colour:"), colour],
             [NSGridCell.emptyContentView, matchPage],
             [label("Archive Today tabs:"), archive],
             [NSGridCell.emptyContentView, caption("Tabs in Today you haven't used for this long move to the archive. Pinned tabs and favourites stay.")],
+            [label("Keep awake:"), awake],
+            [NSGridCell.emptyContentView, caption("Tabs of these sites, with their subdomains, are never put to sleep, frozen or archived, so mail and chat keep notifying you. Separate them with commas.")],
         ]
     }
 
@@ -553,18 +560,7 @@ private final class SettingsPaneController: NSViewController {
                 }
             }
         }
-        let blocked = NSTextField(string: "")
-        blocked.placeholderString = "bank.com, mail.google.com"
-        blocked.usesSingleLineMode = false
-        blocked.cell?.wraps = true
-        blocked.cell?.isScrollable = false
-        blocked.lineBreakMode = .byWordWrapping
-        blocked.translatesAutoresizingMaskIntoConstraints = false
-        blocked.widthAnchor.constraint(equalToConstant: 340).isActive = true
-        blocked.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        blocked.onAction { [store, weak blocked] in
-            let sites = (blocked?.stringValue ?? "").components(separatedBy: CharacterSet(charactersIn: ", \n"))
-                .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }
+        let blocked = sitesField(placeholder: "bank.com, mail.google.com") { [store] sites in
             store.setAgentPreferences { $0.blockedSites = sites }
         }
         refreshers.append { [store] in
@@ -626,6 +622,25 @@ private final class SettingsPaneController: NSViewController {
         let button = NSButton(checkboxWithTitle: title, target: nil, action: nil)
         button.onAction { [weak button] in action(button?.state == .on) }
         return button
+    }
+
+    /// A two-line field of sites separated by commas, spaces or new lines.
+    private func sitesField(placeholder: String, _ action: @escaping ([String]) -> Void) -> NSTextField {
+        let field = NSTextField(string: "")
+        field.placeholderString = placeholder
+        field.usesSingleLineMode = false
+        field.cell?.wraps = true
+        field.cell?.isScrollable = false
+        field.lineBreakMode = .byWordWrapping
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.widthAnchor.constraint(equalToConstant: 340).isActive = true
+        field.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        field.onAction { [weak field] in
+            let sites = (field?.stringValue ?? "").components(separatedBy: CharacterSet(charactersIn: ", \n"))
+                .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }
+            action(sites)
+        }
+        return field
     }
 
     private func popUp(_ titles: [String], _ action: @escaping (Int) -> Void) -> NSPopUpButton {

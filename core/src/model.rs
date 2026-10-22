@@ -1008,7 +1008,7 @@ impl State {
                 && !t.frozen
                 && !t.audible
                 && !t.always_awake
-                && !keep_awake.contains(&site_of(&t.url))
+                && !covers(keep_awake, &site_of(&t.url))
                 && !elsewhere.contains(&id)
                 && Some(id) != visible
                 && now.saturating_sub(t.last_used_ms()) >= after_ms
@@ -1054,7 +1054,7 @@ impl State {
     }
 
     pub fn keeps_awake(&self, url: &str) -> bool {
-        self.keep_awake.contains(&site_of(url))
+        covers(&self.keep_awake, &site_of(url))
     }
 
     /// The tab, or its site, is exempt from sleeping, freezing and archiving.
@@ -1082,10 +1082,28 @@ impl State {
         if site.is_empty() {
             return;
         }
-        self.keep_awake.retain(|s| *s != site);
         if keep {
-            self.keep_awake.push(site);
+            if !covers(&self.keep_awake, &site) {
+                self.keep_awake.push(site);
+            }
+        } else {
+            // Including a parent domain that covers it.
+            self.keep_awake.retain(|s| !covers(std::slice::from_ref(s), &site));
         }
+    }
+
+    /// Replaces the sites kept awake, as typed in Settings: bare domains
+    /// ("slack.com") or addresses, each also covering its subdomains.
+    pub fn set_keep_awake_sites(&mut self, sites: &[String]) {
+        let mut kept: Vec<String> = Vec::new();
+        for entry in sites {
+            let entry = entry.trim();
+            let site = if entry.contains("://") { site_of(entry) } else { site_of(&format!("https://{entry}")) };
+            if !site.is_empty() && !kept.contains(&site) {
+                kept.push(site);
+            }
+        }
+        self.keep_awake = kept;
     }
 
     /// Picks the tabs to put to sleep, marks them asleep and returns them.
@@ -1227,6 +1245,12 @@ pub fn collect_tabs(nodes: &[Node], out: &mut Vec<Id>) {
 /// The site a URL belongs to, as shown to people: the lowercase host
 /// without "www.", user info or port ("mail.google.com"). Empty for URLs
 /// without a host, such as about:blank.
+/// `site` is one of `sites` or a subdomain of one.
+pub fn covers(sites: &[String], site: &str) -> bool {
+    !site.is_empty()
+        && sites.iter().any(|s| site == s || site.strip_suffix(s.as_str()).is_some_and(|sub| sub.ends_with('.')))
+}
+
 pub fn site_of(url: &str) -> String {
     let Some((_, rest)) = url.split_once("://") else {
         return String::new();

@@ -633,6 +633,13 @@ final class BrowserStore: NSObject {
         refresh()
     }
 
+    var keepAwakeSites: [String] { snapshot.keepAwakeSites }
+
+    func setKeepAwakeSites(_ sites: [String]) {
+        core.setKeepAwakeSites(sites: sites)
+        refresh()
+    }
+
     /// Keeps one tab loaded whatever the sleep policy, or lets it sleep
     /// again. A tab kept awake loads now if it was asleep, and runs again if
     /// it was frozen.

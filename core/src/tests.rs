@@ -350,6 +350,27 @@ fn kept_awake_sites_never_sleep_or_freeze() {
 }
 
 #[test]
+fn sites_kept_awake_in_settings_cover_their_subdomains() {
+    let mut s = State::new_default();
+    s.set_keep_awake_sites(&[" Slack.com ".into(), "https://www.mail.google.com/inbox".into(), "".into(), "slack.com".into()]);
+    assert_eq!(s.keep_awake, vec!["slack.com", "mail.google.com"]);
+    assert!(s.keeps_awake("https://app.slack.com/client"));
+    assert!(s.keeps_awake("https://mail.google.com/"));
+    assert!(!s.keeps_awake("https://notslack.com"));
+    assert!(!s.keeps_awake("https://docs.google.com"));
+    let sp = home(&s);
+    let chat = s.open_tab(sp, "https://app.slack.com", false, 0).unwrap();
+    let news = s.open_tab(sp, "https://news.example.com", false, 0).unwrap();
+    s.open_tab(sp, "https://other.example.com", true, 0).unwrap();
+    for id in [chat, news] {
+        s.set_live(id, true, 0);
+    }
+    assert_eq!(s.collect_freezers(10_000_000), vec![news]);
+    s.set_keep_awake("https://app.slack.com", false);
+    assert_eq!(s.keep_awake, vec!["mail.google.com"]);
+}
+
+#[test]
 fn tabs_kept_always_awake_never_sleep_freeze_or_archive() {
     let hour = 3_600_000;
     let mut s = State::new_default();
