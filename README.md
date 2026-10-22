@@ -137,8 +137,9 @@ What MBGA does, roughly in order of impact:
   against one site reading another's memory (Spectre-class attacks). It uses
   about 30% more memory (2.8 GB instead of 2.2 GB in the test above, still a
   third less than Chrome).
-- **Tabs sleep.** A background tab idle for 10 minutes, or beyond 8 loaded
-  tabs, is unloaded and reloads when selected. Tabs playing audio or using the
+- **Tabs sleep.** A background tab idle for 2 hours, or beyond 24 loaded
+  tabs, is unloaded and reloads when selected (Settings ▸ General changes
+  both, or turns either off). Tabs playing audio or using the
   camera, microphone or screen stay awake. Under system memory pressure the
   limits tighten.
 - **Today tabs freeze.** A Today tab hidden for a minute is frozen: it keeps

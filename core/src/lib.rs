@@ -989,10 +989,13 @@ impl BrowserCore {
         self.blocker.write().unwrap_or_else(|e| e.into_inner()).allowed = sites.into_iter().collect();
     }
 
+    /// How long a background tab stays loaded while idle, and how many
+    /// stay loaded at most. 0 turns either off; memory pressure still puts
+    /// tabs to sleep.
     pub fn set_policy(&self, sleep_after_secs: u64, max_live_tabs: u32) {
         self.mutate(|s, _| {
-            s.policy.sleep_after_secs = sleep_after_secs.max(30);
-            s.policy.max_live_tabs = max_live_tabs.max(1);
+            s.policy.sleep_after_secs = if sleep_after_secs == 0 { 0 } else { sleep_after_secs.max(30) };
+            s.policy.max_live_tabs = max_live_tabs;
         })
     }
 

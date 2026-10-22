@@ -92,9 +92,11 @@ pub struct Space {
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(default)]
 pub struct Policy {
-    /// Background tabs idle for longer than this are put to sleep.
+    /// Background tabs idle for longer than this are put to sleep. 0 never
+    /// puts them to sleep for being idle (memory pressure still does).
     pub sleep_after_secs: u64,
     /// Upper bound on simultaneously loaded tabs (the visible tab excluded).
+    /// 0 is no limit (memory pressure still applies one).
     pub max_live_tabs: u32,
     /// Hidden Today tabs idle for longer than this are frozen: they keep
     /// their state but run no JavaScript until shown again.
@@ -1110,14 +1112,20 @@ impl State {
     /// The visible tab and tabs playing audio are never chosen.
     pub fn collect_sleepers(&mut self, now: u64, pressure: Pressure) -> Vec<Id> {
         let visible = self.visible_tab();
+        let after_ms = match self.policy.sleep_after_secs {
+            0 => u64::MAX,
+            secs => secs.saturating_mul(1000),
+        };
+        let limit = match self.policy.max_live_tabs {
+            0 => usize::MAX,
+            max => max as usize,
+        };
         let (timeout_ms, max_live) = match pressure {
-            Pressure::Normal => (
-                self.policy.sleep_after_secs * 1000,
-                self.policy.max_live_tabs as usize,
-            ),
+            Pressure::Normal => (after_ms, limit),
+            // Without a limit of their own, tabs beyond the default count.
             Pressure::Warning => (
-                self.policy.sleep_after_secs * 1000 / 4,
-                (self.policy.max_live_tabs as usize / 2).max(1),
+                after_ms / 4,
+                (limit.min(Policy::default().max_live_tabs as usize) / 2).max(1),
             ),
             Pressure::Critical => (0, 0),
         };

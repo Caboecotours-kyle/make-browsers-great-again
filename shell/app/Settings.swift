@@ -203,6 +203,23 @@ private final class SettingsPaneController: NSViewController {
             archive.selectItem(at: intervals.firstIndex { $0.1 == store.archiveAfterHours } ?? 0)
         }
 
+        let delays: [(String, UInt64)] = [
+            ("After 5 Minutes", 300), ("After 15 Minutes", 900), ("After 30 Minutes", 1800), ("After an Hour", 3600),
+            ("After 2 Hours", 7200), ("After 6 Hours", 21600), ("After 12 Hours", 43200), ("Never", 0),
+        ]
+        let sleep = popUp(delays.map(\.0)) { [store] i in
+            if i < delays.count { store.setSleepPolicy(afterSecs: delays[i].1) }
+        }
+        let limits: [(String, UInt32)] = [("8 Tabs", 8), ("16 Tabs", 16), ("24 Tabs", 24), ("50 Tabs", 50), ("No Limit", 0)]
+        let limit = popUp(limits.map(\.0)) { [store] i in
+            if i < limits.count { store.setSleepPolicy(maxLiveTabs: limits[i].1) }
+        }
+        refreshers.append { [store] in
+            // A value set elsewhere (an older default, the benchmarks) shows as its own item.
+            Self.select(sleep, store.sleepAfterSecs, in: delays) { "After \(Duration.seconds(Int64(clamping: $0)).formatted(.units(width: .wide)))" }
+            Self.select(limit, store.maxLiveTabs, in: limits) { "\($0) Tabs" }
+        }
+
         let awake = sitesField(placeholder: "mail.google.com, slack.com") { [store] sites in store.setKeepAwakeSites(sites) }
         refreshers.append { [store] in
             if awake.currentEditor() == nil { awake.stringValue = store.keepAwakeSites.joined(separator: ", ") }
@@ -214,6 +231,10 @@ private final class SettingsPaneController: NSViewController {
             [NSGridCell.emptyContentView, matchPage],
             [label("Archive Today tabs:"), archive],
             [NSGridCell.emptyContentView, caption("Tabs in Today you haven't used for this long move to the archive. Pinned tabs and favourites stay.")],
+            [label("Put tabs to sleep:"), sleep],
+            [NSGridCell.emptyContentView, caption("A tab in the background you haven't used for this long is unloaded, and reloads when you select it. The tab you're on, tabs playing sound and tabs kept awake stay loaded.")],
+            [label("Keep loaded at most:"), limit],
+            [NSGridCell.emptyContentView, caption("Beyond this many, the tabs you used longest ago go to sleep first. When your Mac runs low on memory, tabs go to sleep sooner whatever you choose.")],
             [label("Keep awake:"), awake],
             [NSGridCell.emptyContentView, caption("Tabs of these sites, with their subdomains, are never put to sleep, frozen or archived, so mail and chat keep notifying you. Separate them with commas.")],
         ]
@@ -622,6 +643,20 @@ private final class SettingsPaneController: NSViewController {
         let button = NSButton(checkboxWithTitle: title, target: nil, action: nil)
         button.onAction { [weak button] in action(button?.state == .on) }
         return button
+    }
+
+    /// Selects the item for `value`, adding one named by `title` if it isn't
+    /// among the choices.
+    private static func select<T: Equatable>(_ button: NSPopUpButton, _ value: T, in choices: [(String, T)],
+                                             title: (T) -> String) {
+        if let i = choices.firstIndex(where: { $0.1 == value }) {
+            while button.numberOfItems > choices.count { button.removeItem(at: choices.count) }
+            button.selectItem(at: i)
+        } else {
+            let name = title(value)
+            if button.numberOfItems == choices.count { button.addItem(withTitle: name) } else { button.lastItem?.title = name }
+            button.selectItem(at: choices.count)
+        }
     }
 
     /// A two-line field of sites separated by commas, spaces or new lines.

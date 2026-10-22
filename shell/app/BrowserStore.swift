@@ -633,6 +633,18 @@ final class BrowserStore: NSObject {
         refresh()
     }
 
+    /// Background tabs idle this long are put to sleep; 0 is never.
+    var sleepAfterSecs: UInt64 { snapshot.sleepAfterSecs }
+    /// At most this many tabs stay loaded; 0 is no limit.
+    var maxLiveTabs: UInt32 { snapshot.maxLiveTabs }
+
+    /// Changes when tabs are put to sleep, and applies it at once.
+    func setSleepPolicy(afterSecs: UInt64? = nil, maxLiveTabs: UInt32? = nil) {
+        core.setPolicy(sleepAfterSecs: afterSecs ?? sleepAfterSecs, maxLiveTabs: maxLiveTabs ?? self.maxLiveTabs)
+        refresh()
+        sleepIdleTabs()
+    }
+
     var keepAwakeSites: [String] { snapshot.keepAwakeSites }
 
     func setKeepAwakeSites(_ sites: [String]) {

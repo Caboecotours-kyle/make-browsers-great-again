@@ -141,6 +141,24 @@ fn sleeps_idle_and_excess_tabs_but_never_visible_or_audible() {
 }
 
 #[test]
+fn sleeping_can_be_turned_off_but_memory_pressure_still_sleeps() {
+    let mut s = State::new_default();
+    let sp = home(&s);
+    s.policy.sleep_after_secs = 0;
+    s.policy.max_live_tabs = 0;
+    let mut ids = Vec::new();
+    for i in 0..40 {
+        let id = s.open_tab(sp, &format!("https://{i}.com"), true, i).unwrap();
+        s.set_live(id, true, 0);
+        ids.push(id);
+    }
+    assert!(s.collect_sleepers(u64::MAX / 2, Pressure::Normal).is_empty());
+    // Under pressure the default limit, halved, applies.
+    assert_eq!(s.collect_sleepers(100, Pressure::Warning).len(), 39 - 12);
+    assert_eq!(s.collect_sleepers(100, Pressure::Critical).len(), 12);
+}
+
+#[test]
 fn critical_pressure_sleeps_everything_hidden() {
     let mut s = State::new_default();
     let sp = home(&s);
