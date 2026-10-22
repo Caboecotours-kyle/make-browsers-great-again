@@ -16,8 +16,11 @@ jobs:
       - uses: actions/checkout@v5
       - name: Install tools
         run: |
-          brew bundle --no-upgrade
+          # Upgrades tools the runner image already has: an older
+          # SwiftFormat doesn't know every rule .swiftformat names.
+          brew bundle
           rustup toolchain install
+          swiftformat --version; swiftlint version; clang-format --version
       - uses: actions/cache@v4
         with:
           path: |
