@@ -72,6 +72,8 @@ enum StoreChange {
     case elsewhere
     /// Extensions were installed or removed, or changed their buttons.
     case extensions
+    /// An update was found, downloaded or is ready to install.
+    case update
 }
 
 /// A network request, kept for agents (`mbga network`).
@@ -1386,6 +1388,10 @@ extension BrowserStore {
     /// removed: every window's toolbar shows it.
     static func extensionsChanged() {
         for store in open.allObjects { store.changed(.extensions) }
+    }
+
+    static func updateChanged() {
+        for store in open.allObjects { store.changed(.update) }
     }
 
     /// The store whose window has the tab's page, if it's loaded.

@@ -25,6 +25,19 @@ shell/app/     AppKit UI: sidebar (a table per space), swipeable spaces,
 The core owns the data; the shell renders snapshots of it and forwards engine
 events back. Nothing in the UI layer keeps browser state of its own.
 
+## Install
+
+MBGA runs on macOS 15 or later on Apple silicon. Paste into Terminal:
+
+```sh
+curl -fL https://github.com/Ffinnis/make-browsers-great-again/releases/latest/download/MBGA.zip -o /tmp/MBGA.zip && ditto -x -k /tmp/MBGA.zip /Applications && open /Applications/MBGA.app
+```
+
+Or download `MBGA.zip` from the [latest release](https://github.com/Ffinnis/make-browsers-great-again/releases/latest)
+and move MBGA to Applications. MBGA isn't notarized, so a copy downloaded in
+a browser needs System Settings ▸ Privacy & Security ▸ Open Anyway the first
+time. After that, MBGA keeps itself up to date.
+
 ## What it does
 
 - **Spaces**: swipe between them with two fingers anywhere in the sidebar, or
@@ -101,6 +114,12 @@ events back. Nothing in the UI layer keeps browser state of its own.
   LibreWolf, Waterfox) and Safari it takes bookmarks; Safari needs Full Disk
   Access. Every source profile becomes an MBGA profile with its own space, and
   bookmarks land in folders under its pinned tabs. Nothing loads until opened.
+- **Updates**: as in Arc, MBGA looks for a new version a few times a day,
+  downloads it in the background and offers to restart into it from the foot
+  of the sidebar; quitting installs it too. Your windows, spaces and tabs come
+  back where they were. MBGA ▸ Check for Updates… looks now; Settings ▸
+  General turns automatic updates off. Each update is checked against MBGA's
+  release key before it is unpacked.
 - **Passwords**: saved passwords come along from Chrome-family browsers, Arc
   and Firefox (macOS asks before MBGA reads a Chromium browser's keychain key;
   a Firefox Primary Password needs an export instead). Safari's, and any
@@ -176,6 +195,17 @@ scripts/build.sh --run    # build and launch
 The app is written to `build/cmake/out/MBGA.app`. Browser data lives in
 `~/Library/Application Support/MBGA`. Run the core's tests with
 `cargo test --manifest-path core/Cargo.toml`.
+
+Builds from source don't update themselves, so a release never replaces the
+copy you're working on. `scripts/build.sh --release` builds one that does,
+and `scripts/release.sh` publishes it: it builds the version set in
+`CMakeLists.txt` (`MBGA_VERSION`), signs the archive with the release key
+from your keychain and creates the GitHub release that every installed copy
+picks up. Generate a key with `swift scripts/update-signing.swift generate`,
+store the private half as "MBGA update signing key" in your keychain and put
+the public half in `MBGA_UPDATE_PUBLIC_KEY`. To try an update without
+publishing one, point a build at a local feed:
+`MBGA_UPDATE_FEED=file:///path/to/update.json`.
 
 Development builds are ad-hoc signed and use Chromium's mock keychain, which
 avoids a keychain prompt on every rebuild. Configure with

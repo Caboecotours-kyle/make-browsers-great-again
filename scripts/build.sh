@@ -1,9 +1,21 @@
 #!/usr/bin/env bash
-# Builds build/out/MBGA.app. Pass --run to launch it afterwards.
+# Builds build/cmake/out/MBGA.app. Pass --run to launch it afterwards, or
+# --release to build build/release/out/MBGA.app, which updates itself from
+# GitHub (scripts/release.sh publishes it).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/build"
+DIR="$BUILD/cmake"
+FLAGS=()
+RUN=0
+for arg in "$@"; do
+  case "$arg" in
+    --run) RUN=1 ;;
+    --release) DIR="$BUILD/release"; FLAGS+=(-DMBGA_UPDATES=ON) ;;
+    *) echo "usage: $0 [--run] [--release]" >&2; exit 2 ;;
+  esac
+done
 
 "$ROOT/scripts/fetch-cef.sh"
 
@@ -21,11 +33,11 @@ if [[ -z "$NINJA" ]]; then
   fi
 fi
 
-cmake -S "$ROOT" -B "$BUILD/cmake" -G Ninja -DCMAKE_MAKE_PROGRAM="$NINJA" -DCMAKE_BUILD_TYPE=Release
-cmake --build "$BUILD/cmake"
+cmake -S "$ROOT" -B "$DIR" -G Ninja -DCMAKE_MAKE_PROGRAM="$NINJA" -DCMAKE_BUILD_TYPE=Release ${FLAGS[@]+"${FLAGS[@]}"}
+cmake --build "$DIR"
 
-APP="$BUILD/cmake/out/MBGA.app"
+APP="$DIR/out/MBGA.app"
 echo "Built $APP"
-if [[ "${1:-}" == "--run" ]]; then
+if [[ "$RUN" == 1 ]]; then
   "$APP/Contents/MacOS/MBGA"
 fi

@@ -35,3 +35,4 @@ MBEngine.runMessageLoop()
 
 _ = core.persist()
 MBEngine.shutdown()
+MainActor.assumeIsolated { Updater.shared.installOnExit() }

@@ -690,6 +690,14 @@ struct CommandAction {
                     if loaded { store.reload() }
                 }
             },
+            CommandAction(id: "update", title: Updater.shared.readyVersion.map { "Restart to Update to \($0)" } ?? "Check for Updates",
+                          symbol: "arrow.down.circle", keywords: ["upgrade", "version", "new", "relaunch"]) {
+                if Updater.shared.readyVersion != nil {
+                    Updater.shared.restartToUpdate()
+                } else {
+                    Updater.shared.check(userInitiated: true)
+                }
+            },
             CommandAction(id: "clear-history", title: "Clear History", symbol: "clock.arrow.circlepath", keywords: ["forget", "privacy"]) {
                 store.core.clearHistory()
                 store.showToast(Toast(message: "History cleared", symbol: "clock.arrow.circlepath"))

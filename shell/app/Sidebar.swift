@@ -1,7 +1,8 @@
 import AppKit
 
 /// The full sidebar: toolbar, address field, favorites, the active space's
-/// list (swipeable between spaces), the mini player and the bottom bar.
+/// list (swipeable between spaces), the mini player, an update waiting to be
+/// installed and the bottom bar.
 /// One instance moves between the window and the floating peek card.
 @MainActor
 final class SidebarView: FlippedView {
@@ -11,6 +12,7 @@ final class SidebarView: FlippedView {
     private let favorites: FavoritesGridView
     private let pager: SpacePagerView
     private let player: MiniPlayerView
+    private let updateCard = UpdateCardView()
     private let bottom: SidebarBottomBar
     private var shownSpace: UInt64
 
@@ -24,8 +26,10 @@ final class SidebarView: FlippedView {
         bottom = SidebarBottomBar(store: store)
         shownSpace = store.snapshot.activeSpace
         super.init(frame: .zero)
-        for view in [toolbar, address, favorites, pager, player, bottom] as [NSView] { addSubview(view) }
+        for view in [toolbar, address, favorites, pager, player, updateCard, bottom] as [NSView] { addSubview(view) }
         player.isHidden = store.mediaTab == nil
+        updateCard.isHidden = Self.readyUpdate == nil
+        if let version = Self.readyUpdate { updateCard.update(version: version) }
         // Two-finger swipes anywhere in the sidebar switch spaces.
         store.pager.sidebar = self
         store.observe(self) { [weak self] change in self?.handle(change) }
@@ -70,6 +74,8 @@ final class SidebarView: FlippedView {
         case .media:
             updatePlayer()
             pager.refreshDecorations()
+        case .update:
+            refreshUpdateCard()
         case .cleanup:
             // The tidy-up offer opens and closes rather than popping.
             pager.refreshDecorations(animation: Motion.settle)
@@ -106,6 +112,30 @@ final class SidebarView: FlippedView {
         }
     }
 
+    /// The version to restart into, while its card is to show.
+    private static var readyUpdate: String? {
+        Updater.shared.cardHidden ? nil : Updater.shared.readyVersion
+    }
+
+    private func refreshUpdateCard() {
+        let version = Self.readyUpdate
+        if let version { updateCard.update(version: version) }
+        let visible = version != nil
+        guard visible == updateCard.isHidden else { return }
+        // Rises from the bottom bar, like the player.
+        updateCard.isHidden = false
+        updateCard.alphaValue = visible ? 0 : 1
+        Motion.animate(Motion.settle) {
+            updateCard.animator().alphaValue = visible ? 1 : 0
+            needsLayout = true
+            layoutSubtreeIfNeeded()
+        } completion: { [weak self] in
+            guard let self else { return }
+            updateCard.isHidden = Self.readyUpdate == nil
+            needsLayout = true
+        }
+    }
+
     override func layout() {
         super.layout()
         let width = bounds.width - 20
@@ -120,6 +150,10 @@ final class SidebarView: FlippedView {
         let bottomY = bounds.height - 8 - 28
         bottom.frame = NSRect(x: 10, y: bottomY, width: width, height: 28)
         var listBottom = bottomY - 10
+        if Self.readyUpdate != nil || !updateCard.isHidden {
+            updateCard.frame = NSRect(x: 10, y: listBottom - 46, width: width, height: 46)
+            listBottom -= 46 + 10
+        }
         if store.mediaTab != nil || !player.isHidden {
             player.frame = NSRect(x: 10, y: listBottom - 46, width: width, height: 46)
             listBottom -= 46 + 10

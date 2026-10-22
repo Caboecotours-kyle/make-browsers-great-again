@@ -197,6 +197,69 @@ final class MiniPlayerView: HoverView {
     }
 }
 
+/// A new version downloaded, at the bottom of the sidebar as in Arc: a click
+/// restarts into it. Hidden, it still installs when MBGA quits.
+@MainActor
+final class UpdateCardView: HoverView {
+    private let fill = FillLayer()
+    private let icon = NSImageView()
+    private let title = Label.make("Restart to Update", size: 12, weight: .medium)
+    private let subtitle = Label.make(size: 11, color: .secondaryLabelColor)
+    private let hide = NSButton()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        fill.cornerRadius = 10
+        layer?.addSublayer(fill)
+        icon.image = .symbol("arrow.down.circle.fill", size: 16, weight: .medium)
+        icon.contentTintColor = .controlAccentColor
+        hide.isBordered = false
+        hide.bezelStyle = .regularSquare
+        hide.contentTintColor = .secondaryLabelColor
+        hide.image = .symbol("xmark", size: 9, weight: .bold)
+        hide.toolTip = "Hide (installs when you quit)"
+        hide.onAction { Updater.shared.hideCard() }
+        hide.isHidden = true
+        toolTip = "MBGA quits and opens again, with your tabs where they were"
+        for view in [icon, title, subtitle, hide] as [NSView] { addSubview(view) }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func update(version: String) {
+        subtitle.stringValue = "MBGA \(version) is ready"
+    }
+
+    override func hoverChanged() {
+        super.hoverChanged()
+        hide.setVisible(hovering, animated: true)
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fill.frame = bounds
+        CATransaction.commit()
+        icon.frame = NSRect(x: 10, y: bounds.midY - 10, width: 20, height: 20)
+        hide.frame = NSRect(x: bounds.width - 24, y: bounds.midY - 13, width: 18, height: 26)
+        let textWidth = max(bounds.width - 40 - 28, 0)
+        title.frame = NSRect(x: 40, y: 7, width: textWidth, height: 15)
+        subtitle.frame = NSRect(x: 40, y: 24, width: textWidth, height: 14)
+    }
+
+    override func updateLayer() {
+        fill.paint(fill: hovering ? Theme.controlHoverFill : Theme.controlFill, in: effectiveAppearance)
+    }
+
+    override func mouseDown(with event: NSEvent) {}
+
+    override func mouseUp(with event: NSEvent) {
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        Updater.shared.restartToUpdate()
+    }
+}
+
 /// Offered once, when old Today tabs pile up: tidy them now, every day, or
 /// not at all. Nothing is lost: Undo and Recently Closed bring tabs back.
 final class CleanupCellView: NSTableCellView {

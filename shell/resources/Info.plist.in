@@ -63,6 +63,10 @@
 	</dict>
 	<key>LSMinimumSystemVersion</key>
 	<string>${MBGA_MIN_MACOS}</string>
+	<key>MBGAUpdateFeed</key>
+	<string>${MBGA_UPDATE_FEED}</string>
+	<key>MBGAUpdatePublicKey</key>
+	<string>${MBGA_UPDATE_PUBLIC_KEY}</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Websites you allow can use the camera.</string>
 	<key>NSMicrophoneUsageDescription</key>

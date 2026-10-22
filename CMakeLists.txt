@@ -16,6 +16,15 @@ set(MBGA_PRODUCT_NAME "MBGA")
 set(MBGA_BUNDLE_ID "dev.mbga.browser")
 set(MBGA_VERSION "0.0.3")
 option(MBGA_MOCK_KEYCHAIN "Use a mock keychain (avoids prompts on ad-hoc signed builds)" ON)
+# Releases (scripts/release.sh) update themselves from GitHub; builds from
+# source don't, so a new release never replaces the copy you're working on.
+option(MBGA_UPDATES "Update from MBGA's releases on GitHub" OFF)
+set(MBGA_UPDATE_PUBLIC_KEY "HQrQqNM/GyMsslsnQmag+Y9mTGB2YHt1WsyouwlPpjw=")
+if(MBGA_UPDATES)
+  set(MBGA_UPDATE_FEED "https://github.com/Ffinnis/make-browsers-great-again/releases/latest/download/update.json")
+else()
+  set(MBGA_UPDATE_FEED "")
+endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/out")
 

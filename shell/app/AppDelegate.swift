@@ -55,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         store.warmOtherSpaces()
         store.wakeAlwaysAwakeTabs()
         window.makeKeyAndOrderFront(nil)
+        Updater.shared.start(store: primary)
         // MBGA_DEBUG_LITTLE_WINDOW pops the visible tab out at launch, for
         // screenshots of little windows.
         if ProcessInfo.processInfo.environment["MBGA_DEBUG_LITTLE_WINDOW"]?.isEmpty == false, let tab = store.visibleTabID {
@@ -359,6 +360,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func toggleBlockAds(_ sender: Any?) { store.setBlockAds(!store.blockAds) }
     @objc func editFilters(_ sender: Any?) { NSWorkspace.shared.open(URL(fileURLWithPath: core.userFiltersPath())) }
     @objc func showExtensions(_ sender: Any?) { store.showExtensions() }
+    @objc func checkForUpdates(_ sender: Any?) { Updater.shared.check(userInitiated: true) }
+    @objc func restartToUpdate(_ sender: Any?) { Updater.shared.restartToUpdate() }
     /// Edit ▸ Undo reaches the app only when no page or text field took it;
     /// then it undoes the last closed tab, cleared list or deleted folder.
     @objc func undo(_ sender: Any?) { store.undoClose() }
@@ -394,6 +397,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             item.state = UserDefaults.standard.bool(forKey: TintStyle.matchPageKey) ? .on : .off
         case #selector(toggleBlockAds(_:)):
             item.state = store.blockAds ? .on : .off
+        case #selector(restartToUpdate(_:)):
+            guard let version = Updater.shared.readyVersion else {
+                item.isHidden = true
+                return false
+            }
+            item.isHidden = false
+            item.title = "Restart to Update to \(version)"
         case #selector(toggleDeveloperToolbar(_:)):
             item.title = store.developerToolbarShown ? "Hide Developer Toolbar" : "Show Developer Toolbar"
         case #selector(pickElement(_:)):
@@ -441,6 +451,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         main.addSubmenu("MBGA") { m in
             m.addItem(withTitle: "About MBGA", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+            m.item("Check for Updates…", #selector(checkForUpdates(_:)), "", [], target: self)
+            m.item("Restart to Update", #selector(restartToUpdate(_:)), "", [], target: self).isHidden = true
             m.addItem(.separator())
             m.item("Settings…", #selector(openSettings(_:)), ",", target: self)
             m.addItem(.separator())

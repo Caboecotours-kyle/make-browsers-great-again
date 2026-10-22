@@ -169,6 +169,7 @@ private final class SettingsPaneController: NSViewController {
         store.observe(self) { [weak self] change in
             if case .snapshot = change { self?.refresh() }
             if case .layout = change { self?.refresh() }
+            if case .update = change { self?.refresh() }
         }
         refresh()
     }
@@ -225,6 +226,25 @@ private final class SettingsPaneController: NSViewController {
             if awake.currentEditor() == nil { awake.stringValue = store.keepAwakeSites.joined(separator: ", ") }
         }
 
+        let updater = Updater.shared
+        let automatic = checkbox("Keep MBGA up to date") { on in updater.automatic = on }
+        let check = NSButton.push("Check Now") { updater.check(userInitiated: true) }
+        let status = caption("")
+        refreshers.append {
+            automatic.state = updater.automatic ? .on : .off
+            automatic.isEnabled = updater.available
+            if let version = updater.readyVersion {
+                check.title = "Restart to Update"
+                check.onAction { updater.restartToUpdate() }
+                status.stringValue = "MBGA \(version) is ready. It installs when you restart or quit MBGA."
+            } else {
+                check.title = "Check Now"
+                check.onAction { updater.check(userInitiated: true) }
+                status.stringValue = Self.updateStatus(updater)
+            }
+            check.isEnabled = updater.available && updater.state != .checking && !updater.isDownloading
+        }
+
         return [
             [label("Sidebar:"), layout],
             [label("Sidebar colour:"), colour],
@@ -237,7 +257,22 @@ private final class SettingsPaneController: NSViewController {
             [NSGridCell.emptyContentView, caption("Beyond this many, the tabs you used longest ago go to sleep first. When your Mac runs low on memory, tabs go to sleep sooner whatever you choose.")],
             [label("Keep awake:"), awake],
             [NSGridCell.emptyContentView, caption("Tabs of these sites, with their subdomains, are never put to sleep, frozen or archived, so mail and chat keep notifying you. Separate them with commas.")],
+            [label("Updates:"), automatic],
+            [NSGridCell.emptyContentView, check],
+            [NSGridCell.emptyContentView, status],
         ]
+    }
+
+    private static func updateStatus(_ updater: Updater) -> String {
+        let version = "This is MBGA \(updater.currentVersion)."
+        guard updater.available else { return "\(version) Built from source, it doesn't update itself." }
+        switch updater.state {
+        case .checking: return "\(version) Checking for updates…"
+        case .downloading(let next): return "\(version) Downloading \(next)…"
+        case .upToDate: return "\(version) It's the latest version."
+        case .failed(let problem): return "\(version) \(problem)."
+        case .idle: return "\(version) Updates download in the background and install when you restart."
+        }
     }
 
     private func privacyRows() -> [[NSView]] {
