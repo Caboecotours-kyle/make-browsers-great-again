@@ -7,7 +7,8 @@ measured over its whole process tree.
 
 `bench/results/trend.html` charts every benchmarked change against Chromium.
 Each run is saved as `bench/results/<timestamp>.json` with the commit it
-measured, and the chart is regenerated after every run.
+measured, and the chart is regenerated after every run. Results stay on the
+machine that ran them; they aren't committed.
 
 ## Scenarios
 
@@ -85,7 +86,7 @@ add noise to timings and Speedometer.
 ## Earlier results
 
 Before the Chromium baseline, MBGA was measured against Google Chrome 155 on
-the same 50-tab workload (`results/20261021-final.json`): 2,122 MB against
+the same 50-tab workload: 2,122 MB against
 4,320 MB with every tab loaded, 900 MB with tab sleeping (the first defaults:
 asleep after 10 minutes, 8 tabs loaded; now 2 hours and 24), and 0.4% against
 18.4% idle CPU after 12 minutes.
