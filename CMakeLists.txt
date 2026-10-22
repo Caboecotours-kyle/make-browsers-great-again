@@ -108,12 +108,14 @@ foreach(_suffixes ${CEF_HELPER_APP_SUFFIXES})
   SET_EXECUTABLE_TARGET_PROPERTIES(${_target})
   add_dependencies(${_target} libcef_dll_wrapper)
   target_link_libraries(${_target} libcef_dll_wrapper ${CEF_STANDARD_LIBS})
+  # A new Info.plist (another version) relinks it, so it's signed again.
   set_target_properties(${_target} PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${_plist}"
-    OUTPUT_NAME "${MBGA_HELPER_NAME}")
+    OUTPUT_NAME "${MBGA_HELPER_NAME}"
+    LINK_DEPENDS "${_plist}")
   # Signed here, when it relinks, so the copy in the app is never rewritten.
   add_custom_command(TARGET ${_target} POST_BUILD
-    COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:${_target}>"
+    COMMAND ${MBGA_SIGN_HELPER} "$<TARGET_BUNDLE_DIR:${_target}>"
     VERBATIM)
 
   list(APPEND MBGA_HELPER_TARGETS ${_target})
