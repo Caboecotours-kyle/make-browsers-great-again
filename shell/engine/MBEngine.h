@@ -353,7 +353,8 @@ typedef void (^MBExtensionBridge)(NSString* profilePath,
 /// seconds, when a request still unanswered is undone; until then the page
 /// should stay drawn, as a hidden page pauses a muted video.
 /// -webView:didChangeBusy: reports the window open.
-- (void)enterPictureInPicture:(void (^)(void))done;
+- (void)enterPictureInPicture:(void (^)(void))done
+    NS_SWIFT_NAME(enterPictureInPicture(completion:));
 /// Puts the video -enterPictureInPicture: moved out back into the page, or
 /// stops the request on its way, leaving a window the page opened itself:
 /// for a page coming on screen.
