@@ -2690,7 +2690,7 @@ class CookieKeys : public CefCookieVisitor {
   // An unanswered ownership scan outlives automatic-entry permission, so
   // a hidden page's manual window can still be found after the deadline.
   NSString* _pipScanNonce;
-  BOOL _pipScanChanged;
+  uint64_t _pipFrameRevision;
   NSString* _pipSession;
   int _pipContext;
   void (^_pipDone)(void);
@@ -3109,6 +3109,7 @@ class CookieKeys : public CefCookieVisitor {
 }
 
 - (void)engineFrameAttached:(NSString*)frame session:(NSString*)session {
+  ++_pipFrameRevision;
   if (!_frameSessions) {
     _frameSessions = [NSMutableDictionary dictionary];
   }
@@ -3116,6 +3117,7 @@ class CookieKeys : public CefCookieVisitor {
 }
 
 - (void)engineFrameDetached:(NSString*)session {
+  ++_pipFrameRevision;
   [_frameSessions
       removeObjectsForKeys:[_frameSessions allKeysForObject:session]];
 }
@@ -3231,6 +3233,12 @@ static uint64_t g_pip_revision = 0;
   if (![nonce isEqualToString:_pipScanNonce]) {
     return;
   }
+  if (!frames) {
+    // An unstable or incomplete scan cannot rule out a manual window.
+    // Stop entry, keeping this source in later ownership checks.
+    [self exitPictureInPicture];
+    return;
+  }
   _pipScanNonce = nil;
   if (revision != g_pip_revision) {
     if ([nonce isEqualToString:_pipNonce]) {
@@ -3329,8 +3337,12 @@ static uint64_t g_pip_revision = 0;
   for (MBWebView* view in leaving) {
     [view scanPictureInPicture:nil
                           then:^(PipFrames frames) {
-                            for (const PipFrame& frame : *frames) {
-                              taken = taken || frame.answer == "open";
+                            if (!frames) {
+                              taken = YES;
+                            } else {
+                              for (const PipFrame& frame : *frames) {
+                                taken = taken || frame.answer == "open";
+                              }
                             }
                             if (--waiting == 0) {
                               then(taken);
@@ -3344,8 +3356,11 @@ static uint64_t g_pip_revision = 0;
     [view scanPictureInPicture:nonce
                           then:^(PipFrames frames) {
                             MBWebView* other = weakView;
-                            if (other &&
-                                [nonce isEqualToString:other->_pipScanNonce]) {
+                            if (!frames) {
+                              taken = YES;
+                            } else if (other &&
+                                       [nonce isEqualToString:other->
+                                                              _pipScanNonce]) {
                               other->_pipScanNonce = nil;
                               for (const PipFrame& frame : *frames) {
                                 if (frame.answer == "open" &&
@@ -3412,7 +3427,6 @@ static uint64_t g_pip_revision = 0;
 - (void)endPictureInPicture {
   _pipNonce = nil;
   _pipScanNonce = nil;
-  _pipScanChanged = NO;
   if (g_pip_owner == self) {
     if (_pictureInPicture) {
       ++g_pip_revision;
@@ -3438,24 +3452,42 @@ static uint64_t g_pip_revision = 0;
 // Runs the scan, with |nonce|, in the picture-in-picture world of each of
 // the page's frames, up to kPipFrames, or with none only looks for a window
 // open, leaving the frames as they were. Frames of other sites run in
-// processes of their own, reached through sessions of their own.
+// processes of their own, reached through sessions of their own. A null
+// result means ownership is unknown, never that the window is empty.
 - (void)scanPictureInPicture:(NSString*)nonce
                         then:(void (^)(PipFrames frames))then {
-  if (nonce && [nonce isEqualToString:_pipScanNonce]) {
-    _pipScanChanged = NO;
-  }
+  [self scanPictureInPicture:nonce retry:YES then:then];
+}
+
+- (void)scanPictureInPicture:(NSString*)nonce
+                       retry:(BOOL)retry
+                        then:(void (^)(PipFrames frames))then {
+  uint64_t revision = _pipFrameRevision;
+  __block BOOL complete = YES;
   PipFrames frames = std::make_shared<std::vector<PipFrame>>();
   __weak MBWebView* weakSelf = self;
   dispatch_block_t finish = ^{
     MBWebView* view = weakSelf;
-    if (view && nonce && [nonce isEqualToString:view->_pipScanNonce] &&
-        view->_pipScanChanged) {
-      // A subframe changed under this scan. Recheck the current frames,
-      // retaining both ownership discovery and the original entry deadline.
-      [view scanPictureInPicture:nonce then:then];
+    if (!view || !view->_browser || view->_closing ||
+        (nonce && ![nonce isEqualToString:view->_pipScanNonce])) {
+      then(nullptr);
       return;
     }
-    then(frames);
+    if (revision != view->_pipFrameRevision) {
+      // One reconciliation only, even after entry permission expires.
+      // Open-only checks have their own revision and the same work budget.
+      if (retry) {
+        [view scanPictureInPicture:nonce retry:NO then:then];
+      } else {
+        then(nullptr);
+      }
+      return;
+    }
+    then(complete ? frames : nullptr);
+  };
+  void (^one)(BOOL) = ^(BOOL scanned) {
+    complete = complete && scanned;
+    finish();
   };
   [self
       pipCall:@"Page.getFrameTree"
@@ -3464,6 +3496,7 @@ static uint64_t g_pip_revision = 0;
          then:^(NSDictionary* tree) {
            MBWebView* view = weakSelf;
            if (!view) {
+             finish();
              return;
            }
            NSArray* children = tree[@"frameTree"][@"childFrames"];
@@ -3472,17 +3505,24 @@ static uint64_t g_pip_revision = 0;
                         nonce:nonce
                       session:nil
                          into:frames
-                         then:finish];
+                         then:one];
              return;
            }
            [view followFrames:^{
              MBWebView* again = weakSelf;
              if (!again) {
+               finish();
                return;
              }
              NSArray* sessions = again->_frameSessions.allValues ?: @[];
+             if (sessions.count >= kPipFrames) {
+               complete = NO;
+               sessions =
+                   [sessions subarrayWithRange:NSMakeRange(0, kPipFrames - 1)];
+             }
              __block NSUInteger waiting = sessions.count + 1;
-             dispatch_block_t one = ^{
+             void (^one)(BOOL) = ^(BOOL scanned) {
+               complete = complete && scanned;
                if (--waiting == 0) {
                  finish();
                }
@@ -3523,29 +3563,49 @@ static uint64_t g_pip_revision = 0;
              nonce:(NSString*)nonce
            session:(NSString*)session
               into:(PipFrames)frames
-              then:(dispatch_block_t)then {
+              then:(void (^)(BOOL complete))then {
+  if (_closing || (nonce && ![nonce isEqualToString:_pipScanNonce])) {
+    then(NO);
+    return;
+  }
   NSMutableArray<NSString*>* ids = [NSMutableArray array];
   NSMutableArray* queue = [NSMutableArray array];
   if ([tree[@"frameTree"] isKindOfClass:NSDictionary.class]) {
     [queue addObject:tree[@"frameTree"]];
+  } else {
+    then(NO);
+    return;
   }
+  __block BOOL complete = YES;
   while (queue.count > 0 && ids.count + frames->size() < kPipFrames) {
     NSDictionary* node = queue.firstObject;
     [queue removeObjectAtIndex:0];
     NSString* identifier = node[@"frame"][@"id"];
-    if ([identifier isKindOfClass:NSString.class]) {
-      [ids addObject:identifier];
+    if (![identifier isKindOfClass:NSString.class]) {
+      complete = NO;
+      continue;
     }
+    NSString* ownerSession = _frameSessions[identifier];
+    if (ownerSession && ![ownerSession isEqualToString:session]) {
+      // This subtree is read through its own process's session.
+      continue;
+    }
+    [ids addObject:identifier];
     NSArray* children = node[@"childFrames"];
     for (id child in [children isKindOfClass:NSArray.class] ? children : @[]) {
       if ([child isKindOfClass:NSDictionary.class]) {
+        if (queue.count + ids.count + frames->size() >= kPipFrames) {
+          complete = NO;
+          break;
+        }
         [queue addObject:child];
       }
     }
   }
+  complete = complete && queue.count == 0;
   __block NSUInteger waiting = ids.count;
   if (waiting == 0) {
-    then();
+    then(complete);
     return;
   }
   // Reserved now, so later sessions see the budget used.
@@ -3559,7 +3619,7 @@ static uint64_t g_pip_revision = 0;
                                     BOOL* stop) {
     dispatch_block_t one = ^{
       if (--waiting == 0) {
-        then();
+        then(complete);
       }
     };
     [self pipCall:@"Page.createIsolatedWorld"
@@ -3572,7 +3632,9 @@ static uint64_t g_pip_revision = 0;
         then:^(NSDictionary* world) {
           MBWebView* view = weakSelf;
           int context = [world[@"executionContextId"] intValue];
-          if (!view || context == 0) {
+          if (!view || view->_closing || context == 0 ||
+              (nonce && ![nonce isEqualToString:view->_pipScanNonce])) {
+            complete = NO;
             one();
             return;
           }
@@ -3582,10 +3644,11 @@ static uint64_t g_pip_revision = 0;
                                  context:context
                                  gesture:NO
                                     then:^(NSString* answer) {
+                                      complete = complete && answer != nil;
                                       PipFrame& frame = (*frames)[first + i];
                                       frame.session = session;
                                       frame.context = context;
-                                      frame.answer = answer.UTF8String;
+                                      frame.answer = answer.UTF8String ?: "";
                                       one();
                                     }];
         }];
@@ -3593,7 +3656,7 @@ static uint64_t g_pip_revision = 0;
 }
 
 // Runs |script| with |arguments| appended in a frame's world, |then|
-// getting the string it returns or resolves to, or "" if it failed.
+// getting the string it returns or resolves to, or nil if it failed.
 - (void)evaluatePictureInPicture:(const char*)script
                        arguments:(const std::string&)arguments
                          session:(NSString*)session
@@ -3612,7 +3675,7 @@ static uint64_t g_pip_revision = 0;
            then:^(NSDictionary* reply) {
              id value = reply[@"result"][@"value"];
              if (then) {
-               then([value isKindOfClass:NSString.class] ? value : @"");
+               then([value isKindOfClass:NSString.class] ? value : nil);
              }
            }];
 }
@@ -3826,15 +3889,13 @@ static uint64_t g_pip_revision = 0;
 // A frame started a new document: a new page closes the window and ends a
 // request; a frame's only if it was the frame the video is in.
 - (void)engineDocumentChanged:(BOOL)main {
+  ++_pipFrameRevision;
   if (main) {
     if (_pipNonce || _pipScanNonce || g_pip_owner == self) {
       [self endPictureInPicture];
     }
     return;
   }
-  // The owner frame is not known yet. Keep the source discoverable, but
-  // require a fresh scan before accepting these frames' earlier answers.
-  _pipScanChanged = _pipScanNonce != nil;
   if (g_pip_owner != self || !_pictureInPicture) {
     return;
   }
