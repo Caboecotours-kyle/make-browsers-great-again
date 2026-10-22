@@ -321,8 +321,10 @@ final class WebContainerView: NSView {
         }
     }
 
-    /// Hides a page switched away from, or, held, leaves it drawing unseen.
+    /// Hides a page switched away from, or, held, leaves it drawing unseen;
+    /// not one moved to a little window since.
     private func putAway(_ view: MBWebView) {
+        guard view.superview === self else { return }
         if held.object(forKey: view) != nil {
             view.alphaValue = 0
             view.layer?.zPosition = -1

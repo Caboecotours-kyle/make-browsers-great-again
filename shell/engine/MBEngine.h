@@ -350,8 +350,9 @@ typedef void (^MBExtensionBridge)(NSString* profilePath,
 /// or a frame of its origin, into Chromium's picture-in-picture window,
 /// unless a tab has the window already: for a tab being switched away from.
 /// |done| runs once the window is open or won't be, within a couple of
-/// seconds; until then the page should stay drawn, as a hidden page pauses
-/// a muted video. -webView:didChangeBusy: reports the window open.
+/// seconds, when a request still unanswered is undone; until then the page
+/// should stay drawn, as a hidden page pauses a muted video.
+/// -webView:didChangeBusy: reports the window open.
 - (void)enterPictureInPicture:(void (^)(void))done;
 /// Puts the video -enterPictureInPicture: moved out back into the page, or
 /// stops the request on its way, leaving a window the page opened itself:

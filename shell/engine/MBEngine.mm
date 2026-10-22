@@ -195,29 +195,36 @@ constexpr char kPipScanScript[] =
     "v.readyState>1&&!v.disablePictureInPicture&&s>a){b=v;a=s;}});"
     "g.mbgaPipVideo=b;return b?String(a):'';}catch(x){return '';}})";
 // Run with a gesture: moves the video the scan kept into the window ("open"
-// or nothing). It checks synchronously what Chromium checks before it uses
-// the gesture up, so the request does; otherwise a picker that shows nothing
-// uses it up instead, before any of the page's code can run with it.
+// or nothing), unless it runs past the time |t| the request was given. It
+// checks synchronously what Chromium checks before it uses the gesture up,
+// so the request does; otherwise a picker that shows nothing uses it up
+// instead, before any of the page's code can run with it. A request undone
+// before it's answered puts its video back, unless a newer one is under way
+// or has the window.
 constexpr char kPipEnterScript[] =
-    "(function(n){" MB_PIP_WATCH
+    "(function(n,t){" MB_PIP_WATCH
     "var d=document,g=globalThis,v=g.mbgaPipVideo;g.mbgaPipVideo=null;"
-    "try{if(v&&v.isConnected&&v.ownerDocument===d&&d.pictureInPictureEnabled&&"
+    "try{if(Date.now()<t&&v&&v.isConnected&&v.ownerDocument===d&&"
+    "d.pictureInPictureEnabled&&"
     "!d.pictureInPictureElement&&!v.paused&&!v.ended&&v.readyState>0&&"
     "v.videoWidth>0&&"
-    "!v.disablePictureInPicture){var p=v.requestPictureInPicture();"
-    "g.mbgaPipOwned=v;return p.then(function(){if(g.mbgaPipOwned!==v){"
+    "!v.disablePictureInPicture){var o={v:v},p=v.requestPictureInPicture();"
+    "g.mbgaPipOwned=o;return p.then(function(){if(g.mbgaPipOwned!==o){"
+    "if(!g.mbgaPipOwned&&d.pictureInPictureElement===v)"
     "d.exitPictureInPicture().catch(function(){});return '';}"
     "w(n,v);return 'open';},function(){"
-    "if(g.mbgaPipOwned===v)g.mbgaPipOwned=null;return '';});}}catch(x){}"
+    "if(g.mbgaPipOwned===o)g.mbgaPipOwned=null;return '';});}}catch(x){}"
     "try{d.createElement('input').showPicker();}catch(x){}return '';})";
 // Puts back the video the request moved out, or undoes one under way.
 constexpr char kPipExitScript[] =
-    "(function(){try{var d=document,g=globalThis,v=g.mbgaPipOwned;"
-    "g.mbgaPipOwned=null;g.mbgaPipVideo=null;if(v&&d.pictureInPictureElement"
-    "===v)d.exitPictureInPicture().catch(function(){});}catch(x){}})()";
+    "(function(){try{var d=document,g=globalThis,o=g.mbgaPipOwned;"
+    "g.mbgaPipOwned=null;g.mbgaPipVideo=null;if(o&&d.pictureInPictureElement"
+    "===o.v)d.exitPictureInPicture().catch(function(){});}catch(x){}})()";
 constexpr char kPipOpenScript[] = "document.pictureInPictureElement?'open':''";
 // Frames looked at for a video, at most.
 constexpr size_t kPipFrames = 16;
+// Seconds a request has, after which it's over.
+constexpr int64_t kPipWait = 2;
 
 // A frame's picture-in-picture world, and what its scan answered.
 struct PipFrame {
@@ -3187,22 +3194,30 @@ static __weak MBWebView* g_pip_owner = nil;
   }
   _pipDone = done;
   NSString* nonce = _pipNonce = NSUUID.UUID.UUIDString;
+  double until = (NSDate.date.timeIntervalSince1970 + kPipWait) * 1000;
   __weak MBWebView* weakSelf = self;
-  // However long the page takes, it's hidden within a couple of seconds.
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
-                 dispatch_get_main_queue(), ^{
-                   MBWebView* view = weakSelf;
-                   if (view && view->_pipDone == done) {
-                     [view settlePictureInPicture];
-                   }
-                 });
+  // However long the page takes, the request is over within a couple of
+  // seconds and the page hidden: an answer after can't open the window, and
+  // one opened or asked for already is put back.
+  dispatch_after(
+      dispatch_time(DISPATCH_TIME_NOW, kPipWait * NSEC_PER_SEC),
+      dispatch_get_main_queue(), ^{
+        MBWebView* view = weakSelf;
+        if (view && view->_pipDone && [nonce isEqualToString:view->_pipNonce]) {
+          [view exitPictureInPicture];
+        }
+      });
   [self scanPictureInPicture:nonce
                         then:^(PipFrames frames) {
-                          [weakSelf pictureInPictureScanned:frames nonce:nonce];
+                          [weakSelf pictureInPictureScanned:frames
+                                                      nonce:nonce
+                                                      until:until];
                         }];
 }
 
-- (void)pictureInPictureScanned:(PipFrames)frames nonce:(NSString*)nonce {
+- (void)pictureInPictureScanned:(PipFrames)frames
+                          nonce:(NSString*)nonce
+                          until:(double)until {
   if (![nonce isEqualToString:_pipNonce]) {
     return;
   }
@@ -3231,24 +3246,26 @@ static __weak MBWebView* g_pip_owner = nil;
   _pipContext = best->context;
   int context = best->context;
   __weak MBWebView* weakSelf = self;
-  [self findOtherPicturesInPicture:^{
+  [self findOtherPicturesInPicture:^(BOOL taken) {
     MBWebView* view = weakSelf;
     if (!view || ![nonce isEqualToString:view->_pipNonce]) {
       return;
     }
-    if (g_pip_owner != view || !view->_browser) {
+    if (taken || g_pip_owner != view || !view->_browser) {
       [view endPictureInPicture];
       return;
     }
-    [view evaluatePictureInPicture:kPipEnterScript
-                         arguments:"(\"" + std::string(nonce.UTF8String) + "\")"
-                           session:nil
-                           context:context
-                           gesture:YES
-                              then:^(NSString* answer) {
-                                [weakSelf pictureInPictureEntered:answer
-                                                            nonce:nonce];
-                              }];
+    [view
+        evaluatePictureInPicture:kPipEnterScript
+                       arguments:"(\"" + std::string(nonce.UTF8String) + "\"," +
+                                 std::to_string((long long)until) + ")"
+                         session:nil
+                         context:context
+                         gesture:YES
+                            then:^(NSString* answer) {
+                              [weakSelf pictureInPictureEntered:answer
+                                                          nonce:nonce];
+                            }];
   }];
 }
 
@@ -3265,20 +3282,38 @@ static __weak MBWebView* g_pip_owner = nil;
   }
 }
 
-// Pages on screen, other than ones being switched away from, that have a
-// window open take it over.
-- (void)findOtherPicturesInPicture:(dispatch_block_t)then {
+// Pages on screen that have a window open take it over. Ones being switched
+// away from, whose own scans will claim theirs, are only looked at: |then|
+// gets whether one has it.
+- (void)findOtherPicturesInPicture:(void (^)(BOOL taken))then {
   NSMutableArray<MBWebView*>* shown = [NSMutableArray array];
+  NSMutableArray<MBWebView*>* leaving = [NSMutableArray array];
   for (MBWebView* view in g_views) {
-    if (view != self && view->_browser && !view->_closing && !view->_frozen &&
-        !view->_pipDone && view.window && !view.isHiddenOrHasHiddenAncestor) {
+    if (view == self || !view->_browser || view->_closing || view->_frozen) {
+      continue;
+    }
+    if (view->_pipDone) {
+      [leaving addObject:view];
+    } else if (view.window && !view.isHiddenOrHasHiddenAncestor) {
       [shown addObject:view];
     }
   }
-  __block NSUInteger waiting = shown.count;
+  __block NSUInteger waiting = shown.count + leaving.count;
+  __block BOOL taken = NO;
   if (waiting == 0) {
-    then();
+    then(NO);
     return;
+  }
+  for (MBWebView* view in leaving) {
+    [view scanPictureInPicture:nil
+                          then:^(PipFrames frames) {
+                            for (const PipFrame& frame : *frames) {
+                              taken = taken || frame.answer == "open";
+                            }
+                            if (--waiting == 0) {
+                              then(taken);
+                            }
+                          }];
   }
   for (MBWebView* view in shown) {
     NSString* nonce = view->_pipNonce = NSUUID.UUID.UUIDString;
@@ -3296,7 +3331,7 @@ static __weak MBWebView* g_pip_owner = nil;
                               }
                             }
                             if (--waiting == 0) {
-                              then();
+                              then(taken);
                             }
                           }];
   }
@@ -3362,7 +3397,8 @@ static __weak MBWebView* g_pip_owner = nil;
 }
 
 // Runs the scan, with |nonce|, in the picture-in-picture world of each of
-// the page's frames, up to kPipFrames. Frames of other sites run in
+// the page's frames, up to kPipFrames, or with none only looks for a window
+// open, leaving the frames as they were. Frames of other sites run in
 // processes of their own, reached through sessions of their own.
 - (void)scanPictureInPicture:(NSString*)nonce
                         then:(void (^)(PipFrames frames))then {
@@ -3464,6 +3500,9 @@ static __weak MBWebView* g_pip_owner = nil;
   // Reserved now, so later sessions see the budget used.
   size_t first = frames->size();
   frames->resize(first + ids.count);
+  const char* script = nonce ? kPipScanScript : kPipOpenScript;
+  std::string arguments =
+      nonce ? "(\"" + std::string(nonce.UTF8String) + "\")" : "";
   __weak MBWebView* weakSelf = self;
   [ids enumerateObjectsUsingBlock:^(NSString* identifier, NSUInteger i,
                                     BOOL* stop) {
@@ -3486,9 +3525,8 @@ static __weak MBWebView* g_pip_owner = nil;
             one();
             return;
           }
-          [view evaluatePictureInPicture:kPipScanScript
-                               arguments:"(\"" + std::string(nonce.UTF8String) +
-                                         "\")"
+          [view evaluatePictureInPicture:script
+                               arguments:arguments
                                  session:session
                                  context:context
                                  gesture:NO
