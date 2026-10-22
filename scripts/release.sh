@@ -43,7 +43,14 @@ rm -rf "$OUT"
 mkdir -p "$OUT"
 
 echo "Packing ${TAG}…"
+# The zip is what copies update from; the disk image is for installing:
+# MBGA beside a link to Applications, to drag it onto.
 ditto -c -k --keepParent --sequesterRsrc "$APP" "$OUT/MBGA.zip"
+mkdir "$OUT/dmg"
+ditto "$APP" "$OUT/dmg/MBGA.app"
+ln -s /Applications "$OUT/dmg/Applications"
+hdiutil create -quiet -volname MBGA -srcfolder "$OUT/dmg" -fs APFS -format ULFO "$OUT/MBGA.dmg"
+rm -rf "$OUT/dmg"
 SIGNED="$(MBGA_UPDATE_KEY="$KEY" swift scripts/update-signing.swift sign "$OUT/MBGA.zip")"
 python3 - "$OUT" "$VERSION" "$REPO" "$TAG" "$SIGNED" <<'PY'
 import json, os, sys
@@ -74,12 +81,12 @@ PREVIOUS="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)"
   echo "curl -fL https://github.com/$REPO/releases/latest/download/MBGA.zip -o /tmp/MBGA.zip && ditto -x -k /tmp/MBGA.zip /Applications && open /Applications/MBGA.app"
   echo '```'
   echo
-  echo "Or download MBGA.zip below and move MBGA to Applications. MBGA isn't notarized, so the first time macOS asks: open it from System Settings ▸ Privacy & Security ▸ Open Anyway."
+  echo "Or download MBGA.dmg below, open it and drag MBGA to Applications. MBGA isn't notarized, so the first time macOS asks: open it from System Settings ▸ Privacy & Security ▸ Open Anyway."
   echo
   echo "Once installed, MBGA updates itself."
 } > "$OUT/notes.md"
 
-gh release create "$TAG" "$OUT/MBGA.zip" "$OUT/update.json" \
+gh release create "$TAG" "$OUT/MBGA.dmg" "$OUT/MBGA.zip" "$OUT/update.json" \
   --target "$(git rev-parse HEAD)" --title "MBGA $VERSION" --notes-file "$OUT/notes.md"
 git fetch -q --tags origin
 echo "Released $TAG: https://github.com/$REPO/releases/tag/$TAG"

@@ -33,8 +33,8 @@ MBGA runs on macOS 15 or later on Apple silicon. Paste into Terminal:
 curl -fL https://github.com/Ffinnis/make-browsers-great-again/releases/latest/download/MBGA.zip -o /tmp/MBGA.zip && ditto -x -k /tmp/MBGA.zip /Applications && open /Applications/MBGA.app
 ```
 
-Or download `MBGA.zip` from the [latest release](https://github.com/Ffinnis/make-browsers-great-again/releases/latest)
-and move MBGA to Applications. MBGA isn't notarized, so a copy downloaded in
+Or download `MBGA.dmg` from the [latest release](https://github.com/Ffinnis/make-browsers-great-again/releases/latest),
+open it and drag MBGA to Applications. MBGA isn't notarized, so a copy downloaded in
 a browser needs System Settings ▸ Privacy & Security ▸ Open Anyway the first
 time. After that, MBGA keeps itself up to date.
 
