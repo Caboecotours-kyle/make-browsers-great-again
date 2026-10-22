@@ -198,8 +198,12 @@ NSDictionary* MenuContext(CefRefPtr<CefContextMenuParams> params) {
   if (flags & CM_TYPEFLAG_SELECTION) [contexts addObject:@"selection"];
   if (flags & CM_TYPEFLAG_EDITABLE) [contexts addObject:@"editable"];
   if (media.length) [contexts addObject:media];
-  if (flags & CM_TYPEFLAG_FRAME) [contexts addObject:@"frame"];
+  // "page" is what's left; CEF flags the top frame as a frame too.
   if (contexts.count == 1) [contexts addObject:@"page"];
+  if ((flags & CM_TYPEFLAG_FRAME) &&
+      params->GetFrameUrl() != params->GetPageUrl()) {
+    [contexts addObject:@"frame"];
+  }
   return @{
     @"contexts" : contexts,
     @"pageUrl" : ToNS(params->GetPageUrl()),
