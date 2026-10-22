@@ -95,6 +95,20 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
 - (void)webView:(MBWebView*)view
     didReceiveFormMessage:(NSString*)message
                       url:(NSString*)url;
+
+@optional
+/// Items extensions add to the page's menu, opened on |context|: "contexts"
+/// (Chrome's names: "page", "link", "image", "selection", "editable"...),
+/// "pageUrl", "frameUrl", "linkUrl", "srcUrl", "mediaType",
+/// "selectionText" and "editable". Each item: "id", "title", "type"
+/// ("normal", "checkbox", "radio" or "separator"), "enabled", "checked",
+/// and "children" for a submenu.
+- (NSArray<NSDictionary*>*)webView:(MBWebView*)view
+             contextMenuItemsFor:(NSDictionary*)context;
+/// One of those items was chosen.
+- (void)webView:(MBWebView*)view
+    choseContextMenuItem:(NSString*)itemID
+                 context:(NSDictionary*)context;
 @end
 
 /// A cookie to set, e.g. one imported from another browser. Times are
@@ -134,6 +148,16 @@ typedef NS_ENUM(NSInteger, MBChromeCommand) {
 
 @interface MBEngine : NSObject
 
+/// Sets up the engine's browser-wide DevTools connection (Chromium's
+/// --remote-debugging-pipe, on file descriptors 3 and 4). Call first thing
+/// in main, before anything opens a file; NO if they were taken.
++ (BOOL)claimDevToolsPipe;
+/// Receives the connection's replies and events, as JSON, on the main
+/// thread.
++ (void)setBrowserDevToolsHandler:(void (^)(NSString* message))handler;
+/// Sends a DevTools command (JSON with id, method and params).
++ (void)sendBrowserDevToolsMessage:(NSString*)json;
+
 /// Loads the framework and initializes the engine. Call once, after creating
 /// MBApplication.sharedApplication and before anything else in this file.
 /// Without strict site isolation, sites share a few renderer processes and
@@ -172,6 +196,32 @@ typedef NS_ENUM(NSInteger, MBChromeCommand) {
 /// profile's tabs.
 + (void)showExtensionsForProfilePath:(NSString*)profilePath url:(NSString*)url;
 
+/// Extension code's requests to the shell: |path| is what followed
+/// https://mbga-extension.invalid/ in the URL it fetched, |body| what it
+/// posted; |browserID| is the requesting page's browser (0 for a service
+/// worker). Call |reply| with JSON, on the main thread, where this is
+/// called.
+typedef void (^MBExtensionBridge)(NSString* profilePath,
+                                  NSString* extensionID,
+                                  int browserID,
+                                  NSString* path,
+                                  NSString* body,
+                                  void (^reply)(NSString* json));
+
+/// Lets extensions reach the shell (their tabs are Alloy-style browsers,
+/// which Chrome's extension system doesn't list, so the shell answers for
+/// them), and gives extension pages shown in web views |script| before
+/// their own.
++ (void)setExtensionBridge:(MBExtensionBridge)bridge
+                pageScript:(MBPageScript)script;
+
+/// Sets up the profile at |profilePath| ahead of its first tab, so its
+/// extensions can reach the bridge as soon as they start.
++ (void)prepareProfilePath:(NSString*)profilePath;
+
+/// Whether |window| is that window (Chrome's own UI).
++ (BOOL)isExtensionsWindow:(NSWindow*)window;
+
 /// Whether |url| is a page only that window can show.
 + (BOOL)isExtensionsPage:(NSString*)url;
 
@@ -209,6 +259,9 @@ typedef NS_ENUM(NSInteger, MBChromeCommand) {
 - (nullable instancetype)initWithCoder:(NSCoder*)coder NS_UNAVAILABLE;
 
 @property(nonatomic, readonly) uint64_t tabID;
+/// The browser's id, which extension APIs use as its tab id; 0 until the
+/// browser exists.
+@property(nonatomic, readonly) int browserIdentifier;
 @property(nonatomic, weak, nullable) id<MBWebViewDelegate> delegate;
 @property(nonatomic, readonly, getter=isClosing) BOOL closing;
 

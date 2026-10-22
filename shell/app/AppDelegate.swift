@@ -31,6 +31,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         default: break
         }
         NSApp.mainMenu = buildMainMenu()
+        // Before the first tab: a profile's extension workers start with its
+        // first tab, and the host must be there to see them start.
+        primary.extensions.start()
         agentServer = AgentServer(store: primary, path: dataDirectory.appendingPathComponent("agent.sock").path)
         updateDevelopMenu()
         NotificationCenter.default.addObserver(self, selector: #selector(updateDevelopMenu),

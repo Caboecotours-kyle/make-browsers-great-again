@@ -36,6 +36,7 @@ final class SidebarView: FlippedView {
     private func handle(_ change: StoreChange) {
         switch change {
         case .snapshot:
+            toolbar.updateExtensions()
             let switched = store.snapshot.activeSpace != shownSpace
             shownSpace = store.snapshot.activeSpace
             let favoritesChanged = favorites.update(crossfade: switched)
@@ -62,6 +63,8 @@ final class SidebarView: FlippedView {
         case .nav:
             toolbar.update()
             address.update()
+        case .extensions:
+            toolbar.updateExtensions()
         case .blocked:
             address.update()
         case .media:
@@ -133,17 +136,25 @@ private final class SidebarToolbarView: WindowDragView {
     private let back: SymbolButton
     private let forward: SymbolButton
     private let reload: SymbolButton
+    private let extensions: ExtensionButtonsView
 
     init(store: BrowserStore) {
         self.store = store
+        extensions = ExtensionButtonsView(store: store)
+        store.extensionButtons = extensions
         toggle = SymbolButton("sidebar.left") { store.toggleSidebar() }
         back = SymbolButton("arrow.left") { store.goBack() }
         forward = SymbolButton("arrow.right") { store.goForward() }
         reload = SymbolButton("arrow.clockwise") { store.reloadOrStop() }
         super.init(frame: .zero)
         toggle.toolTip = "Focus Mode  ⌘S"
-        for view in [toggle, back, forward, reload] { addSubview(view) }
+        for view in [toggle, back, forward, reload, extensions] as [NSView] { addSubview(view) }
         update()
+    }
+
+    func updateExtensions() {
+        extensions.update()
+        needsLayout = true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -162,6 +173,10 @@ private final class SidebarToolbarView: WindowDragView {
         reload.frame = NSRect(x: bounds.width - 28, y: 3, width: 28, height: 24)
         forward.frame = NSRect(x: bounds.width - 58, y: 3, width: 28, height: 24)
         back.frame = NSRect(x: bounds.width - 88, y: 3, width: 28, height: 24)
+        // Extensions between the sidebar button and the arrows.
+        let left = toggle.frame.maxX + 4
+        let width = min(extensions.preferredWidth, max(back.frame.minX - 2 - left, 0))
+        extensions.frame = NSRect(x: back.frame.minX - 2 - width, y: 0, width: width, height: bounds.height)
     }
 }
 

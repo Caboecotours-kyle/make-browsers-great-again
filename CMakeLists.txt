@@ -164,6 +164,9 @@ endforeach()
 add_custom_command(TARGET mbga POST_BUILD
   COMMAND mkdir -p "${_app}/Contents/Resources/bin"
   COMMAND cp "$<TARGET_FILE:mbga_cli>" "${_app}/Contents/Resources/bin/mbga"
+  # The helper extension, which extension support loads in every profile.
+  COMMAND rsync -a --delete "${CMAKE_SOURCE_DIR}/shell/resources/extension/"
+          "${_app}/Contents/Resources/extension/"
   VERBATIM)
 # The app icon: actool compiles the Icon Composer document (its layer is made
 # from assets/icon.svg by scripts/make-icon.sh) into Assets.car for macOS 26

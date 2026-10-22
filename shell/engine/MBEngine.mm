@@ -9,6 +9,8 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <fcntl.h>
+#include <unistd.h>
 #include <functional>
 #include <map>
 #include <set>
@@ -22,6 +24,8 @@
 #include "include/cef_cookie.h"
 #include "include/cef_parser.h"
 #include "include/cef_request_context.h"
+#include "include/cef_request_context_handler.h"
+#include "include/cef_resource_handler.h"
 #include "include/wrapper/cef_library_loader.h"
 
 // A permission question that is answered exactly once: by the user, or with
@@ -67,6 +71,12 @@ std::map<std::string, CefRefPtr<CefRequestContext>> g_contexts;
 NSMutableSet<MBWebView*>* g_views = nil;
 // Popup windows and DevTools, which CEF hosts in its own windows.
 std::vector<CefRefPtr<CefBrowser>> g_auxiliary;
+// The browser-wide DevTools connection: Chromium reads commands from fd 3
+// and writes replies and events to fd 4 (--remote-debugging-pipe); these
+// are our ends. -1 until claimed.
+int g_pipe_write = -1;
+int g_pipe_read = -1;
+void (^g_pipe_handler)(NSString* message) = nil;
 int g_browser_count = 0;
 bool g_quitting = false;
 bool g_strict_site_isolation = true;
@@ -79,6 +89,11 @@ MBEarlyScript g_early_script = nil;
 MBPageReply g_page_reply = nil;
 // Run in every web page as it starts loading; see +setFormScript:.
 std::string g_form_script;
+// Extension support (see MBEngine.h): answers to extension code's fetches
+// of kBridgeOrigin, and the script extension pages get before their own.
+MBExtensionBridge g_extension_bridge = nil;
+MBPageScript g_extension_script = nil;
+const char kBridgeOrigin[] = "https://mbga-extension.invalid/";
 // While a tab is dragged out of the sidebar, pages refuse drops so the drag
 // can end over a page (and pop the tab out) instead of navigating it.
 bool g_reject_drops = false;
@@ -158,10 +173,41 @@ enum MenuCommand {
   kOpenLinkInNewTab = MENU_ID_USER_FIRST,
   kCopyLink,
   kInspect,
+  // Extensions' items count up from here.
+  kFirstExtensionItem,
 };
 
 NSString* ToNS(const CefString& s) {
   return [NSString stringWithUTF8String:s.ToString().c_str()] ?: @"";
+}
+
+// What a page menu was opened on, in the terms of Chrome's contextMenus API.
+NSDictionary* MenuContext(CefRefPtr<CefContextMenuParams> params) {
+  int flags = params->GetTypeFlags();
+  NSMutableArray* contexts = [NSMutableArray arrayWithObject:@"all"];
+  NSString* media = @"";
+  switch (params->GetMediaType()) {
+    case CM_MEDIATYPE_IMAGE: media = @"image"; break;
+    case CM_MEDIATYPE_VIDEO: media = @"video"; break;
+    case CM_MEDIATYPE_AUDIO: media = @"audio"; break;
+    default: break;
+  }
+  if (flags & CM_TYPEFLAG_LINK) [contexts addObject:@"link"];
+  if (flags & CM_TYPEFLAG_SELECTION) [contexts addObject:@"selection"];
+  if (flags & CM_TYPEFLAG_EDITABLE) [contexts addObject:@"editable"];
+  if (media.length) [contexts addObject:media];
+  if (flags & CM_TYPEFLAG_FRAME) [contexts addObject:@"frame"];
+  if (contexts.count == 1) [contexts addObject:@"page"];
+  return @{
+    @"contexts" : contexts,
+    @"pageUrl" : ToNS(params->GetPageUrl()),
+    @"frameUrl" : ToNS(params->GetFrameUrl()),
+    @"linkUrl" : ToNS(params->GetLinkUrl()),
+    @"srcUrl" : ToNS(params->GetSourceUrl()),
+    @"mediaType" : media,
+    @"selectionText" : ToNS(params->GetSelectionText()),
+    @"editable" : @(params->IsEditable()),
+  };
 }
 
 bool DebugEvents() {
@@ -179,6 +225,155 @@ void BrowserGone() {
   }
 }
 
+// One fetch of kBridgeOrigin by extension code, answered by the shell on
+// the main thread. Never reaches the network.
+class BridgeResourceHandler : public CefResourceHandler {
+ public:
+  BridgeResourceHandler(std::string profile_path,
+                        std::string extension,
+                        int browser_id)
+      : profile_path_(std::move(profile_path)),
+        extension_(std::move(extension)),
+        browser_id_(browser_id) {}
+
+  bool Open(CefRefPtr<CefRequest> request,
+            bool& handle_request,
+            CefRefPtr<CefCallback> callback) override {
+    handle_request = false;
+    std::string url = request->GetURL().ToString();
+    NSString* path = @(url.substr(strlen(kBridgeOrigin)).c_str());
+    std::string body;
+    if (CefRefPtr<CefPostData> post = request->GetPostData()) {
+      CefPostData::ElementVector elements;
+      post->GetElements(elements);
+      for (const auto& element : elements) {
+        size_t size = element->GetBytesCount();
+        std::string chunk(size, '\0');
+        element->GetBytes(size, chunk.data());
+        body += chunk;
+      }
+    }
+    NSString* profile = @(profile_path_.c_str());
+    NSString* extension = @(extension_.c_str());
+    NSString* text = @(body.c_str()) ?: @"";
+    int browser_id = browser_id_;
+    CefRefPtr<BridgeResourceHandler> self(this);
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!g_extension_bridge) {
+        self->data_ = "null";
+        callback->Continue();
+        return;
+      }
+      g_extension_bridge(profile, extension, browser_id, path, text,
+                         ^(NSString* json) {
+        self->data_ = json.UTF8String ?: "null";
+        callback->Continue();
+      });
+    });
+    return true;
+  }
+
+  void GetResponseHeaders(CefRefPtr<CefResponse> response,
+                          int64_t& response_length,
+                          CefString& redirect_url) override {
+    response->SetStatus(200);
+    response->SetMimeType("application/json");
+    response->SetHeaderByName("Access-Control-Allow-Origin", "*", true);
+    response_length = static_cast<int64_t>(data_.size());
+  }
+
+  bool Read(void* data_out,
+            int bytes_to_read,
+            int& bytes_read,
+            CefRefPtr<CefResourceReadCallback> callback) override {
+    size_t left = data_.size() - offset_;
+    bytes_read = static_cast<int>(std::min<size_t>(left, bytes_to_read));
+    memcpy(data_out, data_.data() + offset_, bytes_read);
+    offset_ += bytes_read;
+    return bytes_read > 0;
+  }
+
+  void Cancel() override {}
+
+ private:
+  std::string profile_path_;
+  std::string extension_;
+  int browser_id_;
+  std::string data_;
+  size_t offset_ = 0;
+  IMPLEMENT_REFCOUNTING(BridgeResourceHandler);
+};
+
+class BridgeRequestHandler : public CefResourceRequestHandler {
+ public:
+  BridgeRequestHandler(std::string profile_path, std::string extension)
+      : profile_path_(std::move(profile_path)),
+        extension_(std::move(extension)) {}
+
+  CefRefPtr<CefResourceHandler> GetResourceHandler(
+      CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefFrame> frame,
+      CefRefPtr<CefRequest> request) override {
+    // Service workers' requests have no browser.
+    return new BridgeResourceHandler(profile_path_, extension_,
+                                     browser ? browser->GetIdentifier() : 0);
+  }
+
+ private:
+  std::string profile_path_;
+  std::string extension_;
+  IMPLEMENT_REFCOUNTING(BridgeRequestHandler);
+};
+
+// The handler for a fetch of kBridgeOrigin made by an extension (its
+// origin is |initiator|), or null for any other request.
+CefRefPtr<CefResourceRequestHandler> BridgeHandlerFor(
+    const std::string& profile_path,
+    CefRefPtr<CefRequest> request,
+    const CefString& initiator) {
+  static const std::string kExtensionScheme = "chrome-extension://";
+  std::string origin = initiator.ToString();
+  if (origin.rfind(kExtensionScheme, 0) != 0 ||
+      request->GetURL().ToString().rfind(kBridgeOrigin, 0) != 0) {
+    return nullptr;
+  }
+  return new BridgeRequestHandler(profile_path,
+                                  origin.substr(kExtensionScheme.size()));
+}
+
+// Requests no browser makes, such as extensions' service workers'.
+class ContextHandler : public CefRequestContextHandler {
+ public:
+  explicit ContextHandler(std::string path) : path_(std::move(path)) {}
+
+  CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
+      CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefFrame> frame,
+      CefRefPtr<CefRequest> request,
+      bool is_navigation,
+      bool is_download,
+      const CefString& request_initiator,
+      bool& disable_default_handling) override {
+    return BridgeHandlerFor(path_, request, request_initiator);
+  }
+
+ private:
+  std::string path_;
+  IMPLEMENT_REFCOUNTING(ContextHandler);
+};
+
+// The script a document at |url| gets before its own: ad blocking's for web
+// pages, extension support's for extension pages. Nil for none.
+NSString* DocumentScriptFor(const std::string& url) {
+  if (url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0) {
+    return g_page_script ? g_page_script(@(url.c_str())) : nil;
+  }
+  if (url.rfind("chrome-extension://", 0) == 0) {
+    return g_extension_script ? g_extension_script(@(url.c_str())) : nil;
+  }
+  return nil;
+}
+
 CefRefPtr<CefRequestContext> ContextForPath(const std::string& path) {
   auto it = g_contexts.find(path);
   if (it != g_contexts.end()) {
@@ -188,7 +383,7 @@ CefRefPtr<CefRequestContext> ContextForPath(const std::string& path) {
   CefString(&settings.cache_path) = path;
   settings.persist_session_cookies = true;
   CefRefPtr<CefRequestContext> context =
-      CefRequestContext::CreateContext(settings, nullptr);
+      CefRequestContext::CreateContext(settings, new ContextHandler(path));
   g_contexts[path] = context;
   return context;
 }
@@ -382,7 +577,8 @@ void AppendSwitchesFromEnvironment(CefRefPtr<CefCommandLine> command_line) {
     }
     std::string name = [body substringToIndex:eq.location].UTF8String;
     std::string value = [body substringFromIndex:eq.location + 1].UTF8String;
-    if (name == "enable-features" || name == "disable-features") {
+    if (name == "enable-features" || name == "disable-features" ||
+        name == "load-extension") {
       AppendToListSwitch(command_line, name, value);
     } else if (name == "js-flags" && command_line->HasSwitch("js-flags")) {
       // Repeated --js-flags accumulate; V8 takes them space-separated.
@@ -451,6 +647,16 @@ class BrowserApp : public CefApp {
     AppendDefaultSwitch(command_line, "enable-low-end-device-mode");
     AppendDefaultSwitch(command_line, "js-flags", "--optimize-for-size");
 
+    if (g_pipe_write >= 0) {
+      // Extension support (see shell/app/Extensions.swift): the browser
+      // DevTools connection, and MBGA's helper extension in every profile.
+      command_line->AppendSwitch("remote-debugging-pipe");
+      NSString* helper = [NSBundle.mainBundle.resourcePath
+          stringByAppendingPathComponent:@"extension"];
+      AppendToListSwitch(command_line, "load-extension", helper.UTF8String);
+      AppendToListSwitch(command_line, "disable-features",
+                         "DisableLoadExtensionCommandLineSwitch");
+    }
     AppendSwitchesFromEnvironment(command_line);
 
 #if defined(MBGA_MOCK_KEYCHAIN)
@@ -843,7 +1049,7 @@ class WebClient : public BaseClient,
 
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
     devtools_ = browser->GetHost()->AddDevToolsMessageObserver(this);
-    if (g_page_script) {
+    if (g_page_script || g_extension_script) {
       // Scripts for new documents only run with the Page domain enabled.
       browser->GetHost()->ExecuteDevToolsMethod(0, "Page.enable", nullptr);
     }
@@ -869,6 +1075,11 @@ class WebClient : public BaseClient,
     }
     prepared_url_ = deferred_url_;
     deferred_url_.clear();
+    // Chrome refuses extension pages a web page navigates to.
+    if (prepared_url_.rfind("chrome-extension://", 0) == 0) {
+      browser->GetMainFrame()->LoadURL(prepared_url_);
+      return;
+    }
     // Replacing the blank page keeps it out of the tab's history.
     NSData* json = [NSJSONSerialization
         dataWithJSONObject:@[ @(prepared_url_.c_str()) ]
@@ -1035,11 +1246,11 @@ class WebClient : public BaseClient,
       NSLog(@"load start %s after %.0f ms", url.c_str(),
             (CFAbsoluteTimeGetCurrent() - created_) * 1000);
     }
-    bool web = url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0;
-    NSString* script = g_page_script && web ? g_page_script(@(url.c_str())) : nil;
+    NSString* script = DocumentScriptFor(url);
     if (script.length > 0) {
       frame->ExecuteJavaScript(script.UTF8String, "", 0);
     }
+    bool web = url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0;
     form_token_.clear();
     if (web && !g_form_script.empty()) {
       form_token_ = NSUUID.UUID.UUIDString.UTF8String;
@@ -1160,11 +1371,11 @@ class WebClient : public BaseClient,
   // Returns true if a script was sent for registration.
   bool PrepareNewDocument(CefRefPtr<CefBrowser> browser, const CefString& url) {
     CefURLParts parts;
-    if (!g_page_script || !CefParseURL(url, parts)) {
+    if (!CefParseURL(url, parts)) {
       return false;
     }
     std::string scheme = CefString(&parts.scheme).ToString();
-    if (scheme != "http" && scheme != "https") {
+    if (scheme != "http" && scheme != "https" && scheme != "chrome-extension") {
       return false;
     }
     CefRefPtr<CefBrowserHost> host = browser->GetHost();
@@ -1174,7 +1385,7 @@ class WebClient : public BaseClient,
       stale_adds_.insert(pending_add_);
       pending_add_ = 0;
     }
-    NSString* script = g_page_script(ToNS(url));
+    NSString* script = DocumentScriptFor(url.ToString());
     if (script.length == 0) {
       return false;
     }
@@ -1589,6 +1800,12 @@ class WebClient : public BaseClient,
       bool is_download,
       const CefString& request_initiator,
       bool& disable_default_handling) override {
+    if (CefRefPtr<CefResourceRequestHandler> bridge = BridgeHandlerFor(
+            browser->GetHost()->GetRequestContext()->GetCachePath().ToString(),
+            request,
+            request_initiator)) {
+      return bridge;
+    }
     return g_request_filter && !is_download ? this : nullptr;
   }
 
@@ -1642,7 +1859,63 @@ class WebClient : public BaseClient,
     if (model->GetCount() > 0) {
       model->AddSeparator();
     }
+    AddExtensionItems(params, model);
     model->AddItem(kInspect, "Inspect");
+  }
+
+  void AddExtensionItems(CefRefPtr<CefContextMenuParams> params,
+                         CefRefPtr<CefMenuModel> model) {
+    MBWebView* view = view_;
+    extension_items_.clear();
+    menu_context_ = nil;
+    if (![view.delegate respondsToSelector:@selector(webView:contextMenuItemsFor:)]) {
+      return;
+    }
+    NSDictionary* context = MenuContext(params);
+    NSArray<NSDictionary*>* items =
+        [view.delegate webView:view contextMenuItemsFor:context];
+    if (items.count == 0) {
+      return;
+    }
+    menu_context_ = context;
+    AddItems(items, model);
+    model->AddSeparator();
+  }
+
+  void AddItems(NSArray<NSDictionary*>* items, CefRefPtr<CefMenuModel> model) {
+    int group = 0;
+    NSString* last_type = nil;
+    for (NSDictionary* item in items) {
+      NSString* type = item[@"type"] ?: @"normal";
+      if ([type isEqualToString:@"separator"]) {
+        model->AddSeparator();
+        last_type = type;
+        continue;
+      }
+      int command = kFirstExtensionItem + (int)extension_items_.size();
+      extension_items_.push_back([item[@"id"] UTF8String] ?: "");
+      std::string title = [item[@"title"] UTF8String] ?: "";
+      NSArray* children = item[@"children"];
+      if (children.count) {
+        AddItems(children, model->AddSubMenu(command, title));
+      } else if ([type isEqualToString:@"checkbox"]) {
+        model->AddCheckItem(command, title);
+        model->SetChecked(command, [item[@"checked"] boolValue]);
+      } else if ([type isEqualToString:@"radio"]) {
+        // Radio items next to each other form a group.
+        if (![last_type isEqualToString:@"radio"]) {
+          group++;
+        }
+        model->AddRadioItem(command, title, group);
+        model->SetChecked(command, [item[@"checked"] boolValue]);
+      } else {
+        model->AddItem(command, title);
+      }
+      if (item[@"enabled"] && ![item[@"enabled"] boolValue]) {
+        model->SetEnabled(command, false);
+      }
+      last_type = type;
+    }
   }
 
   bool OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
@@ -1674,13 +1947,26 @@ class WebClient : public BaseClient,
         [view engineShowDevToolsAt:CefPoint(params->GetXCoord(),
                                             params->GetYCoord())];
         return true;
-      default:
-        return false;
+      default: {
+        size_t index = command_id - kFirstExtensionItem;
+        if (command_id < kFirstExtensionItem ||
+            index >= extension_items_.size() || !menu_context_) {
+          return false;
+        }
+        [view.delegate webView:view
+            choseContextMenuItem:@(extension_items_[index].c_str())
+                         context:menu_context_];
+        return true;
+      }
     }
   }
 
  private:
   __weak MBWebView* view_;
+  // Extensions' items in the open page menu, by command, and what it was
+  // opened on.
+  std::vector<std::string> extension_items_;
+  NSDictionary* menu_context_ = nil;
   // Keeps the DevTools observer registered.
   CefRefPtr<CefRegistration> devtools_;
   // The page script registered for new documents, and requests in flight.
@@ -1902,8 +2188,29 @@ class CookieKeys : public CefCookieVisitor {
   ExtensionsClient::Show(profilePath.UTF8String, url.UTF8String);
 }
 
++ (void)setExtensionBridge:(MBExtensionBridge)bridge
+              pageScript:(MBPageScript)script {
+  g_extension_bridge = bridge;
+  g_extension_script = script;
+}
+
++ (void)prepareProfilePath:(NSString*)profilePath {
+  ContextForPath(profilePath.UTF8String);
+}
+
 + (BOOL)isExtensionsPage:(NSString*)url {
   return IsExtensionsPage(url.UTF8String);
+}
+
++ (BOOL)isExtensionsWindow:(NSWindow*)window {
+  for (const CefRefPtr<CefBrowser>& browser : g_auxiliary) {
+    NSView* view = (__bridge NSView*)browser->GetHost()->GetWindowHandle();
+    if (view.window == window &&
+        browser->GetHost()->GetRuntimeStyle() == CEF_RUNTIME_STYLE_CHROME) {
+      return YES;
+    }
+  }
+  return NO;
 }
 
 + (BOOL)performChromeCommand:(MBChromeCommand)command {
@@ -2059,6 +2366,77 @@ class CookieKeys : public CefCookieVisitor {
 #endif
 }
 
++ (BOOL)claimDevToolsPipe {
+  // Both descriptors must be free: claimed before anything else opens a
+  // file, they're ours for the life of the process.
+  if (fcntl(3, F_GETFD) != -1 || fcntl(4, F_GETFD) != -1) {
+    return NO;
+  }
+  int to_browser[2], from_browser[2];
+  if (pipe(to_browser) != 0 || pipe(from_browser) != 0) {
+    return NO;
+  }
+  // Our ends move out of the way first: pipe() itself may have handed out
+  // 3 and 4.
+  g_pipe_write = fcntl(to_browser[1], F_DUPFD_CLOEXEC, 10);
+  g_pipe_read = fcntl(from_browser[0], F_DUPFD_CLOEXEC, 10);
+  int browser_read = fcntl(to_browser[0], F_DUPFD, 10);
+  int browser_write = fcntl(from_browser[1], F_DUPFD, 10);
+  for (int fd : {to_browser[0], to_browser[1], from_browser[0], from_browser[1]}) {
+    close(fd);
+  }
+  dup2(browser_read, 3);
+  dup2(browser_write, 4);
+  close(browser_read);
+  close(browser_write);
+  // Messages end with a NUL byte.
+  int fd = g_pipe_read;
+  [NSThread detachNewThreadWithBlock:^{
+    std::string buffer;
+    char chunk[65536];
+    ssize_t n;
+    while ((n = read(fd, chunk, sizeof chunk)) > 0) {
+      buffer.append(chunk, n);
+      size_t end;
+      while ((end = buffer.find('\0')) != std::string::npos) {
+        NSString* message = [[NSString alloc] initWithBytes:buffer.data()
+                                                     length:end
+                                                   encoding:NSUTF8StringEncoding];
+        buffer.erase(0, end + 1);
+        dispatch_async(dispatch_get_main_queue(), ^{
+          if (g_pipe_handler && message) {
+            g_pipe_handler(message);
+          }
+        });
+      }
+    }
+  }];
+  return YES;
+}
+
++ (void)setBrowserDevToolsHandler:(void (^)(NSString*))handler {
+  g_pipe_handler = handler;
+}
+
++ (void)sendBrowserDevToolsMessage:(NSString*)json {
+  if (g_pipe_write < 0) {
+    return;
+  }
+  NSData* data = [json dataUsingEncoding:NSUTF8StringEncoding];
+  NSMutableData* framed = [data mutableCopy];
+  [framed appendBytes:"" length:1];
+  const char* bytes = (const char*)framed.bytes;
+  size_t left = framed.length;
+  while (left > 0) {
+    ssize_t n = write(g_pipe_write, bytes, left);
+    if (n <= 0) {
+      return;
+    }
+    bytes += n;
+    left -= n;
+  }
+}
+
 + (BOOL)startWithArgc:(int)argc
                     argv:(char**)argv
            rootCachePath:(NSString*)rootCachePath
@@ -2181,7 +2559,11 @@ class CookieKeys : public CefCookieVisitor {
   // (the request can't go out meanwhile), so only pages with scriptlets do;
   // hiding rules arrive as the page starts loading.
   bool web = [url hasPrefix:@"https://"] || [url hasPrefix:@"http://"];
-  if (g_page_script && web && (!g_early_script || g_early_script(url))) {
+  // Extension pages always wait: their script answers the extension APIs
+  // they call first thing.
+  bool extension = [url hasPrefix:@"chrome-extension://"];
+  if ((g_page_script && web && (!g_early_script || g_early_script(url))) ||
+      (g_extension_script && extension)) {
     _client->DeferFirstLoad(start);
     start = "about:blank";
   }
@@ -2671,6 +3053,10 @@ class CookieKeys : public CefCookieVisitor {
 }
 
 // Engine callbacks.
+
+- (int)browserIdentifier {
+  return _browser ? _browser->GetIdentifier() : 0;
+}
 
 - (void)engineDidCreateBrowser:(CefRefPtr<CefBrowser>)browser {
   _browser = browser;

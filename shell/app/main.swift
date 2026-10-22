@@ -1,5 +1,8 @@
 import AppKit
 
+// Before anything opens a file: the descriptors it needs must be free.
+let hasBrowserDevTools = MBEngine.claimDevToolsPipe()
+
 // MBGA_DATA_DIR keeps benchmarks and experiments away from real browsing data.
 let dataDirectory = ProcessInfo.processInfo.environment["MBGA_DATA_DIR"]
     .map { URL(fileURLWithPath: $0, isDirectory: true) }

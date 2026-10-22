@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "MBGA",
+  "description": "Lets your extensions see MBGA's tabs. Part of MBGA; it reads which tab is which, nothing else.",
+  "version": "1",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAl9awq/YKSvTI2SiXk/7buevvV4RG+t2QAJ6mCxXcB2ohgxZcmjzIWNQur889ifxoL0j4wsZRB/IALcaJT0YB+xNr8K6KfigqntWU1+MZBgZAIDrJbN7pwKMwCL1RtaYcdNPW8X6b3SGpaur6q9UiSO4KF2Fq1uztKmc0nfBHyM3mQzFxqJ4HAyjRQ/GvPMIFRqqBY+Z6OTccLXjP2zyCodklHgMFABWkqk3VBYFLuPszVX21WYD8yY3YJ4YuV+moCEV6nH9G+n14w2cI6OD/Y7OOSQO+faqBrsERKK3Wcn2RaEAj1MT0ypNn+40rzN8gtwArVHKPJ78z6ieHvTkctwIDAQAB",
+  "minimum_chrome_version": "120",
+  "permissions": ["debugger"],
+  "background": {"service_worker": "helper.js"}
+}

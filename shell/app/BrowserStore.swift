@@ -70,6 +70,8 @@ enum StoreChange {
     case inspector
     /// The visible tab went on or off screen in another window.
     case elsewhere
+    /// Extensions were installed or removed, or changed their buttons.
+    case extensions
 }
 
 /// A network request, kept for agents (`mbga network`).
@@ -241,6 +243,16 @@ final class BrowserStore: NSObject {
         }
     }
 
+    /// Chrome extensions in MBGA's tabs.
+    private(set) lazy var extensions: ExtensionHost = {
+        let host = ExtensionHost(store: self, devTools: BrowserDevTools(available: hasBrowserDevTools), dataDirectory: dataDirectory)
+        host.onChange = { [weak self] in self?.changed(.extensions) }
+        host.onOpenPopup = { [weak self] key in self?.runExtensionAction(key, from: nil) }
+        return host
+    }()
+    /// The toolbar's extension buttons, which popups open beside.
+    weak var extensionButtons: ExtensionButtonsView?
+
     let pager = PagerModel()
     let webContainer = WebContainerView()
     weak var window: NSWindow?
@@ -251,8 +263,8 @@ final class BrowserStore: NSObject {
 
     var isDragging: Bool { draggingItem != nil }
 
-    private var views: [UInt64: MBWebView] = [:]
-    private var navStates: [UInt64: NavState] = [:]
+    private(set) var views: [UInt64: MBWebView] = [:]
+    private(set) var navStates: [UInt64: NavState] = [:]
     private var refreshPending = false
     private var persistTimer: Timer?
     private var toastTimer: Timer?
@@ -1109,6 +1121,14 @@ final class BrowserStore: NSObject {
         MBEngine.showExtensions(forProfilePath: core.profileDir(profileId: activeSpace.profileId), url: url)
     }
 
+    /// Runs an extension's toolbar button for the visible tab: its popup,
+    /// beside `anchor` (or its button), or its click event.
+    func runExtensionAction(_ key: ExtensionHost.Key, from anchor: NSView?) {
+        guard let tab = visibleTabID, let popup = extensions.clickAction(key, tab: tab) else { return }
+        guard let anchor = anchor ?? extensionButtons?.anchor(for: key.extensionID) ?? window?.contentView else { return }
+        ExtensionPopup.show(url: popup, profilePath: key.profile, from: anchor, store: self)
+    }
+
     // MARK: - Process model
 
     var strictSiteIsolation: Bool { snapshot.strictSiteIsolation }
@@ -1707,6 +1727,7 @@ extension BrowserStore: MBWebViewDelegate {
             // A new page starts a new console.
             if loading, navStates[view.tabID]?.isLoading != true { consoleLogs[view.tabID] = nil }
             let state = NavState(isLoading: loading, canGoBack: canGoBack, canGoForward: canGoForward)
+            if navStates[view.tabID]?.isLoading != loading { extensions.setNeedsSync() }
             navStates[view.tabID] = state
             if view.tabID == visibleTabID { nav = state }
         }
@@ -1773,6 +1794,22 @@ extension BrowserStore: MBWebViewDelegate {
                 core.updateTab(id: view.tabID, url: page, title: nil)
                 setNeedsRefresh()
             }
+        }
+    }
+
+    nonisolated func webView(_ view: MBWebView, contextMenuItemsFor context: [AnyHashable: Any]) -> [[AnyHashable: Any]] {
+        MainActor.assumeIsolated {
+            guard isCurrent(view), let profile = core.profileOfTab(tabId: view.tabID) else { return [] }
+            let context = context as? [String: Any] ?? [:]
+            return extensions.pageMenuItems(profile: extensions.profilePath(profile), context: context)
+        }
+    }
+
+    nonisolated func webView(_ view: MBWebView, choseContextMenuItem itemID: String, context: [AnyHashable: Any]) {
+        MainActor.assumeIsolated {
+            guard isCurrent(view), let profile = core.profileOfTab(tabId: view.tabID) else { return }
+            extensions.choosePageMenuItem(itemID, context: context as? [String: Any] ?? [:],
+                                          profile: extensions.profilePath(profile), tab: view.tabID)
         }
     }
 
