@@ -114,6 +114,7 @@ fixed set of sites. Put the before and after numbers in the pull request.
 
 ### Keep it focused
 
+- Base the branch on `dev` and open the pull request against `dev`.
 - One feature or fix per pull request, and one commit per feature or fix.
 - Explain the problem and why the change fixes it.
 - Check whether MBGA already does it.
@@ -137,18 +138,44 @@ English, for example:
 
 The body explains why and how.
 
-## Releases
+## Branches and releases
 
-Releases are made by the maintainer. For reference: `scripts/build.sh
---release` builds a copy that updates itself, and `scripts/release.sh`
-publishes the version set in `CMakeLists.txt` (`MBGA_VERSION`). It signs the
-archive with the release key from the keychain and creates the GitHub
-release that every installed copy picks up.
+- `dev` is where work lands. Open pull requests against `dev`.
+- `main` always matches the latest release.
+
+To release, run the **Release** workflow (Actions ▸ Release ▸ Run workflow)
+from `dev` and choose which part of the version to raise. It:
+
+1. sets `MBGA_VERSION` in `CMakeLists.txt` to the version after the latest
+   tag (`scripts/bump-version.sh`) and commits it to `dev`,
+2. builds, signs and notarizes the app, then publishes the GitHub release
+   with its tag, which every installed copy picks up (`scripts/release.sh`),
+3. merges the release into `main`.
+
+For a hotfix, branch from `main`, merge the fix into `main` and run the
+workflow from `main`. The release is then merged back into `dev`. If that
+merge conflicts, the workflow fails after publishing; merge the tag into
+`dev` by hand.
+
+If a release fails before publishing, run the workflow again: it finds the
+version raised already and doesn't raise it twice.
+
+The workflow needs these repository secrets:
+
+| Secret | What it holds |
+| --- | --- |
+| `MBGA_UPDATE_KEY` | The update signing key (`security find-generic-password -s "MBGA update signing key" -a mbga -w`). Copies only accept updates signed with it. |
+| `APPLE_DEVELOPMENT_P12`, `APPLE_DEVELOPMENT_P12_PASSWORD` | The Apple Development certificate and its private key, exported from Keychain Access as a .p12 and base64-encoded, with its password. |
+| `ASC_KEY_P8`, `ASC_KEY_ID`, `ASC_ISSUER_ID` | An App Store Connect API key with the Admin role, which lets Xcode sign with the cloud-managed Developer ID and notarize. |
+
+`scripts/release.sh` also runs on a Mac signed into Xcode with the team's
+account, using the keys in your keychain:
 
 - Generate a release key with `swift scripts/update-signing.swift generate`,
   store the private half as "MBGA update signing key" in your keychain and
   put the public half in `MBGA_UPDATE_PUBLIC_KEY`.
-- To try an update without publishing one, point a build at a local feed:
+- `scripts/build.sh --release` builds a copy that updates itself. To try an
+  update without publishing one, point a build at a local feed:
   `MBGA_UPDATE_FEED=file:///path/to/update.json`.
 - The app is signed with an Apple Development identity and the hardened
   runtime, then Xcode signs it with the team's cloud-managed Developer ID and
