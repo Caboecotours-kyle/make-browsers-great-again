@@ -28,6 +28,10 @@ pub struct Tab {
     pub pinned_url: Option<String>,
     #[serde(default)]
     pub last_active_ms: u64,
+    /// The person chose to keep this tab loaded: it is never put to sleep,
+    /// frozen or archived, and loads at launch.
+    #[serde(default)]
+    pub always_awake: bool,
     /// A web view currently exists for this tab. Never persisted: every tab
     /// starts asleep and is loaded on first activation.
     #[serde(skip)]
@@ -480,6 +484,7 @@ impl State {
                 favicon: None,
                 pinned_url: None,
                 last_active_ms: now,
+                always_awake: false,
                 live: false,
                 audible: false,
                 frozen: false,
@@ -805,7 +810,7 @@ impl State {
             .filter(|id| Some(*id) != visible)
             .filter(|id| {
                 self.tabs.get(id).is_some_and(|t| {
-                    !t.audible && !self.keeps_awake(&t.url) && now.saturating_sub(t.last_active_ms) >= after_ms
+                    !t.audible && !self.stays_awake(t) && now.saturating_sub(t.last_active_ms) >= after_ms
                 })
             })
             .collect()
@@ -1002,6 +1007,7 @@ impl State {
             if t.live
                 && !t.frozen
                 && !t.audible
+                && !t.always_awake
                 && !keep_awake.contains(&site_of(&t.url))
                 && !elsewhere.contains(&id)
                 && Some(id) != visible
@@ -1051,6 +1057,25 @@ impl State {
         self.keep_awake.contains(&site_of(url))
     }
 
+    /// The tab, or its site, is exempt from sleeping, freezing and archiving.
+    pub fn stays_awake(&self, t: &Tab) -> bool {
+        t.always_awake || self.keeps_awake(&t.url)
+    }
+
+    /// Keeps one tab loaded whatever the policy, or lets it sleep again.
+    pub fn set_always_awake(&mut self, id: Id, awake: bool) {
+        if let Some(t) = self.tabs.get_mut(&id) {
+            t.always_awake = awake;
+        }
+    }
+
+    /// Tabs the person chose to keep loaded, for the shell to load at launch.
+    pub fn always_awake_tabs(&self) -> Vec<Id> {
+        let mut ids: Vec<Id> = self.tabs.values().filter(|t| t.always_awake && !t.url.is_empty()).map(|t| t.id).collect();
+        ids.sort();
+        ids
+    }
+
     /// Exempts the site of `url` from sleeping and freezing, or stops doing so.
     pub fn set_keep_awake(&mut self, url: &str, keep: bool) {
         let site = site_of(url);
@@ -1096,7 +1121,7 @@ impl State {
         let mut sleepers = Vec::new();
         let mut remaining = live.len();
         for t in live {
-            if t.audible || self.keeps_awake(&t.url) {
+            if t.audible || self.stays_awake(t) {
                 continue;
             }
             let idle = now.saturating_sub(t.last_used_ms()) >= timeout_ms;

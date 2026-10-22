@@ -350,6 +350,28 @@ fn kept_awake_sites_never_sleep_or_freeze() {
 }
 
 #[test]
+fn tabs_kept_always_awake_never_sleep_freeze_or_archive() {
+    let hour = 3_600_000;
+    let mut s = State::new_default();
+    let sp = home(&s);
+    let kept = s.open_tab(sp, "https://news.example.com/a", false, 0).unwrap();
+    let other = s.open_tab(sp, "https://news.example.com/b", false, 0).unwrap();
+    let visible = s.open_tab(sp, "https://other.example.com", true, 0).unwrap();
+    for id in [kept, other, visible] {
+        s.set_live(id, true, 0);
+    }
+    s.set_always_awake(kept, true);
+    assert_eq!(s.always_awake_tabs(), vec![kept]);
+    assert_eq!(s.collect_freezers(30 * hour), vec![other]);
+    assert_eq!(s.idle_today(sp, 24, 30 * hour), vec![other]);
+    assert_eq!(s.collect_sleepers(30 * hour, Pressure::Critical), vec![other]);
+    let saved: State = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+    assert!(saved.tabs[&kept].always_awake, "the choice is saved");
+    s.set_always_awake(kept, false);
+    assert_eq!(s.collect_sleepers(30 * hour, Pressure::Critical), vec![kept]);
+}
+
+#[test]
 fn site_of_strips_www_port_and_user() {
     assert_eq!(model::site_of("https://user:pw@WWW.Example.com:8080/a?b"), "example.com");
     assert_eq!(model::site_of("about:blank"), "");

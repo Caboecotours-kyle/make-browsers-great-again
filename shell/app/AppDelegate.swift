@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         store.refresh()
         store.updateCleanupOffer()
         store.warmOtherSpaces()
+        store.wakeAlwaysAwakeTabs()
         window.makeKeyAndOrderFront(nil)
         // MBGA_DEBUG_LITTLE_WINDOW pops the visible tab out at launch, for
         // screenshots of little windows.

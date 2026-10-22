@@ -22,6 +22,7 @@ enum Menus {
             }
         }
         menu.addItem(.separator())
+        menu.add("Keep Tab Always Awake", state: tab.alwaysAwake) { store.setAlwaysAwake(!tab.alwaysAwake, for: tab.id) }
         if let site = tab.site {
             menu.add("Keep \(site) Awake", state: tab.keepAwake) { store.setKeepAwake(!tab.keepAwake, for: tab) }
             if store.blockAds {

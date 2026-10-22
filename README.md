@@ -81,8 +81,11 @@ events back. Nothing in the UI layer keeps browser state of its own.
   open in a tab. Manifest V2 extensions (classic uBlock Origin) no longer
   load in Chromium; uBlock Origin Lite does.
 - **Media**: a tab playing sound shows an equaliser, and out of sight a mini
-  player at the bottom of the sidebar. Right-click a tab to keep its site awake (never
-  slept or frozen) or to put it to sleep now.
+  player at the bottom of the sidebar. Right-click a tab to choose how it
+  sleeps: Keep Tab Always Awake keeps that one tab loaded (never slept,
+  frozen or archived, and loaded at launch), Keep <site> Awake does the same
+  for every tab of its site, and Sleep Tab unloads it now. Tabs left alone
+  sleep by the policy below.
 - **Look**: the page sits in a card whose corners follow the window's; space
   colors are a calm wash that fades when the window is inactive (View ▸
   Sidebar Colour: Vivid, Calm or Neutral, or Match Page Colour to take each

@@ -630,6 +630,10 @@ struct CommandAction {
                     store.setAdsAllowed(!tab.adsAllowed, for: tab)
                 })
             }
+            list.append(CommandAction(id: "tab-awake", title: tab.alwaysAwake ? "Let This Tab Sleep" : "Keep This Tab Always Awake",
+                                      symbol: tab.alwaysAwake ? "moon.zzz" : "sun.max", keywords: ["sleep", "awake", "live", "unload"]) {
+                store.setAlwaysAwake(!tab.alwaysAwake, for: tab.id)
+            })
             if let site = tab.site {
                 list.append(CommandAction(id: "awake", title: tab.keepAwake ? "Let \(site) Sleep" : "Keep \(site) Awake",
                                           symbol: tab.keepAwake ? "moon.zzz" : "sun.max", keywords: ["sleep", "awake"]) {

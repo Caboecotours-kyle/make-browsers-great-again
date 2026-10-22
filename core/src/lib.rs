@@ -30,6 +30,8 @@ pub struct TabInfo {
     pub frozen: bool,
     /// The tab's site is exempt from sleeping and freezing.
     pub keep_awake: bool,
+    /// The person chose to keep this one tab loaded (see `set_always_awake`).
+    pub always_awake: bool,
     /// Ads and trackers are allowed on the tab's site.
     pub ads_allowed: bool,
 }
@@ -400,6 +402,7 @@ fn tab_info(s: &State, t: &Tab) -> TabInfo {
         audible: t.audible,
         frozen: t.frozen,
         keep_awake: s.keeps_awake(&t.url),
+        always_awake: t.always_awake,
         ads_allowed: s.allows_ads(&t.url),
     }
 }
@@ -869,6 +872,17 @@ impl BrowserCore {
     /// Exempts the site of `url` from sleeping and freezing, or stops doing so.
     pub fn set_keep_awake(&self, url: String, keep: bool) {
         self.mutate(|s, _| s.set_keep_awake(&url, keep))
+    }
+
+    /// Keeps one tab loaded whatever the sleep policy: never put to sleep,
+    /// frozen or archived, and loaded at launch. Or lets it sleep again.
+    pub fn set_always_awake(&self, id: u64, awake: bool) {
+        self.mutate(|s, _| s.set_always_awake(id, awake))
+    }
+
+    /// Tabs kept always awake, which the shell loads at launch.
+    pub fn always_awake_tabs(&self) -> Vec<u64> {
+        self.lock().state.always_awake_tabs()
     }
 
     // ------------------------------------------------------------ blocking

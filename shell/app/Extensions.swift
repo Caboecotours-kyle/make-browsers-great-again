@@ -1142,7 +1142,7 @@ final class ExtensionHost {
         var object: [String: Any] = [
             "id": id, "windowId": window, "index": index,
             "active": active, "highlighted": active, "selected": active, "pinned": pinned,
-            "audible": tab.audible, "discarded": view == nil, "autoDiscardable": !tab.keepAwake, "frozen": tab.frozen,
+            "audible": tab.audible, "discarded": view == nil, "autoDiscardable": !(tab.keepAwake || tab.alwaysAwake), "frozen": tab.frozen,
             "mutedInfo": ["muted": false], "groupId": -1, "incognito": false,
             "url": tab.url, "title": tab.title, "status": view == nil ? "unloaded" : loading ? "loading" : "complete",
         ]

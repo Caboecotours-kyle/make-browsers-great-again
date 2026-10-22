@@ -633,6 +633,31 @@ final class BrowserStore: NSObject {
         refresh()
     }
 
+    /// Keeps one tab loaded whatever the sleep policy, or lets it sleep
+    /// again. A tab kept awake loads now if it was asleep, and runs again if
+    /// it was frozen.
+    func setAlwaysAwake(_ awake: Bool, for tabID: UInt64) {
+        core.setAlwaysAwake(id: tabID, awake: awake)
+        if awake {
+            if let holder = Self.holder(of: tabID) {
+                if core.thaw(id: tabID) { holder.views[tabID]?.setFrozen(false) }
+            } else {
+                warmTab(tabID)
+            }
+        }
+        refresh()
+    }
+
+    /// Loads the tabs kept always awake, after launch.
+    func wakeAlwaysAwakeTabs() {
+        for (n, id) in core.alwaysAwakeTabs().enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5 + Double(n) * 0.5) { [weak self] in
+                guard let self, Self.holder(of: id) == nil else { return }
+                self.warmTab(id)
+            }
+        }
+    }
+
     func addFavorite(_ tabID: UInt64) {
         destroyViews(core.addFavorite(id: tabID))
         refresh()
