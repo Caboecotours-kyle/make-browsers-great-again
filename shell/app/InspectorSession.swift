@@ -124,7 +124,6 @@ final class InspectorSession {
         tabID = view.tabID
         self.view = view
         view.forwardsDevToolsEvents = true
-        view.picksForInspector = true
         on("Page.frameNavigated", self) { [weak self] _, params in
             guard let self, let frame = params.obj("frame"), frame["parentId"] == nil else { return }
             url = frame.str("url") ?? url
@@ -162,7 +161,6 @@ final class InspectorSession {
         for id in order.reversed() { models[id]?.stop() }
         call("Runtime.disable")
         view?.forwardsDevToolsEvents = false
-        view?.picksForInspector = false
     }
 
     /// The panel model of `type` for this tab, started on first use.
@@ -211,6 +209,16 @@ final class InspectorSession {
     func revealNode(backendNodeID: Int) {
         showPanel?(.elements)
         model(ElementsModel.self).reveal(backendNodeID: backendNodeID)
+    }
+
+    /// Selects the element at `point`, in CSS pixels, in Elements.
+    func inspect(at point: NSPoint) {
+        showPanel?(.elements)
+        _ = model(ElementsModel.self)
+        call("DOM.getNodeForLocation", ["x": Int(point.x), "y": Int(point.y), "ignorePointerEventsNone": true]) { [weak self] result, _ in
+            guard let self, let id = result?.int("backendNodeId") else { return }
+            revealNode(backendNodeID: id)
+        }
     }
 
     /// The main frame's default context, where the console evaluates.

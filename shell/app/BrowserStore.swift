@@ -373,6 +373,7 @@ final class BrowserStore: NSObject {
         let url = tab.url.isEmpty ? "about:blank" : tab.url
         let view = MBWebView(url: url, profilePath: core.profileDir(profileId: profile), tabID: tab.id)
         view.delegate = self
+        view.picksForInspector = !DeveloperSettings.usesChromeDevTools
         // A tab put to sleep wakes with the emulations it had.
         if let state = devStates[tab.id] { view.apply(state) }
         views[tab.id] = view
@@ -655,6 +656,14 @@ final class BrowserStore: NSObject {
     }
 
     // MARK: - Inspector
+
+    /// Settings switched between MBGA's inspector and Chrome's DevTools.
+    func devToolsChoiceChanged() {
+        let shell = !DeveloperSettings.usesChromeDevTools
+        for view in views.values { view.picksForInspector = shell }
+        if !shell { closeInspector() }
+        changed(.developer)
+    }
 
     func toggleInspector() {
         if inspectorOpen { closeInspector() } else { showInspector(nil) }
@@ -1594,9 +1603,23 @@ extension BrowserStore: MBWebViewDelegate {
 
     nonisolated func webView(_ view: MBWebView, didPickNode backendNodeId: Int) {
         MainActor.assumeIsolated {
-            guard isCurrent(view), let session = inspectorSessions[view.tabID] else { return }
+            guard let session = inspectorSession(showingFor: view) else { return }
             session.revealNode(backendNodeID: backendNodeId)
         }
+    }
+
+    nonisolated func webView(_ view: MBWebView, inspectsElementAt point: NSPoint) {
+        MainActor.assumeIsolated {
+            guard let session = inspectorSession(showingFor: view) else { return }
+            session.inspect(at: point)
+        }
+    }
+
+    /// Opens the inspector at Elements for the tab of `view`, if it's shown.
+    private func inspectorSession(showingFor view: MBWebView) -> InspectorSession? {
+        guard isCurrent(view), view.tabID == visibleTabID else { return nil }
+        showInspector(.elements)
+        return inspectorSessions[view.tabID]
     }
 
     nonisolated func webViewDidChangeDevTools(_ view: MBWebView) {

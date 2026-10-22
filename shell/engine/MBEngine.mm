@@ -56,6 +56,7 @@
 - (void)engineNetworkEvent:(NSString*)method params:(NSDictionary*)params;
 - (void)engineDevToolsEvent:(NSString*)method params:(NSDictionary*)params;
 - (void)engineDidPickNode:(int)backendNodeId;
+- (void)engineInspectAt:(NSPoint)point;
 @end
 
 namespace {
@@ -1512,6 +1513,13 @@ class WebClient : public BaseClient,
               forType:NSPasteboardTypeString];
         return true;
       case kInspect:
+        if (inspector_picks_) {
+          // The shell's inspector finds the element; it wants CSS pixels.
+          double zoom = pow(1.2, browser->GetHost()->GetZoomLevel());
+          [view engineInspectAt:NSMakePoint(params->GetXCoord() / zoom,
+                                            params->GetYCoord() / zoom)];
+          return true;
+        }
         [view engineShowDevToolsAt:CefPoint(params->GetXCoord(),
                                             params->GetYCoord())];
         return true;
@@ -2377,6 +2385,10 @@ class CookieKeys : public CefCookieVisitor {
 
 - (void)engineDidPickNode:(int)backendNodeId {
   [self.delegate webView:self didPickNode:backendNodeId];
+}
+
+- (void)engineInspectAt:(NSPoint)point {
+  [self.delegate webView:self inspectsElementAt:point];
 }
 
 - (void)focusContent {

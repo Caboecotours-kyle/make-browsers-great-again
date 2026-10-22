@@ -80,6 +80,9 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
                      params:(NSDictionary*)params;
 /// The element picked while -picksForInspector is on.
 - (void)webView:(MBWebView*)view didPickNode:(NSInteger)backendNodeId;
+/// "Inspect" from the page's menu while -picksForInspector is on, at a
+/// point in CSS pixels.
+- (void)webView:(MBWebView*)view inspectsElementAt:(NSPoint)point;
 @end
 
 /// A cookie to set, e.g. one imported from another browser. Times are
@@ -218,8 +221,8 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
 /// Sends every DevTools event of the page to the delegate, for the
 /// shell's own developer tools; the Network domain stays on meanwhile.
 @property(nonatomic) BOOL forwardsDevToolsEvents;
-/// Picking an element reports it to the delegate rather than opening
-/// DevTools, and leaves the DOM and Overlay domains on.
+/// Picking an element, and "Inspect" from the page's menu, go to the
+/// delegate rather than opening DevTools.
 @property(nonatomic) BOOL picksForInspector;
 /// Gives keyboard focus to the page.
 - (void)focusContent;

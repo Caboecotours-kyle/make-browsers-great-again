@@ -313,9 +313,10 @@ private final class SettingsPaneController: NSViewController {
             guard let position else { return }
             UserDefaults.standard.set(anchors[position.selectedSegment].rawValue, forKey: DeveloperSettings.anchorKey)
         }
-        let devTools = popUp(["MBGA's sidebar", "Chrome DevTools beside the page", "Chrome DevTools in a window"]) { i in
+        let devTools = popUp(["MBGA's sidebar", "Chrome DevTools beside the page", "Chrome DevTools in a window"]) { [store] i in
             UserDefaults.standard.set(i > 0, forKey: DeveloperSettings.chromeDevToolsKey)
             if i > 0 { UserDefaults.standard.set(i == 2, forKey: DeveloperSettings.devToolsInWindowKey) }
+            store.devToolsChoiceChanged()
         }
         refreshers.append {
             devTools.selectItem(at: !DeveloperSettings.usesChromeDevTools ? 0 : DeveloperSettings.docksDevTools ? 1 : 2)

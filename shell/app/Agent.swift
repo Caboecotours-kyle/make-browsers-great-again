@@ -296,7 +296,7 @@ final class AgentCommands {
         return Self.json(try await cdp(view, method, params, timeout: args.int("timeout").map(Double.init) ?? 5))
     }
 
-    /// `inspector <panel|eval|select|source|row> [arg]`, in test copies
+    /// `inspector <panel|at|eval|select|source|row> [arg]`, in test copies
     /// only: drives the inspector sidebar on the visible tab.
     private func inspectorCommand(_ args: AgentArguments) async throws -> String {
         let action = args[0] ?? ""
@@ -304,6 +304,13 @@ final class AgentCommands {
         if let panel = InspectorPanelKind(rawValue: action) {
             store.showInspector(panel)
             return "showing \(panel.rawValue)"
+        }
+        // As if "Inspect" were chosen at a point of the page, in CSS pixels.
+        if action == "at" {
+            let view = try await page(try target(args))
+            let point = rest.split(separator: " ").compactMap { Double($0) }
+            store.webView(view, inspectsElementAt: NSPoint(x: point.first ?? 0, y: point.last ?? 0))
+            return "ok"
         }
         guard let session = store.inspectorSession else { throw AgentError("The inspector isn't open on a tab.") }
         switch action {
