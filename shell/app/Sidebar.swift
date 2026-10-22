@@ -286,15 +286,16 @@ private final class AddressPillView: HoverView {
 // MARK: - Favorites
 
 /// Favorites belong to the profile, so every space using it shows the same
-/// grid: four columns of tiles, reorderable by dragging.
+/// grid of tiles, reorderable by dragging. Up to four share a row, and fewer
+/// than four stretch to fill it, as in Arc.
 private final class FavoritesGridView: FlippedView {
     private let store: BrowserStore
     private var tiles: [FavoriteTileView] = []
     private let caret = CALayer()
     private let hint = DropHintCellView()
     private var dropIndex: Int?
-    private let columns = 4
-    private let tileHeight: CGFloat = 42
+    private let maxColumns = 4
+    private let tileHeight: CGFloat = 46
     private let spacing: CGFloat = 8
 
     init(store: BrowserStore) {
@@ -314,6 +315,8 @@ private final class FavoritesGridView: FlippedView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     private var space: SpaceInfo { store.activeSpace }
+
+    private var columns: Int { max(1, min(space.favorites.count, maxColumns)) }
 
     func preferredHeight(width: CGFloat) -> CGFloat {
         let count = space.favorites.count
