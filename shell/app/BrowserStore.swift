@@ -1754,6 +1754,12 @@ extension BrowserStore: MBWebViewDelegate {
 
     nonisolated func webView(_ view: MBWebView, requestsNewTabWithURL url: String, foreground: Bool) {
         MainActor.assumeIsolated {
+            // An extension's pages open from its own pages only: from a web
+            // page they'd get the extension's powers on the page's say.
+            if let origin = URL(string: url), origin.scheme == "chrome-extension",
+               core.tab(id: view.tabID).flatMap({ URL(string: $0.url) })?.host != origin.host {
+                return
+            }
             let space = space(owning: view.tabID)?.id ?? activeSpace.id
             // From a window behind, the core's choice is the front window's.
             let id = core.openTab(spaceId: space, url: url, activate: foreground && isFront)

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cerrno>
 #include <cstring>
 #include <fcntl.h>
 #include <unistd.h>
@@ -1321,12 +1322,21 @@ class WebClient : public BaseClient,
       return true;
     }
     if (frame->IsMain() && IsExtensionsPage(request->GetURL().ToString())) {
-      MBWebView* view = view_;
-      NSString* url = ToNS(request->GetURL());
-      NSString* page = ToNS(frame->GetURL());
-      dispatch_async(dispatch_get_main_queue(), ^{
-        [view.delegate webView:view opensExtensionsPage:url fromPage:page];
-      });
+      // Only for the person (a click, or where it redirected), and not over
+      // and over: a page can't keep bringing Chrome's window up.
+      static CFAbsoluteTime last_shown = 0;
+      CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+      std::string current = frame->GetURL().ToString();
+      bool fresh_tab = current.empty() || current == "about:blank";
+      if ((user_gesture || is_redirect || fresh_tab) && now - last_shown > 2) {
+        last_shown = now;
+        MBWebView* view = view_;
+        NSString* url = ToNS(request->GetURL());
+        NSString* page = ToNS(frame->GetURL());
+        dispatch_async(dispatch_get_main_queue(), ^{
+          [view.delegate webView:view opensExtensionsPage:url fromPage:page];
+        });
+      }
       return true;
     }
     if (frame->IsMain()) {
@@ -1808,11 +1818,11 @@ class WebClient : public BaseClient,
       bool is_download,
       const CefString& request_initiator,
       bool& disable_default_handling) override {
-    if (CefRefPtr<CefResourceRequestHandler> bridge = BridgeHandlerFor(
-            browser->GetHost()->GetRequestContext()->GetCachePath().ToString(),
-            request,
-            request_initiator)) {
-      return bridge;
+    if (g_extension_bridge &&
+        request->GetURL().ToString().rfind(kBridgeOrigin, 0) == 0) {
+      return BridgeHandlerFor(
+          browser->GetHost()->GetRequestContext()->GetCachePath().ToString(),
+          request, request_initiator);
     }
     return g_request_filter && !is_download ? this : nullptr;
   }
@@ -2197,7 +2207,7 @@ class CookieKeys : public CefCookieVisitor {
 }
 
 + (void)setExtensionBridge:(MBExtensionBridge)bridge
-              pageScript:(MBPageScript)script {
+              pageScript:(nullable MBPageScript)script {
   g_extension_bridge = bridge;
   g_extension_script = script;
 }
@@ -2381,7 +2391,12 @@ class CookieKeys : public CefCookieVisitor {
     return NO;
   }
   int to_browser[2], from_browser[2];
-  if (pipe(to_browser) != 0 || pipe(from_browser) != 0) {
+  if (pipe(to_browser) != 0) {
+    return NO;
+  }
+  if (pipe(from_browser) != 0) {
+    close(to_browser[0]);
+    close(to_browser[1]);
     return NO;
   }
   // Our ends move out of the way first: pipe() itself may have handed out
@@ -2393,30 +2408,44 @@ class CookieKeys : public CefCookieVisitor {
   for (int fd : {to_browser[0], to_browser[1], from_browser[0], from_browser[1]}) {
     close(fd);
   }
-  dup2(browser_read, 3);
-  dup2(browser_write, 4);
+  bool claimed = g_pipe_write >= 0 && g_pipe_read >= 0 && browser_read >= 0 &&
+                 browser_write >= 0 && dup2(browser_read, 3) == 3 &&
+                 dup2(browser_write, 4) == 4;
   close(browser_read);
   close(browser_write);
+  if (!claimed) {
+    close(g_pipe_write);
+    close(g_pipe_read);
+    close(3);
+    close(4);
+    g_pipe_write = g_pipe_read = -1;
+    return NO;
+  }
   // Messages end with a NUL byte.
   int fd = g_pipe_read;
   [NSThread detachNewThreadWithBlock:^{
     std::string buffer;
     char chunk[65536];
     ssize_t n;
-    while ((n = read(fd, chunk, sizeof chunk)) > 0) {
+    while ((n = read(fd, chunk, sizeof chunk)) > 0 || (n < 0 && errno == EINTR)) {
+      if (n < 0) {
+        continue;
+      }
       buffer.append(chunk, n);
-      size_t end;
-      while ((end = buffer.find('\0')) != std::string::npos) {
-        NSString* message = [[NSString alloc] initWithBytes:buffer.data()
-                                                     length:end
-                                                   encoding:NSUTF8StringEncoding];
-        buffer.erase(0, end + 1);
+      size_t start = 0, end;
+      while ((end = buffer.find('\0', start)) != std::string::npos) {
+        NSString* message =
+            [[NSString alloc] initWithBytes:buffer.data() + start
+                                     length:end - start
+                                   encoding:NSUTF8StringEncoding];
+        start = end + 1;
         dispatch_async(dispatch_get_main_queue(), ^{
           if (g_pipe_handler && message) {
             g_pipe_handler(message);
           }
         });
       }
+      buffer.erase(0, start);
     }
   }];
   return YES;
@@ -2441,6 +2470,9 @@ class CookieKeys : public CefCookieVisitor {
   size_t left = framed.length;
   while (left > 0) {
     ssize_t n = write(g_pipe_write, bytes, left);
+    if (n < 0 && errno == EINTR) {
+      continue;
+    }
     if (n <= 0) {
       return;
     }

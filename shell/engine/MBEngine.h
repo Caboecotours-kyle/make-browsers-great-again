@@ -217,7 +217,7 @@ typedef void (^MBExtensionBridge)(NSString* profilePath,
 /// them), and gives extension pages shown in web views |script| before
 /// their own.
 + (void)setExtensionBridge:(MBExtensionBridge)bridge
-                pageScript:(MBPageScript)script;
+                pageScript:(nullable MBPageScript)script;
 
 /// Sets up the profile at |profilePath| ahead of its first tab, so its
 /// extensions can reach the bridge as soon as they start.

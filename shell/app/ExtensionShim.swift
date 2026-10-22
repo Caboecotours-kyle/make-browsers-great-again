@@ -46,12 +46,21 @@ enum ExtensionShim {
     const ours = id => state.tabs.find(t => t.id === id);
     const ourWindow = id => state.windows.find(w => w.id === id);
 
-    // Promise-or-callback, as Chrome's own functions are.
+    // Promise-or-callback, as Chrome's own functions are: a callback finds
+    // a failure in chrome.runtime.lastError while it runs.
+    const withLastError = (message, callback) => {
+      let set = false;
+      try {
+        Object.defineProperty(chrome.runtime, 'lastError', {value: {message}, configurable: true});
+        set = true;
+      } catch (_) {}
+      try { callback(); } finally { if (set) { try { delete chrome.runtime.lastError; } catch (_) {} } }
+    };
     const api = fn => function (...args) {
       const callback = typeof args[args.length - 1] === 'function' ? args.pop() : null;
       const result = fn.apply(this, args);
       if (!callback) { return result; }
-      result.then(value => callback(value), error => { console.error(error); callback(); });
+      result.then(value => callback(value), error => withLastError(String(error && error.message || error), callback));
     };
 
     const glob = s => new RegExp('^' + s.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$', 'i');
@@ -204,7 +213,8 @@ enum ExtensionShim {
       }));
       define(tabs, 'captureVisibleTab', api(async (...args) => {
         await fresh();
-        const windowId = typeof args[0] === 'number' ? args.shift() : undefined;
+        const windowId = typeof args[0] === 'number' || args[0] === null || args[0] === undefined
+          ? (args.shift() ?? undefined) : undefined;
         const options = args[0] || {};
         if (windowId === undefined || windowId === WINDOW_ID_CURRENT ? !mbgaCurrent() : !ourWindow(windowId)) {
           return real.tabs.captureVisibleTab(windowId, options);
@@ -380,7 +390,10 @@ enum ExtensionShim {
     };
     if (chrome.contextMenus) {
       const menus = chrome.contextMenus;
-      const report = (op, details) => call('menus', Object.assign({op}, details)).catch(() => {});
+      let reports = Promise.resolve();
+      const report = (op, details) => {
+        reports = reports.then(() => call('menus', Object.assign({op}, details))).catch(() => {});
+      };
       const plain = props => {
         const out = {};
         for (const [k, v] of Object.entries(props || {})) { if (typeof v !== 'function') { out[k] = v; } }
@@ -393,9 +406,10 @@ enum ExtensionShim {
         report('create', {id: props.id !== undefined ? props.id : id, props: plain(props)});
         return id;
       });
-      define(menus, 'update', api(async (id, props) => { await update(id, props); report('update', {id, props: plain(props)}); }));
-      define(menus, 'remove', api(async id => { await remove(id); report('remove', {id}); }));
-      define(menus, 'removeAll', api(async () => { await removeAll(); report('removeAll', {}); }));
+      // Told in the order they're called, as Chrome applies them.
+      define(menus, 'update', api(async (id, props) => { report('update', {id, props: plain(props)}); await update(id, props); }));
+      define(menus, 'remove', api(async id => { report('remove', {id}); await remove(id); }));
+      define(menus, 'removeAll', api(async () => { report('removeAll', {}); await removeAll(); }));
     }
 
     // An extension page in one of MBGA's tabs is the one tab MBGA can't

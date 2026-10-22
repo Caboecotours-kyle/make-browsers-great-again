@@ -302,9 +302,19 @@ extension NSColor {
 }
 
 extension InstalledExtension {
+    /// Icons read from disk, by file (each version of an extension has a
+    /// directory of its own).
+    @MainActor private static var icons: [URL: NSImage] = [:]
+
     /// Its icon, or its initial on a tile when it has none, as Chrome shows.
-    func icon(size: Int) -> NSImage? {
-        if let image = iconFile(size: size).flatMap({ NSImage(contentsOf: $0) }) { return image }
+    @MainActor func icon(size: Int) -> NSImage? {
+        if let file = iconFile(size: size) {
+            if let known = Self.icons[file] { return known }
+            if let image = NSImage(contentsOf: file) {
+                Self.icons[file] = image
+                return image
+            }
+        }
         let side = CGFloat(size)
         return NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
             NSColor.secondaryLabelColor.setFill()
