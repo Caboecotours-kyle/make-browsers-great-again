@@ -18,6 +18,8 @@ enum DeveloperSettings {
     static let everywhereKey = "developerToolbarEverywhere"
     /// The toolbar shrinks to a small pill while the pointer is away.
     static let collapsesKey = "developerToolbarCollapses"
+    /// Shrunk, it's only a small handle rather than the page's status.
+    static let minimizedKey = "developerToolbarMinimized"
     /// Where along the top of the page the toolbar sits.
     static let anchorKey = "developerToolbarAnchor"
     /// DevTools opens in a window of its own instead of beside the page.
@@ -37,6 +39,7 @@ enum DeveloperSettings {
     static var collapses: Bool {
         debug == "expanded" ? false : UserDefaults.standard.object(forKey: collapsesKey) as? Bool ?? true
     }
+    static var minimized: Bool { collapses && UserDefaults.standard.bool(forKey: minimizedKey) }
     static var docksDevTools: Bool { !UserDefaults.standard.bool(forKey: devToolsInWindowKey) }
     static var usesChromeDevTools: Bool { UserDefaults.standard.bool(forKey: chromeDevToolsKey) }
     static var anchor: DevToolbarAnchor {
@@ -528,6 +531,8 @@ final class DevToolbarView: NSView {
         let e = expansion.value
         let width = pill.width(expanded: e)
         let height = pill.height(expanded: e)
+        // The handle sits close to the top edge, the status a little lower.
+        let top = pill.minimized ? 6 + 2 * e : 8
         if !sliding, dragStart == nil {
             position.target = anchorCenter(width: width)
             position.settle()
@@ -537,14 +542,15 @@ final class DevToolbarView: NSView {
         let half = width / 2
         let center = min(max(position.value, half + 8), max(bounds.width - half - 8, half + 8))
         pill.expansion = e
-        pill.frame = NSRect(x: (center - half).rounded(), y: 8 - 6 * (1 - p), width: width.rounded(), height: height)
+        pill.frame = NSRect(x: (center - half).rounded(), y: top - 6 * (1 - p), width: width.rounded(), height: height)
         pill.alphaValue = min(max(p, 0), 1)
     }
 }
 
 /// The pill itself: a piece of the system's Liquid Glass floating over the
 /// page (frosted material before macOS 26). Collapsed it names the page's
-/// server and anything wrong with it; on hover it widens to the tools.
+/// server and anything wrong with it, or minimized it's only a small handle,
+/// red if something is wrong; on hover it widens to the tools.
 @MainActor
 final class DevPillView: HoverView {
     enum DragPhase { case began, moved, ended }
@@ -553,6 +559,9 @@ final class DevPillView: HoverView {
     var onDrag: ((DragPhase, CGFloat) -> Void)?
     var onMenuClosed: (() -> Void)?
     private(set) var menuOpen = false
+    private(set) var minimized = DeveloperSettings.minimized
+    /// Something's wrong with the page: the handle turns red.
+    private var troubled = false
     /// 0 collapsed to the status, 1 with every tool.
     var expansion: CGFloat = 0 {
         didSet { if expansion != oldValue { needsLayout = true } }
@@ -645,6 +654,7 @@ final class DevPillView: HoverView {
     // MARK: Content
 
     func update() {
+        minimized = DeveloperSettings.minimized
         let url = store.visibleTab?.url ?? ""
         let state = store.visibleDevState
         let report = store.visibleDevReport
@@ -664,6 +674,7 @@ final class DevPillView: HoverView {
         time.setIfChanged(!failed && !loading ? report.durationText ?? "" : "")
         time.toolTip = report.durationText.map { "Loaded in \($0)" }
         errors.count = report.errors
+        troubled = (failed && !loading) || report.errors > 0
         warnings.count = report.warnings
         errors.toolTip = "\(report.errors) console error\(report.errors == 1 ? "" : "s"): open Developer Tools"
         warnings.toolTip = "\(report.warnings) console warning\(report.warnings == 1 ? "" : "s"): open Developer Tools"
@@ -700,6 +711,7 @@ final class DevPillView: HoverView {
 
     private static let collapsedHeight: CGFloat = 26
     private static let expandedHeight: CGFloat = 32
+    private static let handleSize = NSSize(width: 40, height: 10)
 
     /// The status end: host, then what's wrong, if anything.
     private var statusWidth: CGFloat {
@@ -714,8 +726,15 @@ final class DevPillView: HoverView {
         return timeWidth + 10 + CGFloat(tools.count) * 28 + CGFloat(tools.count - 1) * 2 + 4
     }
 
-    func width(expanded e: CGFloat) -> CGFloat { statusWidth + 12 * (1 - e) + toolsWidth * e }
-    func height(expanded e: CGFloat) -> CGFloat { Self.collapsedHeight + (Self.expandedHeight - Self.collapsedHeight) * e }
+    func width(expanded e: CGFloat) -> CGFloat {
+        let collapsed = minimized ? Self.handleSize.width : statusWidth + 12
+        return collapsed + (statusWidth + toolsWidth - collapsed) * e
+    }
+
+    func height(expanded e: CGFloat) -> CGFloat {
+        let collapsed = minimized ? Self.handleSize.height : Self.collapsedHeight
+        return collapsed + (Self.expandedHeight - collapsed) * e
+    }
 
     override func layout() {
         super.layout()
@@ -740,8 +759,14 @@ final class DevPillView: HoverView {
         }
         content.frame = glass.bounds
         content.layer?.cornerRadius = radius
+        content.layer?.backgroundColor = minimized && troubled
+            ? NSColor.systemRed.withAlphaComponent(0.8 * (1 - expansion)).cgColor : nil
         CATransaction.commit()
         let mid = bounds.height / 2
+        // The tools come in as the pill widens, and the status too from a
+        // handle.
+        let alpha = min(max((expansion - 0.3) / 0.7, 0), 1)
+        for view in [host, problem, errors, warnings] as [NSView] { view.alphaValue = minimized ? alpha : 1 }
         var x: CGFloat = 12
         let hostWidth = host.textWidth
         host.frame = NSRect(x: x, y: mid - 8, width: hostWidth, height: 16)
@@ -759,8 +784,6 @@ final class DevPillView: HoverView {
             count.frame = NSRect(x: x, y: mid - 10, width: count.preferredWidth, height: 20)
             x += count.preferredWidth
         }
-        // The tools come in as the pill widens.
-        let alpha = min(max((expansion - 0.3) / 0.7, 0), 1)
         time.isHidden = time.stringValue.isEmpty
         if !time.isHidden {
             x += 6
@@ -941,6 +964,11 @@ final class DevPillView: HoverView {
     }
 
     private func hideItems(in menu: NSMenu) {
+        menu.add("Shrink to a Small Handle", state: DeveloperSettings.minimized) {
+            let on = !DeveloperSettings.minimized
+            UserDefaults.standard.set(on, forKey: DeveloperSettings.minimizedKey)
+            if on { UserDefaults.standard.set(true, forKey: DeveloperSettings.collapsesKey) }
+        }
         let hide = menu.add("Hide Toolbar on This Tab") { [store] in store.toggleDeveloperToolbar() }
         hide.keyEquivalent = "d"
         hide.keyEquivalentModifierMask = [.command, .shift]

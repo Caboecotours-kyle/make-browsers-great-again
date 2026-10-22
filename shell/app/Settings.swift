@@ -457,8 +457,9 @@ private final class SettingsPaneController: NSViewController {
         let everywhere = popUp(["Local sites", "Every site"]) { i in
             UserDefaults.standard.set(i == 1, forKey: DeveloperSettings.everywhereKey)
         }
-        let collapses = checkbox("Shrink to the page's status when the pointer is away") { on in
-            UserDefaults.standard.set(on, forKey: DeveloperSettings.collapsesKey)
+        let collapses = popUp(["Stays open", "Shrinks to the page's status", "Shrinks to a small handle"]) { i in
+            UserDefaults.standard.set(i > 0, forKey: DeveloperSettings.collapsesKey)
+            UserDefaults.standard.set(i == 2, forKey: DeveloperSettings.minimizedKey)
         }
         let anchors = DevToolbarAnchor.allCases
         let position = NSSegmentedControl(labels: ["Left", "Centre", "Right"], trackingMode: .selectOne, target: nil, action: nil)
@@ -479,7 +480,7 @@ private final class SettingsPaneController: NSViewController {
             let on = DeveloperSettings.enabled
             enabled.state = on ? .on : .off
             everywhere.selectItem(at: DeveloperSettings.everywhere ? 1 : 0)
-            collapses.state = DeveloperSettings.collapses ? .on : .off
+            collapses.selectItem(at: !DeveloperSettings.collapses ? 0 : DeveloperSettings.minimized ? 2 : 1)
             position.selectedSegment = anchors.firstIndex(of: DeveloperSettings.anchor) ?? 1
             for control in dependents { control.isEnabled = on }
         }
