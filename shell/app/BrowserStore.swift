@@ -106,7 +106,10 @@ struct ConsoleEntry {
 final class BrowserStore: NSObject {
     let core: BrowserCore
     private(set) var snapshot: Snapshot {
-        didSet { changed(.snapshot) }
+        didSet {
+            changed(.snapshot)
+            ExtensionHost.shared?.setNeedsSync()
+        }
     }
     /// How views should animate the snapshot change being reported, if at
     /// all (tidying up, folders opening). Most changes are instant.
@@ -244,12 +247,8 @@ final class BrowserStore: NSObject {
     }
 
     /// Chrome extensions in MBGA's tabs.
-    private(set) lazy var extensions: ExtensionHost = {
-        let host = ExtensionHost(store: self, devTools: BrowserDevTools(available: hasBrowserDevTools), dataDirectory: dataDirectory)
-        host.onChange = { [weak self] in self?.changed(.extensions) }
-        host.onOpenPopup = { [weak self] key in self?.runExtensionAction(key, from: nil) }
-        return host
-    }()
+    /// Chrome extensions in MBGA's tabs, for all windows.
+    var extensions: ExtensionHost { ExtensionHost.shared }
     /// The toolbar's extension buttons, which popups open beside.
     weak var extensionButtons: ExtensionButtonsView?
 
@@ -1325,6 +1324,15 @@ extension BrowserStore {
             core.setLive(id: id, live: false)
         }
         Self.windowsChanged()
+    }
+
+    /// The stores of the open windows.
+    static var windows: [BrowserStore] { open.allObjects }
+
+    /// Extensions changed their buttons or menus, or were installed or
+    /// removed: every window's toolbar shows it.
+    static func extensionsChanged() {
+        for store in open.allObjects { store.changed(.extensions) }
     }
 
     /// The store whose window has the tab's page, if it's loaded.

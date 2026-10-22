@@ -44,8 +44,18 @@ final class ExtensionHost {
     /// MBGA's helper (shell/resources/extension), loaded in every profile.
     static let helperID = "ngnchdgcmeaekolgcekjmpncoaiepoeb"
 
-    private unowned let store: BrowserStore
+    private let core: BrowserCore
     private let devTools: BrowserDevTools
+    /// The store of the window in front, which acts for extensions.
+    private var store: BrowserStore { BrowserStore.front ?? BrowserStore.windows[0] }
+    /// Every loaded page, whichever window has it.
+    private var views: [UInt64: MBWebView] {
+        BrowserStore.windows.reduce(into: [:]) { all, window in all.merge(window.views) { first, _ in first } }
+    }
+    /// Extension window ids of MBGA's windows, by store.
+    private var windowIDs: [ObjectIdentifier: Int] = [:]
+    /// Little windows' ids: one each, by tab.
+    static let littleWindowBase = 1_050_000_000
     private let token = (0..<4).map { _ in String(UInt32.random(in: 0...UInt32.max), radix: 16) }.joined()
     private let savePath: URL
 
@@ -117,8 +127,11 @@ final class ExtensionHost {
         var menus: [Key: [MenuItem]]
     }
 
-    init(store: BrowserStore, devTools: BrowserDevTools, dataDirectory: URL) {
-        self.store = store
+    /// The app's one host, for all windows (see AppDelegate).
+    static var shared: ExtensionHost!
+
+    init(core: BrowserCore, devTools: BrowserDevTools, dataDirectory: URL) {
+        self.core = core
         self.devTools = devTools
         savePath = dataDirectory.appendingPathComponent("extensions.json")
         if let data = try? Data(contentsOf: savePath), let saved = try? JSONDecoder().decode(Saved.self, from: data) {
@@ -137,9 +150,6 @@ final class ExtensionHost {
         // the rest on.
         devTools.send("Target.setDiscoverTargets", ["discover": true, "filter": [["type": "service_worker"]]])
         if withExtensions { watch(waiting: true) }
-        store.observe(self) { [weak self] change in
-            if change == .snapshot { self?.setNeedsSync() }
-        }
         // Extensions' shortcuts, before the page sees the keys (Chrome's
         // window handles its own).
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -203,7 +213,7 @@ final class ExtensionHost {
     /// context: set them all up rather than waiting for their first tab.
     private func prepareProfiles() {
         for profile in store.snapshot.profiles {
-            MBEngine.prepareProfilePath(store.core.profileDir(profileId: profile.id))
+            MBEngine.prepareProfilePath(core.profileDir(profileId: profile.id))
         }
     }
 
@@ -411,8 +421,8 @@ final class ExtensionHost {
             answer(nil)
         case "self":
             // Only a page of this extension, in one of MBGA's tabs, for itself.
-            let page = store.views.first { $0.value.browserIdentifier == browserID }?.key
-            if browserID != 0, let page, store.core.tab(id: page)?.url.hasPrefix("chrome-extension://\(extensionID)/") == true,
+            let page = views.first { $0.value.browserIdentifier == browserID }?.key
+            if browserID != 0, let page, core.tab(id: page)?.url.hasPrefix("chrome-extension://\(extensionID)/") == true,
                let id = (args["id"] as? NSNumber)?.intValue, tabIDs[browserID] != id, !tabIDs.values.contains(id) {
                 tabIDs[browserID] = id
                 setNeedsSync()
@@ -433,13 +443,13 @@ final class ExtensionHost {
             }
         case "tabs.reload":
             if let id = (args["id"] as? NSNumber)?.intValue, let tab = tab(extensionTabID: id, in: profile) {
-                if let view = store.views[tab] { view.reload() } else { store.warmTab(tab) }
+                if let view = views[tab] { view.reload() } else { store.warmTab(tab) }
             }
             answer(nil)
         case "tabs.update":
             if let id = (args["id"] as? NSNumber)?.intValue, let tab = tab(extensionTabID: id, in: profile) {
                 // An asleep tab loads the address when it wakes.
-                if let url = args["url"] as? String, store.views[tab] == nil { store.core.updateTab(id: tab, url: url, title: nil) }
+                if let url = args["url"] as? String, views[tab] == nil { core.updateTab(id: tab, url: url, title: nil) }
                 if let pinned = args["pinned"] as? Bool, pinned != isPinned(tab) { store.togglePin(tab, in: space(of: tab)) }
                 if args["active"] as? Bool == true { store.select(tab, in: space(of: tab)?.id) }
             }
@@ -452,13 +462,15 @@ final class ExtensionHost {
         case "tabs.capture":
             // As in Chrome: with <all_urls>, or activeTab where invoked, of a
             // tab of the extension's profile.
-            guard let tab = store.visibleTabID, let owner = store.core.profileOfTab(tabId: tab), profilePath(owner) == profile,
+            guard let tab = store.visibleTabID, let owner = core.profileOfTab(tabId: tab), profilePath(owner) == profile,
                   installedExtension(key)?.hosts.contains("<all_urls>") == true
-                    || activeTabGrants[key]?[tab] == store.core.tab(id: tab).flatMap({ URL(string: $0.url)?.host }) else { return answer(nil) }
+                    || activeTabGrants[key]?[tab] == core.tab(id: tab).flatMap({ URL(string: $0.url)?.host }) else { return answer(nil) }
             capture(args) { answer($0) }
         case "windows.focus":
+            let id = (args["id"] as? NSNumber)?.intValue
+            let window = BrowserStore.windows.first { windowID(of: $0) == id }?.window ?? store.window
             NSApp.activate()
-            store.window?.makeKeyAndOrderFront(nil)
+            window?.makeKeyAndOrderFront(nil)
             answer(nil)
         case "runtime.openOptionsPage":
             openOptions(key)
@@ -692,7 +704,7 @@ final class ExtensionHost {
     /// The person invoked the extension on `tab`.
     private func grantActiveTab(_ key: Key, tab: UInt64) {
         guard installedExtension(key)?.permissions.contains("activeTab") == true,
-              let host = store.core.tab(id: tab).flatMap({ URL(string: $0.url)?.host }) else { return }
+              let host = core.tab(id: tab).flatMap({ URL(string: $0.url)?.host }) else { return }
         activeTabGrants[key, default: [:]][tab] = host
     }
 
@@ -890,7 +902,7 @@ final class ExtensionHost {
     }
 
     func profilePath(_ profileID: UInt64) -> String {
-        canonicalPath(store.core.profileDir(profileId: profileID))
+        canonicalPath(core.profileDir(profileId: profileID))
     }
 
     private func spaces(in profile: String) -> [SpaceInfo] {
@@ -909,41 +921,44 @@ final class ExtensionHost {
     }
 
     private func liveView(in profile: String) -> MBWebView? {
-        if let tab = store.visibleTabID, let view = store.views[tab], view.browserIdentifier != 0,
-           store.core.profileOfTab(tabId: tab).map(profilePath) == profile { return view }
+        let views = self.views
+        if let tab = store.visibleTabID, let view = views[tab], view.browserIdentifier != 0,
+           core.profileOfTab(tabId: tab).map(profilePath) == profile { return view }
         for space in spaces(in: profile) {
             for tab in space.favorites + space.pinned.compactMap(\.tab) + space.today {
-                if let view = store.views[tab.id], view.browserIdentifier != 0 { return view }
+                if let view = views[tab.id], view.browserIdentifier != 0 { return view }
             }
         }
         return nil
     }
 
-    /// MBGA's tab with this extension tab id.
-    /// The same, only if it's one of `profile`'s tabs.
+    /// MBGA's tab with this extension tab id, only if it's one of
+    /// `profile`'s tabs.
     func tab(extensionTabID id: Int, in profile: String) -> UInt64? {
-        guard let tab = tab(extensionTabID: id), let owner = store.core.profileOfTab(tabId: tab),
+        guard let tab = tab(extensionTabID: id), let owner = core.profileOfTab(tabId: tab),
               profilePath(owner) == profile else { return nil }
         return tab
     }
 
+    /// MBGA's tab with this extension tab id.
     func tab(extensionTabID id: Int) -> UInt64? {
-        if let live = store.views.first(where: { tabIDs[$0.value.browserIdentifier] == id })?.key { return live }
+        if let live = views.first(where: { tabIDs[$0.value.browserIdentifier] == id })?.key { return live }
         guard id <= Self.sleepingIDBase, id > Self.sleepingIDBase - 100_000_000 else { return nil }
         let tab = UInt64(Self.sleepingIDBase - id)
-        return store.core.tab(id: tab) != nil && extensionTabID(of: tab) == nil ? tab : nil
+        return core.tab(id: tab) != nil && extensionTabID(of: tab) == nil ? tab : nil
     }
 
     /// The extension tab id of MBGA's tab, once known.
     func extensionTabID(of tab: UInt64) -> Int? {
-        store.views[tab].flatMap { tabIDs[$0.browserIdentifier] }
+        views[tab].flatMap { tabIDs[$0.browserIdentifier] }
     }
 
     /// Learns the extension tab ids of browsers that don't have one yet,
     /// then calls `done`. Each browser's DevTools target id is matched with
     /// the helper's chrome.debugger.getTargets(), which lists both.
     private func resolveTabIDs(_ done: @escaping () -> Void) {
-        let live = store.views.values.map(\.browserIdentifier).filter { $0 != 0 }
+        let views = self.views
+        let live = views.values.map(\.browserIdentifier).filter { $0 != 0 }
         let liveSet = Set(live)
         tabIDs = tabIDs.filter { liveSet.contains($0.key) }
         targetIDs = targetIDs.filter { liveSet.contains($0.key) }
@@ -973,9 +988,8 @@ final class ExtensionHost {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { [weak self] in self?.setNeedsSync() }
             }
         }
-        let views = store.views.values.filter { missing.contains($0.browserIdentifier) && targetIDs[$0.browserIdentifier] == nil }
         let group = DispatchGroup()
-        for view in views {
+        for view in views.values where missing.contains(view.browserIdentifier) && targetIDs[view.browserIdentifier] == nil {
             group.enter()
             pageTarget(of: view) { _ in group.leave() }
         }
@@ -1032,47 +1046,68 @@ final class ExtensionHost {
         }
     }
 
-    private func windowID(of tab: UInt64) -> Int {
-        store.isInLittleWindow(tab) ? Self.mainWindowID + Int(tab) : Self.mainWindowID
+    /// The extension window id of an MBGA window, kept while it's open.
+    private func windowID(of store: BrowserStore) -> Int {
+        if let known = windowIDs[ObjectIdentifier(store)] { return known }
+        let id = Self.mainWindowID + windowIDs.count
+        windowIDs[ObjectIdentifier(store)] = id
+        return id
     }
 
-    /// The tab active in MBGA's main window for `profile`: the visible one
-    /// when the active space uses that profile, else the current tab of its
-    /// first space that has one.
-    private func activeTab(in profile: String) -> UInt64? {
+    /// The window a tab is in: the one with its page (or its little
+    /// window), else the front one.
+    private func windowID(of tab: UInt64) -> Int {
+        guard let holder = BrowserStore.windows.first(where: { $0.views[tab] != nil }) else { return windowID(of: store) }
+        return holder.isInLittleWindow(tab) ? Self.littleWindowBase + Int(tab) : windowID(of: holder)
+    }
+
+    /// The tab active in a window for `profile`: the one it shows when its
+    /// space uses that profile, else the current tab of the first of its
+    /// spaces that does.
+    private func activeTab(in profile: String, of store: BrowserStore) -> UInt64? {
         let active = store.activeSpace
         if profilePath(active.profileId) == profile, let tab = active.activeTab { return tab }
-        return spaces(in: profile).lazy.compactMap(\.activeTab).first
+        return store.snapshot.spaces.lazy.filter { self.profilePath($0.profileId) == profile }.compactMap(\.activeTab).first
     }
 
-    /// MBGA's main window counts as focused while MBGA is in front, unless
-    /// the extensions window (Chrome's) or a little window has the keyboard:
-    /// a popup or Settings in front of it still leaves it the current one.
-    private var mbgaFocused: Bool {
-        guard let key = lastKeyWindow else { return true }
-        if MBEngine.isExtensionsWindow(key) { return false }
-        return !isLittleWindow(key)
+    /// The window that counts as focused: the last one with the keyboard,
+    /// as in Chrome even while another app is in front. Popups, menus and
+    /// Settings leave it as it was; Chrome's extensions window is none of
+    /// MBGA's.
+    private var focusedWindow: Int? {
+        guard let key = lastKeyWindow else { return windowID(of: store) }
+        if MBEngine.isExtensionsWindow(key) { return nil }
+        if let store = BrowserStore.windows.first(where: { $0.window === key }) { return windowID(of: store) }
+        if let little = views.first(where: { $0.value.window === key && isLittle($0.key) }) { return Self.littleWindowBase + Int(little.key) }
+        return windowID(of: store)
     }
-    /// The window last focused, MBGA's or Chrome's, which "the current
-    /// window" means even while another app is in front, as in Chrome.
     private weak var lastKeyWindow: NSWindow?
 
-    private func isLittleWindow(_ window: NSWindow) -> Bool {
-        store.views.contains { store.isInLittleWindow($0.key) && $0.value.window === window }
+    private func isLittle(_ tab: UInt64) -> Bool {
+        BrowserStore.windows.contains { $0.isInLittleWindow(tab) }
     }
 
     private func state(profile: String, requester: Int32) -> [String: Any] {
         var tabs: [[String: Any]] = []
         var windows: [Int: [String: Any]] = [:]
-        let mainFocused = mbgaFocused && profilePath(store.activeSpace.profileId) == profile
-        let active = activeTab(in: profile)
+        let views = self.views
+        let focused = focusedWindow
+        // Every MBGA window, a tab of any profile can be in it; focused if
+        // it shows a space of this profile.
+        var active: [Int: UInt64] = [:]
+        for window in BrowserStore.windows {
+            let id = windowID(of: window)
+            let shows = profilePath(window.activeSpace.profileId) == profile
+            windows[id] = windowObject(id, host: window.window, focused: shows && focused == id)
+            active[id] = activeTab(in: profile, of: window)
+        }
         var index: [Int: Int] = [:]
         for space in spaces(in: profile) {
             let pinned = Set((space.favorites + space.pinned.compactMap(\.tab)).map(\.id))
             for tab in space.favorites + space.pinned.compactMap(\.tab) + space.today {
-                let known = store.views[tab.id].flatMap { tabIDs[$0.browserIdentifier] }
+                let known = views[tab.id].flatMap { tabIDs[$0.browserIdentifier] }
                 let sleeping = Self.sleepingIDBase - Int(tab.id)
-                var view = store.views[tab.id]
+                var view = views[tab.id]
                 // While its id is looked up, a tab waking stays the tab asleep
                 // it was (replaced once its id is known); one just opened shows
                 // up then, as Chrome's do.
@@ -1082,24 +1117,18 @@ final class ExtensionHost {
                 }
                 let id = known ?? sleeping
                 let window = windowID(of: tab.id)
-                let little = window != Self.mainWindowID
-                let isActive = little || tab.id == active
+                let little = window >= Self.littleWindowBase
                 let position = index[window, default: 0]
                 index[window] = position + 1
                 tabs.append(tabObject(tab, id: id, view: known == nil ? nil : view, window: window, index: position,
-                                      active: isActive, pinned: pinned.contains(tab.id)))
-                if windows[window] == nil {
-                    let host = little ? view?.window : store.window
-                    windows[window] = windowObject(window, host: host, focused: little ? NSApp.isActive && host?.isKeyWindow == true : mainFocused)
+                                      active: little || active[window] == tab.id, pinned: pinned.contains(tab.id)))
+                if little, windows[window] == nil {
+                    windows[window] = windowObject(window, host: views[tab.id]?.window, focused: focused == window)
                 }
             }
         }
-        if windows[Self.mainWindowID] == nil {
-            windows[Self.mainWindowID] = windowObject(Self.mainWindowID, host: store.window, focused: mainFocused)
-        }
-        let focused = windows.values.contains { $0["focused"] as? Bool == true }
         return [
-            "focused": focused,
+            "focused": windows.values.contains { $0["focused"] as? Bool == true },
             "popup": isPopup(requester),
             "windows": windows.keys.sorted().compactMap { windows[$0] },
             "tabs": tabs,
@@ -1109,7 +1138,7 @@ final class ExtensionHost {
     /// A tab as extensions see it; without `view` (asleep), discarded.
     private func tabObject(_ tab: TabInfo, id: Int, view: MBWebView?, window: Int, index: Int, active: Bool,
                            pinned: Bool) -> [String: Any] {
-        let loading = store.navStates[tab.id]?.isLoading == true
+        let loading = BrowserStore.windows.lazy.compactMap { $0.navStates[tab.id] }.first?.isLoading == true
         var object: [String: Any] = [
             "id": id, "windowId": window, "index": index,
             "active": active, "highlighted": active, "selected": active, "pinned": pinned,
@@ -1153,13 +1182,13 @@ final class ExtensionHost {
             url = URL(string: url, relativeTo: URL(string: "chrome-extension://\(args["extension"] as? String ?? "")/"))?.absoluteString ?? url
         }
         let active = args["active"] as? Bool ?? true
-        guard let tab = store.core.openTab(spaceId: space.id, url: url.isEmpty ? "about:blank" : url, activate: active) else { return done(nil) }
+        guard let tab = core.openTab(spaceId: space.id, url: url.isEmpty ? "about:blank" : url, activate: active) else { return done(nil) }
         if args["pinned"] as? Bool == true { store.togglePin(tab, in: space) }
         store.refresh()
         store.warmTab(tab)
         // The browser, and its id, come a moment later.
         func poll(_ tries: Int) {
-            if let id = store.views[tab]?.browserIdentifier, id != 0 {
+            if let id = views[tab]?.browserIdentifier, id != 0 {
                 return resolveTabIDs { done(tab) }
             }
             guard tries > 0 else { return done(nil) }
@@ -1171,7 +1200,7 @@ final class ExtensionHost {
     /// A tab just opened whose id isn't known yet: it goes by its id asleep
     /// meanwhile (which the bridge accepts), then by its own.
     private func provisionalTab(_ tab: UInt64, active: Bool) -> [String: Any]? {
-        guard let info = store.core.tab(id: tab) else { return nil }
+        guard let info = core.tab(id: tab) else { return nil }
         return [
             "id": Self.sleepingIDBase - Int(tab), "windowId": windowID(of: tab), "index": 0,
             "active": active, "highlighted": active, "selected": active, "pinned": isPinned(tab),
@@ -1182,7 +1211,7 @@ final class ExtensionHost {
     }
 
     private func capture(_ args: [String: Any], done: @escaping (String?) -> Void) {
-        guard let tab = store.visibleTabID, let view = store.views[tab] else { return done(nil) }
+        guard let tab = store.visibleTabID, let view = views[tab] else { return done(nil) }
         let format = args["format"] as? String == "png" ? "png" : "jpeg"
         let quality = args["quality"] as? Int ?? 92
         view.sendDevToolsCommand("Page.captureScreenshot", params: #"{"format":"\#(format)","quality":\#(quality)}"#) { result, _ in
@@ -1226,7 +1255,7 @@ final class ExtensionHost {
             let focused = (now["windows"] as? [[String: Any]] ?? []).first { $0["focused"] as? Bool == true }?["id"] as? Int ?? -1
             var owners: [Int: UInt64] = [:]
             var live: [Int: UInt64] = [:]
-            for (tab, view) in store.views { if let id = tabIDs[view.browserIdentifier] { live[id] = tab } }
+            for (tab, view) in views { if let id = tabIDs[view.browserIdentifier] { live[id] = tab } }
             for id in tabs.keys { owners[id] = live[id] ?? (id <= Self.sleepingIDBase ? UInt64(Self.sleepingIDBase - id) : nil) }
             let current = Report(tabs: tabs, owners: owners, active: active, focused: focused)
             defer { reported[profile] = current }
