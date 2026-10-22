@@ -18,7 +18,7 @@ URL="https://cef-builds.spotifycdn.com/$(python3 -c 'import sys, urllib.parse; p
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "Downloading CEF $CEF_VERSION…"
+echo "Downloading CEF ${CEF_VERSION}…"
 curl -fL --progress-bar -o "$WORK/cef.tar.bz2" "$URL"
 EXPECTED="$(curl -fsSL "$URL.sha1")"
 ACTUAL="$(shasum -a 1 "$WORK/cef.tar.bz2" | cut -d' ' -f1)"

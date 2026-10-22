@@ -42,7 +42,7 @@ OUT="$ROOT/build/release/assets"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-echo "Packing $TAG…"
+echo "Packing ${TAG}…"
 ditto -c -k --keepParent --sequesterRsrc "$APP" "$OUT/MBGA.zip"
 SIGNED="$(MBGA_UPDATE_KEY="$KEY" swift scripts/update-signing.swift sign "$OUT/MBGA.zip")"
 python3 - "$OUT" "$VERSION" "$REPO" "$TAG" "$SIGNED" <<'PY'
