@@ -102,6 +102,10 @@ foreach(_suffixes ${CEF_HELPER_APP_SUFFIXES})
   set_target_properties(${_target} PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${_plist}"
     OUTPUT_NAME "${MBGA_HELPER_NAME}")
+  # Signed here, when it relinks, so the copy in the app is never rewritten.
+  add_custom_command(TARGET ${_target} POST_BUILD
+    COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:${_target}>"
+    VERBATIM)
 
   list(APPEND MBGA_HELPER_TARGETS ${_target})
   list(APPEND MBGA_HELPER_NAMES "${MBGA_HELPER_NAME}")
@@ -131,18 +135,26 @@ set_target_properties(mbga_cli PROPERTIES OUTPUT_NAME "mbga-cli")
 add_dependencies(mbga mbga_cli)
 
 # Assemble the bundle: helpers and the framework go into Contents/Frameworks.
-# rsync keeps incremental builds fast (the framework is ~320 MB).
+# The framework (~320 MB) is copied and signed only when CEF changes: macOS
+# scans rewritten code again before it runs, which held the first launch after
+# every build for seconds.
 set(_app "$<TARGET_BUNDLE_DIR:mbga>")
-add_custom_command(TARGET mbga POST_BUILD
-  COMMAND mkdir -p "${_app}/Contents/Frameworks/Chromium Embedded Framework.framework/Versions"
-  COMMAND rsync -a --delete "${CEF_FRAMEWORK}/"
-          "${_app}/Contents/Frameworks/Chromium Embedded Framework.framework/Versions/A/"
-  COMMAND cd "${_app}/Contents/Frameworks/Chromium Embedded Framework.framework" &&
+set(_cef "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${MBGA_PRODUCT_NAME}.app/Contents/Frameworks/Chromium Embedded Framework.framework")
+add_custom_command(
+  OUTPUT "${_cef}/Versions/A/Chromium Embedded Framework"
+  COMMAND mkdir -p "${_cef}/Versions"
+  COMMAND rsync -a --delete "${CEF_FRAMEWORK}/" "${_cef}/Versions/A/"
+  COMMAND cd "${_cef}" &&
           ln -sfh A Versions/Current &&
           ln -sfh "Versions/A/Chromium Embedded Framework" "Chromium Embedded Framework" &&
           ln -sfh Versions/A/Libraries Libraries &&
           ln -sfh Versions/A/Resources Resources
+  COMMAND codesign --force --sign - "${_cef}"
+  DEPENDS "${CEF_FRAMEWORK}/Chromium Embedded Framework"
+  COMMENT "Copying Chromium Embedded Framework"
   VERBATIM)
+add_custom_target(mbga_cef_framework DEPENDS "${_cef}/Versions/A/Chromium Embedded Framework")
+add_dependencies(mbga mbga_cef_framework)
 foreach(_name ${MBGA_HELPER_NAMES})
   add_custom_command(TARGET mbga POST_BUILD
     COMMAND rsync -a --delete "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${_name}.app/"
@@ -153,7 +165,11 @@ add_custom_command(TARGET mbga POST_BUILD
   COMMAND mkdir -p "${_app}/Contents/Resources/bin"
   COMMAND cp "$<TARGET_FILE:mbga_cli>" "${_app}/Contents/Resources/bin/mbga"
   VERBATIM)
+# Not --deep: the framework and helpers are signed already, and re-signing
+# them would rewrite them. swiftc's dependency file (unused by Ninja) can't
+# sit in Contents/MacOS then.
 add_custom_command(TARGET mbga POST_BUILD
-  COMMAND codesign --force --deep --sign - "${_app}"
+  COMMAND rm -f "$<TARGET_FILE:mbga>.d"
+  COMMAND codesign --force --sign - "${_app}"
   COMMENT "Ad-hoc signing ${MBGA_PRODUCT_NAME}.app"
   VERBATIM)
