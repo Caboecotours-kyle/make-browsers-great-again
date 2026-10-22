@@ -165,6 +165,24 @@ add_custom_command(TARGET mbga POST_BUILD
   COMMAND mkdir -p "${_app}/Contents/Resources/bin"
   COMMAND cp "$<TARGET_FILE:mbga_cli>" "${_app}/Contents/Resources/bin/mbga"
   VERBATIM)
+# The app icon: actool compiles the Icon Composer document (its layer is made
+# from assets/icon.svg by scripts/make-icon.sh) into Assets.car for macOS 26
+# and AppIcon.icns for older systems.
+set(_icon "${CMAKE_SOURCE_DIR}/shell/resources/AppIcon.icon")
+set(_icon_out "${CMAKE_BINARY_DIR}/icon")
+add_custom_command(
+  OUTPUT "${_icon_out}/Assets.car" "${_icon_out}/AppIcon.icns"
+  COMMAND mkdir -p "${_icon_out}"
+  COMMAND xcrun actool "${_icon}" --compile "${_icon_out}" --app-icon AppIcon
+          --platform macosx --minimum-deployment-target ${MBGA_MIN_MACOS}
+          --output-partial-info-plist "${_icon_out}/partial.plist"
+  DEPENDS "${_icon}/icon.json" "${_icon}/Assets/art.png"
+  VERBATIM)
+add_custom_target(mbga_icon DEPENDS "${_icon_out}/Assets.car")
+add_dependencies(mbga mbga_icon)
+add_custom_command(TARGET mbga POST_BUILD
+  COMMAND cp "${_icon_out}/Assets.car" "${_icon_out}/AppIcon.icns" "${_app}/Contents/Resources/"
+  VERBATIM)
 # Not --deep: the framework and helpers are signed already, and re-signing
 # them would rewrite them. swiftc's dependency file (unused by Ninja) can't
 # sit in Contents/MacOS then.
