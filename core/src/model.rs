@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 
 pub type Id = u64;
 
@@ -56,15 +57,8 @@ impl Tab {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Node {
-    Tab {
-        id: Id,
-    },
-    Folder {
-        id: Id,
-        name: String,
-        expanded: bool,
-        children: Vec<Node>,
-    },
+    Tab { id: Id },
+    Folder { id: Id, name: String, expanded: bool, children: Vec<Node> },
 }
 
 impl Node {
@@ -253,9 +247,7 @@ fn default_block_ads() -> bool {
     true
 }
 
-pub const SPACE_COLORS: [u32; 8] = [
-    0x8B5CF6, 0x3B82F6, 0x10B981, 0xF59E0B, 0xEF4444, 0xEC4899, 0x14B8A6, 0x6366F1,
-];
+pub const SPACE_COLORS: [u32; 8] = [0x8B5CF6, 0x3B82F6, 0x10B981, 0xF59E0B, 0xEF4444, 0xEC4899, 0x14B8A6, 0x6366F1];
 
 impl State {
     pub fn new_default() -> State {
@@ -303,9 +295,7 @@ impl State {
     pub fn locate(&self, id: Id) -> Option<Container> {
         for (profile_id, favs) in &self.favorites {
             if favs.contains(&id) {
-                return Some(Container::Favorites {
-                    profile_id: *profile_id,
-                });
+                return Some(Container::Favorites { profile_id: *profile_id });
             }
         }
         for space in &self.spaces {
@@ -313,10 +303,7 @@ impl State {
                 return Some(Container::Today { space_id: space.id });
             }
             if let Some(folder_id) = find_parent(&space.pinned, id, None) {
-                return Some(Container::Pinned {
-                    space_id: space.id,
-                    folder_id,
-                });
+                return Some(Container::Pinned { space_id: space.id, folder_id });
             }
         }
         None
@@ -341,10 +328,7 @@ impl State {
 
     pub fn create_profile(&mut self, name: &str) -> Id {
         let id = self.alloc();
-        self.profiles.push(Profile {
-            id,
-            name: name.to_string(),
-        });
+        self.profiles.push(Profile { id, name: name.to_string() });
         self.favorites.insert(id, Vec::new());
         id
     }
@@ -373,11 +357,8 @@ impl State {
     // ----------------------------------------------------------------- spaces
 
     pub fn create_space(&mut self, name: &str, icon: &str, color: u32, profile_id: Id) -> Id {
-        let profile_id = if self.profiles.iter().any(|p| p.id == profile_id) {
-            profile_id
-        } else {
-            self.profiles[0].id
-        };
+        let profile_id =
+            if self.profiles.iter().any(|p| p.id == profile_id) { profile_id } else { self.profiles[0].id };
         let id = self.alloc();
         self.spaces.push(Space {
             id,
@@ -415,8 +396,7 @@ impl State {
         space.profile_id = profile_id;
         // Favorites belong to the old profile and disappear from this space.
         if let Some(active) = space.active_tab {
-            if !space.today.contains(&active) && find_parent(&space.pinned, active, None).is_none()
-            {
+            if !space.today.contains(&active) && find_parent(&space.pinned, active, None).is_none() {
                 space.active_tab = None;
             }
         }
@@ -493,7 +473,7 @@ impl State {
                 woke_ms: 0,
             },
         );
-        self.space_mut(space_id).unwrap().today.insert(0, id);
+        self.space_mut(space_id).expect("space checked above").today.insert(0, id);
         if activate {
             self.activate_tab(space_id, id, now);
         }
@@ -509,7 +489,7 @@ impl State {
         if space_id == self.active_space {
             self.touch_visible(now);
         }
-        self.space_mut(space_id).unwrap().active_tab = Some(tab_id);
+        self.space_mut(space_id).expect("space checked above").active_tab = Some(tab_id);
         if let Some(t) = self.tabs.get_mut(&tab_id) {
             t.last_active_ms = now;
         }
@@ -534,26 +514,23 @@ impl State {
             return (false, None);
         };
         let next = self.next_after_close(id, container, now);
-        let removed = match container {
-            Container::Today { space_id } => {
-                let today = &mut self.space_mut(space_id).unwrap().today;
-                let index = today.iter().position(|t| *t == id).unwrap_or(0);
-                today.retain(|t| *t != id);
-                if let Some(tab) = self.tabs.remove(&id) {
-                    self.remember(Closed { space_id, kind: ClosedKind::Today { indices: vec![index] }, tabs: vec![tab] });
-                }
-                true
+        let removed = if let Container::Today { space_id } = container {
+            let today = &mut self.space_mut(space_id).expect("space checked above").today;
+            let index = today.iter().position(|t| *t == id).unwrap_or(0);
+            today.retain(|t| *t != id);
+            if let Some(tab) = self.tabs.remove(&id) {
+                self.remember(Closed { space_id, kind: ClosedKind::Today { indices: vec![index] }, tabs: vec![tab] });
             }
-            _ => {
-                if let Some(t) = self.tabs.get_mut(&id) {
-                    t.live = false;
-                    t.audible = false;
-                    if let Some(home) = t.pinned_url.clone() {
-                        t.url = home;
-                    }
+            true
+        } else {
+            if let Some(t) = self.tabs.get_mut(&id) {
+                t.live = false;
+                t.audible = false;
+                if let Some(home) = t.pinned_url.clone() {
+                    t.url = home;
                 }
-                false
             }
+            false
         };
         let mut next_visible = None;
         for space in &mut self.spaces {
@@ -580,9 +557,8 @@ impl State {
         if let Container::Today { space_id } = container {
             if space_id == space.id {
                 let i = space.today.iter().position(|t| *t == id)?;
-                if let Some(next) = space.today.get(i + 1).or_else(|| {
-                    i.checked_sub(1).and_then(|p| space.today.get(p))
-                }) {
+                if let Some(next) = space.today.get(i + 1).or_else(|| i.checked_sub(1).and_then(|p| space.today.get(p)))
+                {
                     return Some(*next);
                 }
             }
@@ -628,13 +604,8 @@ impl State {
     pub fn create_folder(&mut self, space_id: Id, name: &str, parent: Option<Id>) -> Option<Id> {
         self.space(space_id)?;
         let id = self.alloc();
-        let folder = Node::Folder {
-            id,
-            name: name.to_string(),
-            expanded: true,
-            children: Vec::new(),
-        };
-        let space = self.space_mut(space_id).unwrap();
+        let folder = Node::Folder { id, name: name.to_string(), expanded: true, children: Vec::new() };
+        let space = self.space_mut(space_id).expect("space checked above");
         let list = match parent {
             Some(pid) => folder_children_mut(&mut space.pinned, pid)?,
             None => &mut space.pinned,
@@ -712,7 +683,7 @@ impl State {
         match closed.kind {
             ClosedKind::Today { indices } => {
                 let mut placed: Vec<(usize, Id)> = indices.into_iter().zip(ids.iter().copied()).collect();
-                placed.sort();
+                placed.sort_unstable();
                 for (index, id) in placed {
                     space.today.insert(index.min(space.today.len()), id);
                 }
@@ -803,7 +774,7 @@ impl State {
     /// visible tab, tabs playing sound and sites kept awake.
     pub fn idle_today(&self, space_id: Id, hours: u32, now: u64) -> Vec<Id> {
         let visible = self.visible_tab();
-        let after_ms = hours as u64 * 3_600_000;
+        let after_ms = u64::from(hours) * 3_600_000;
         let Some(space) = self.space(space_id) else { return Vec::new() };
         space
             .today
@@ -824,7 +795,7 @@ impl State {
         if idle.is_empty() {
             return idle;
         }
-        let space = self.space_mut(space_id).unwrap();
+        let space = self.space_mut(space_id).expect("space checked above");
         let mut indices = Vec::new();
         for (i, id) in space.today.iter().enumerate() {
             if idle.contains(id) {
@@ -863,27 +834,18 @@ impl State {
         }
         let source_profile = self.container_profile(source)?;
         let target_profile = self.container_profile(target)?;
-        if let Container::Pinned {
-            space_id,
-            folder_id: Some(folder),
-        } = target
-        {
+        if let Container::Pinned { space_id, folder_id: Some(folder) } = target {
             // The target folder must exist and must not be inside the item.
             let space = self.space(space_id)?;
             let moved = find_node(&space.pinned, id);
             find_node(&space.pinned, folder)?;
-            if folder == id || moved.is_some_and(|m| find_node(std::slice::from_ref(m), folder).is_some())
-            {
+            if folder == id || moved.is_some_and(|m| find_node(std::slice::from_ref(m), folder).is_some()) {
                 return None;
             }
         }
 
         let (node, old_index) = self.detach_from(id, source)?;
-        let index = if source == target && old_index < index {
-            index - 1
-        } else {
-            index
-        };
+        let index = if source == target && old_index < index { index - 1 } else { index };
 
         let mut moved_tabs = Vec::new();
         collect_tabs(std::slice::from_ref(&node), &mut moved_tabs);
@@ -906,13 +868,13 @@ impl State {
                 favs.insert(index.min(favs.len()), id);
             }
             Container::Today { space_id } => {
-                let today = &mut self.space_mut(space_id).unwrap().today;
+                let today = &mut self.space_mut(space_id).expect("space checked above").today;
                 today.insert(index.min(today.len()), id);
             }
             Container::Pinned { space_id, folder_id } => {
-                let space = self.space_mut(space_id).unwrap();
+                let space = self.space_mut(space_id).expect("space checked above");
                 let list = match folder_id {
-                    Some(f) => folder_children_mut(&mut space.pinned, f).unwrap(),
+                    Some(f) => folder_children_mut(&mut space.pinned, f).expect("folder checked above"),
                     None => &mut space.pinned,
                 };
                 list.insert(index.min(list.len()), node);
@@ -1073,8 +1035,9 @@ impl State {
 
     /// Tabs the person chose to keep loaded, for the shell to load at launch.
     pub fn always_awake_tabs(&self) -> Vec<Id> {
-        let mut ids: Vec<Id> = self.tabs.values().filter(|t| t.always_awake && !t.url.is_empty()).map(|t| t.id).collect();
-        ids.sort();
+        let mut ids: Vec<Id> =
+            self.tabs.values().filter(|t| t.always_awake && !t.url.is_empty()).map(|t| t.id).collect();
+        ids.sort_unstable();
         ids
     }
 
@@ -1123,10 +1086,7 @@ impl State {
         let (timeout_ms, max_live) = match pressure {
             Pressure::Normal => (after_ms, limit),
             // Without a limit of their own, tabs beyond the default count.
-            Pressure::Warning => (
-                after_ms / 4,
-                (limit.min(Policy::default().max_live_tabs as usize) / 2).max(1),
-            ),
+            Pressure::Warning => (after_ms / 4, (limit.min(Policy::default().max_live_tabs as usize) / 2).max(1)),
             Pressure::Critical => (0, 0),
         };
         // Each space's current tab stays loaded unless memory is critical,
@@ -1157,7 +1117,9 @@ impl State {
             }
         }
         for id in &sleepers {
-            self.tabs.get_mut(id).unwrap().live = false;
+            if let Some(tab) = self.tabs.get_mut(id) {
+                tab.live = false;
+            }
         }
         sleepers
     }
@@ -1166,15 +1128,13 @@ impl State {
 // ------------------------------------------------------------- tree helpers
 
 /// Returns `Some(parent folder)` if `id` is in the tree.
+#[expect(clippy::option_option, reason = "None: not in the tree; Some(None): at the top level")]
 fn find_parent(nodes: &[Node], id: Id, parent: Option<Id>) -> Option<Option<Id>> {
     for n in nodes {
         if n.id() == id {
             return Some(parent);
         }
-        if let Node::Folder {
-            id: fid, children, ..
-        } = n
-        {
+        if let Node::Folder { id: fid, children, .. } = n {
             if let Some(p) = find_parent(children, id, Some(*fid)) {
                 return Some(p);
             }
@@ -1224,10 +1184,7 @@ fn detach(nodes: &mut Vec<Node>, id: Id, parent: Option<Id>) -> Option<(Node, us
         return Some((nodes.remove(i), i, parent));
     }
     for n in nodes.iter_mut() {
-        if let Node::Folder {
-            id: fid, children, ..
-        } = n
-        {
+        if let Node::Folder { id: fid, children, .. } = n {
             let fid = *fid;
             if let Some(found) = detach(children, id, Some(fid)) {
                 return Some(found);
@@ -1274,27 +1231,28 @@ pub fn resolve_input(text: &str, search_template: &str) -> String {
     if text.is_empty() {
         return String::new();
     }
-    let has_scheme = text
-        .split_once(':')
-        .is_some_and(|(scheme, rest)| {
-            !scheme.is_empty()
-                && scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
-                && scheme.chars().next().unwrap().is_ascii_alphabetic()
-                && (rest.starts_with("//")
-                    || matches!(scheme, "about" | "data" | "mailto" | "javascript" | "view-source"))
-        });
+    let has_scheme = text.split_once(':').is_some_and(|(scheme, rest)| {
+        !scheme.is_empty()
+            && scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
+            && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && (rest.starts_with("//") || matches!(scheme, "about" | "data" | "mailto" | "javascript" | "view-source"))
+    });
     if has_scheme {
         return text.to_string();
     }
     if !text.contains(char::is_whitespace) {
         let host = text.split(['/', '?', '#']).next().unwrap_or("");
-        let host_no_port = host.rsplit_once(':').map_or(host, |(h, port)| {
-            if port.chars().all(|c| c.is_ascii_digit()) {
-                h
-            } else {
-                host
-            }
-        });
+        let host_no_port =
+            host.rsplit_once(':').map_or(
+                host,
+                |(h, port)| {
+                    if port.chars().all(|c| c.is_ascii_digit()) {
+                        h
+                    } else {
+                        host
+                    }
+                },
+            );
         let looks_like_host = host_no_port == "localhost"
             || host_no_port.parse::<std::net::Ipv4Addr>().is_ok()
             || (host_no_port.contains('.')
@@ -1303,11 +1261,9 @@ pub fn resolve_input(text: &str, search_template: &str) -> String {
                 && host_no_port
                     .rsplit('.')
                     .next()
-                    .is_some_and(|tld| tld.len() >= 2 && tld.chars().all(|c| c.is_alphabetic())));
+                    .is_some_and(|tld| tld.len() >= 2 && tld.chars().all(char::is_alphabetic)));
         if looks_like_host {
-            let scheme = if host_no_port == "localhost"
-                || host_no_port.parse::<std::net::Ipv4Addr>().is_ok()
-            {
+            let scheme = if host_no_port == "localhost" || host_no_port.parse::<std::net::Ipv4Addr>().is_ok() {
                 "http"
             } else {
                 "https"
@@ -1327,11 +1283,11 @@ fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
             b' ' => out.push('+'),
-            _ => out.push_str(&format!("%{b:02X}")),
+            _ => {
+                let _ = write!(out, "%{b:02X}");
+            }
         }
     }
     out

@@ -4,7 +4,7 @@ import AppKit
 
 guard CommandLine.arguments.count == 2, let pid = pid_t(CommandLine.arguments[1]),
       let app = NSRunningApplication(processIdentifier: pid) else {
-    FileHandle.standardError.write("usage: activate <pid of a running app>\n".data(using: .utf8)!)
+    FileHandle.standardError.write(Data("usage: activate <pid of a running app>\n".utf8))
     exit(2)
 }
 app.activate()

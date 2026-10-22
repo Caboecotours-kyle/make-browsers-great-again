@@ -128,6 +128,7 @@ class InspectorPanelView: FlippedView {
         wantsLayer = true
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func bind(_ session: InspectorSession?) {
@@ -166,6 +167,7 @@ final class InspectorToolbar: FlippedView {
         layer?.addSublayer(line)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -252,6 +254,7 @@ final class InspectorButton: HoverView {
         updateColors()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func setSymbol(_ symbol: String, size: CGFloat = 12) { imageView.image = .symbol(symbol, size: size) }
@@ -303,6 +306,7 @@ final class InspectorChips: FlippedView {
         }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     var preferredWidth: CGFloat { chips.map(\.width).reduce(0, +) + CGFloat(max(chips.count - 1, 0)) * 2 }
@@ -346,6 +350,7 @@ final class InspectorChips: FlippedView {
             addSubview(label)
         }
 
+        @available(*, unavailable)
         required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
         override func layout() {
@@ -370,7 +375,7 @@ final class InspectorFilterField: NSSearchField {
     var onChange: ((String) -> Void)?
     private let fill = FillLayer()
 
-    override class var cellClass: AnyClass? {
+    override static var cellClass: AnyClass? {
         get { Cell.self }
         set {}
     }
@@ -403,6 +408,7 @@ final class InspectorFilterField: NSSearchField {
         action = #selector(changed)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -437,6 +443,7 @@ final class InspectorEmptyView: FlippedView {
         addSubview(label)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     var text: String {
@@ -472,6 +479,7 @@ final class InspectorSplitView: NSSplitView, NSSplitViewDelegate {
         addArrangedSubview(second)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var dividerColor: NSColor { InspectorTheme.separator }
@@ -619,7 +627,7 @@ class InspectorTableView: NSTableView {
     var onKey: ((NSEvent) -> Bool)?
 
     override func menu(for event: NSEvent) -> NSMenu? {
-        let row = self.row(at: convert(event.locationInWindow, from: nil))
+        let row = row(at: convert(event.locationInWindow, from: nil))
         guard row >= 0 else { return nil }
         if !selectedRowIndexes.contains(row) { selectRowIndexes([row], byExtendingSelection: false) }
         return menuForRow?(row)
@@ -636,7 +644,7 @@ class InspectorOutlineView: NSOutlineView {
     var onKey: ((NSEvent) -> Bool)?
 
     override func menu(for event: NSEvent) -> NSMenu? {
-        let row = self.row(at: convert(event.locationInWindow, from: nil))
+        let row = row(at: convert(event.locationInWindow, from: nil))
         guard row >= 0 else { return nil }
         if !selectedRowIndexes.contains(row) { selectRowIndexes([row], byExtendingSelection: false) }
         return menuForRow?(row)
@@ -645,12 +653,6 @@ class InspectorOutlineView: NSOutlineView {
     override func keyDown(with event: NSEvent) {
         if onKey?(event) == true { return }
         super.keyDown(with: event)
-    }
-
-    // No disclosure triangle space wasted at the root of flat lists.
-    override func frameOfOutlineCell(atRow row: Int) -> NSRect {
-        let frame = super.frameOfOutlineCell(atRow: row)
-        return frame
     }
 }
 
@@ -842,11 +844,11 @@ final class JSONValueNode: ValueNode {
 
     private static func short(_ value: Any) -> String {
         switch value {
-        case let string as String: return "\"\(string.clipped(30).oneLine)\""
-        case is [String: Any]: return "{…}"
-        case let array as [Any]: return "Array(\(array.count))"
-        case is NSNull: return "null"
-        default: return "\(value)"
+        case let string as String: "\"\(string.clipped(30).oneLine)\""
+        case is [String: Any]: "{…}"
+        case let array as [Any]: "Array(\(array.count))"
+        case is NSNull: "null"
+        default: "\(value)"
         }
     }
 
@@ -914,6 +916,7 @@ final class ValueTreeView: NSScrollView, NSOutlineViewDataSource, NSOutlineViewD
         borderType = .noBorder
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func show(_ nodes: [ValueNode]) {
@@ -1003,7 +1006,7 @@ final class ValueTreeView: NSScrollView, NSOutlineViewDataSource, NSOutlineViewD
 enum CodeLanguage {
     case javascript, css, html, json, plain
 
-    static func guess(mime: String, url: String) -> CodeLanguage {
+    static func guess(mime: String, url: String) -> Self {
         let path = URL(string: url)?.path.lowercased() ?? url.lowercased()
         if mime.contains("json") || path.hasSuffix(".json") || path.hasSuffix(".map") { return .json }
         if mime.contains("javascript") || mime.contains("ecmascript") || [".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"].contains(where: path.hasSuffix) {
@@ -1139,6 +1142,7 @@ final class CodeView: NSScrollView {
         rulersVisible = true
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     /// Wraps long lines to the view's width instead of scrolling sideways.
@@ -1232,6 +1236,7 @@ private final class LineNumberRuler: NSRulerView {
 
     @objc private func tintChanged() { needsDisplay = true }
 
+    @available(*, unavailable)
     required init(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     @objc private func textChanged() { invalidateLines() }
@@ -1277,12 +1282,11 @@ private final class LineNumberRuler: NSRulerView {
         var lineIndex = line(at: characters.location)
         while lineIndex < starts.count, starts[lineIndex] <= NSMaxRange(characters) {
             let length = textView.string.utf16.count
-            var lineRect: NSRect
-            if starts[lineIndex] >= length {
+            let lineRect: NSRect = if starts[lineIndex] >= length {
                 // The empty line after a final newline.
-                lineRect = length == 0 ? NSRect(x: 0, y: 0, width: 0, height: 14) : layout.extraLineFragmentRect
+                length == 0 ? NSRect(x: 0, y: 0, width: 0, height: 14) : layout.extraLineFragmentRect
             } else {
-                lineRect = layout.lineFragmentRect(forGlyphAt: layout.glyphIndexForCharacter(at: starts[lineIndex]), effectiveRange: nil)
+                layout.lineFragmentRect(forGlyphAt: layout.glyphIndexForCharacter(at: starts[lineIndex]), effectiveRange: nil)
             }
             let y = lineRect.minY + inset + origin
             if marked.contains(lineIndex) {

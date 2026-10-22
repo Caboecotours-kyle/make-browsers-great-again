@@ -35,6 +35,7 @@ final class SidebarView: FlippedView {
         store.observe(self) { [weak self] change in self?.handle(change) }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     private func handle(_ change: StoreChange) {
@@ -191,6 +192,7 @@ private final class SidebarToolbarView: WindowDragView {
         needsLayout = true
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func update() {
@@ -250,6 +252,7 @@ private final class AddressPillView: HoverView {
         update()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func update() {
@@ -346,6 +349,7 @@ private final class FavoritesGridView: FlippedView {
         update()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     private var space: SpaceInfo { store.activeSpace }
@@ -508,6 +512,7 @@ private final class FavoriteTileView: HoverView, NSDraggingSource {
         addSubview(icon)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func configure(_ tab: TabInfo, space: SpaceInfo) {
@@ -585,7 +590,7 @@ private final class FavoriteTileView: HoverView, NSDraggingSource {
     }
 
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
-        store.endDrag(at: screenPoint, accepted: operation != [])
+        store.endDrag(at: screenPoint, accepted: !operation.isEmpty)
     }
 }
 
@@ -611,6 +616,7 @@ private final class SpacePagerView: FlippedView {
         update(animation: nil)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     private var stride: CGFloat { bounds.width + gap }
@@ -750,6 +756,7 @@ private final class SidebarBottomBar: FlippedView {
         update()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func update() {
@@ -833,6 +840,7 @@ private final class SpaceDotView: HoverView {
         registerForDraggedTypes([.sidebarItem, .URL])
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func configure(_ space: SpaceInfo, active: Bool) {

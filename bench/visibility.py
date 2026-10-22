@@ -16,8 +16,7 @@ import sys
 import time
 
 from browsers import MBGA
-from common import (DEVTOOLS_PORT, WORK, DevTools, log, page_targets, page_url, quit_app,
-                    wait_for_window)
+from common import DEVTOOLS_PORT, WORK, DevTools, log, page_targets, page_url, quit_app, wait_for_window
 
 FAILURES = []
 
@@ -25,18 +24,33 @@ FAILURES = []
 def launch(data, spaces, **env):
     MBGA.prepare(data, spaces)
     socket = os.path.join(data, "agent.sock")
-    proc = subprocess.Popen([MBGA.binary], env={
-        **os.environ, "MBGA_DATA_DIR": data, "MBGA_MOCK_KEYCHAIN": "1", "MBGA_DEBUG_AGENT": "1",
-        "MBGA_ENGINE_SWITCHES": f"--remote-debugging-port={DEVTOOLS_PORT}", **env},
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = subprocess.Popen(
+        [MBGA.binary],
+        env={
+            **os.environ,
+            "MBGA_DATA_DIR": data,
+            "MBGA_MOCK_KEYCHAIN": "1",
+            "MBGA_DEBUG_AGENT": "1",
+            "MBGA_ENGINE_SWITCHES": f"--remote-debugging-port={DEVTOOLS_PORT}",
+            **env,
+        },
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     wait_for_window(proc.pid)
     time.sleep(6)  # the other spaces' tabs load 2.5 s after launch
     return proc, socket
 
 
 def mbga(socket, *args):
-    out = subprocess.run(["mbga", *args], env={**os.environ, "MBGA_SOCKET": socket},
-                         capture_output=True, text=True, timeout=60)
+    out = subprocess.run(
+        ["mbga", *args],
+        env={**os.environ, "MBGA_SOCKET": socket},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
     if out.returncode:
         raise RuntimeError(f"mbga {' '.join(args)}: {out.stdout}{out.stderr}")
     return out.stdout
@@ -56,9 +70,12 @@ def pages(pid):
             continue
         d = DevTools(DEVTOOLS_PORT, pid, match=t["url"])
         try:
-            frames = d.evaluate("new Promise(r => { let n = 0; const f = () => { n++; "
-                                "requestAnimationFrame(f) }; requestAnimationFrame(f); "
-                                "setTimeout(() => r(n), 500) })", await_promise=True)
+            frames = d.evaluate(
+                "new Promise(r => { let n = 0; const f = () => { n++; "
+                "requestAnimationFrame(f) }; requestAnimationFrame(f); "
+                "setTimeout(() => r(n), 500) })",
+                await_promise=True,
+            )
             out[t["url"]] = (d.evaluate("document.hidden"), frames)
         finally:
             d.close()
@@ -97,18 +114,21 @@ def quit(step, proc):
 def main():
     if sys.argv[1:2] == ["--app"]:
         MBGA.binary = os.path.join(sys.argv[2], "Contents", "MacOS", "MBGA")
-    if subprocess.run(["lsof", "-nP", f"-iTCP:{DEVTOOLS_PORT}", "-sTCP:LISTEN"],
-                      capture_output=True).stdout:
+    if subprocess.run(
+        ["lsof", "-nP", f"-iTCP:{DEVTOOLS_PORT}", "-sTCP:LISTEN"], capture_output=True, check=False
+    ).stdout:
         raise SystemExit(f"port {DEVTOOLS_PORT} is in use")
     data = os.path.join(WORK, "visibility")
     a, b = page_url("busy.html?a"), page_url("busy.html?b")
     pinned, other = page_url("busy.html?pinned"), page_url("busy.html?other")
 
-    proc, socket = launch(data, [{"space": "One", "pinned": [pinned], "today": [a, b]},
-                                 {"space": "Two", "today": [other]}])
+    proc, socket = launch(
+        data, [{"space": "One", "pinned": [pinned], "today": [a, b]}, {"space": "Two", "today": [other]}]
+    )
     ids = tab_ids(socket)
-    expect("launch: the pinned tab on screen, the other space's tab warmed and hidden",
-           proc.pid, pinned, [pinned, other])
+    expect(
+        "launch: the pinned tab on screen, the other space's tab warmed and hidden", proc.pid, pinned, [pinned, other]
+    )
     mbga(socket, "focus", ids[a])
     expect("another tab in the space", proc.pid, a, [pinned, other, a])
     mbga(socket, "focus", ids[b])
@@ -122,8 +142,10 @@ def main():
     shot = mbga(socket, "screenshot", "--tab", ids[b]).split(" (")[0].strip()
     # A page that drew nothing comes back as a small blank PNG.
     ok = os.path.exists(shot) and os.path.getsize(shot) > 50_000
-    log(f"{'ok  ' if ok else 'FAIL'} an agent's screenshot of a hidden tab "
-        f"({os.path.getsize(shot) // 1024 if os.path.exists(shot) else 0} KB)")
+    log(
+        f"{'ok  ' if ok else 'FAIL'} an agent's screenshot of a hidden tab "
+        f"({os.path.getsize(shot) // 1024 if os.path.exists(shot) else 0} KB)"
+    )
     if not ok:
         FAILURES.append("screenshot of a hidden tab")
     expect("after the screenshot, that tab is hidden again", proc.pid, a, [pinned, other, a, b])
@@ -132,8 +154,7 @@ def main():
     expect("a tab opened behind the one on screen", proc.pid, a, [pinned, other, a, b, behind])
     quit("quit with hidden tabs loaded", proc)
 
-    proc, socket = launch(data, [{"space": "One", "today": [a, b]}],
-                          MBGA_DEBUG_LITTLE_WINDOW="1")
+    proc, socket = launch(data, [{"space": "One", "today": [a, b]}], MBGA_DEBUG_LITTLE_WINDOW="1")
     expect("a tab popped out to a little window is on screen", proc.pid, a, [a])
     quit("quit with a little window open", proc)
 

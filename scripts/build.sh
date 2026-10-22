@@ -13,10 +13,23 @@ for arg in "$@"; do
   case "$arg" in
     --run) RUN=1 ;;
     # MBGA_SIGN_IDENTITY: the identity to sign with (ad hoc if unset).
-    --release) DIR="$BUILD/release"; FLAGS+=(-DMBGA_UPDATES=ON "-DMBGA_SIGN_IDENTITY=${MBGA_SIGN_IDENTITY:--}") ;;
-    *) echo "usage: $0 [--run] [--release]" >&2; exit 2 ;;
+    --release)
+      DIR="$BUILD/release"
+      FLAGS+=(-DMBGA_UPDATES=ON "-DMBGA_SIGN_IDENTITY=${MBGA_SIGN_IDENTITY:--}")
+      ;;
+    *)
+      echo "usage: $0 [--run] [--release]" >&2
+      exit 2
+      ;;
   esac
 done
+
+# Run scripts/check.sh before every commit, and leave formatting-only
+# commits out of git blame.
+if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  git -C "$ROOT" config core.hooksPath .githooks
+  git -C "$ROOT" config blame.ignoreRevsFile .git-blame-ignore-revs
+fi
 
 "$ROOT/scripts/fetch-cef.sh"
 

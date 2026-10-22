@@ -275,6 +275,7 @@ private final class SwatchView: NSView {
         heightAnchor.constraint(equalToConstant: 28).isActive = true
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func draw(_ dirtyRect: NSRect) {

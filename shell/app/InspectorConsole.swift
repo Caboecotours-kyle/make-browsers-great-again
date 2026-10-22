@@ -563,6 +563,7 @@ final class ConsolePanel: InspectorPanelView, NSOutlineViewDataSource, NSOutline
         addSubview(prompt)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -729,7 +730,7 @@ final class ConsolePanel: InspectorPanelView, NSOutlineViewDataSource, NSOutline
             return true
         }
         // Typing goes to the prompt.
-        if let chars = event.characters, !chars.isEmpty, event.modifierFlags.intersection([.command, .control]).isEmpty,
+        if let chars = event.characters, !chars.isEmpty, event.modifierFlags.isDisjoint(with: [.command, .control]),
            chars.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.union(.punctuationCharacters).contains($0) }) {
             window?.makeFirstResponder(prompt.textView)
             prompt.textView.keyDown(with: event)
@@ -819,27 +820,27 @@ final class ConsolePanel: InspectorPanelView, NSOutlineViewDataSource, NSOutline
 
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
         switch item {
-        case nil: return shown.count
-        case let message as ConsoleMessage: return children(of: message).count
-        case let node as ValueNode: return node.children?.count ?? 0
-        default: return 0
+        case nil: shown.count
+        case let message as ConsoleMessage: children(of: message).count
+        case let node as ValueNode: node.children?.count ?? 0
+        default: 0
         }
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
         switch item {
-        case nil: return shown[index]
-        case let message as ConsoleMessage: return children(of: message)[index]
-        case let node as ValueNode: return node.children![index]
-        default: return NSNull()
+        case nil: shown[index]
+        case let message as ConsoleMessage: children(of: message)[index]
+        case let node as ValueNode: node.children![index]
+        default: NSNull()
         }
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
         switch item {
-        case let message as ConsoleMessage: return !children(of: message).isEmpty
-        case let node as ValueNode: return node.isExpandable
-        default: return false
+        case let message as ConsoleMessage: !children(of: message).isEmpty
+        case let node as ValueNode: node.isExpandable
+        default: false
         }
     }
 
@@ -859,7 +860,7 @@ final class ConsolePanel: InspectorPanelView, NSOutlineViewDataSource, NSOutline
         if message.level == .error || message.type == "trace" || message.level == .warning, !message.stack.isEmpty, objects.isEmpty {
             items = message.stack.map { StackFrameItem($0) }
         } else {
-            items = objects.enumerated().map { RemoteValueNode(name: "", object: $0.element, session: session) }
+            items = objects.map { RemoteValueNode(name: "", object: $0, session: session) }
         }
         childCache[message.id] = items
         return items
@@ -976,6 +977,7 @@ private final class ConsoleMessageCell: NSTableCellView {
         addSubview(badge)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     /// The text's width in a row `width` wide: what's left of the glyph,
@@ -1040,7 +1042,7 @@ private final class ConsoleMessageCell: NSTableCellView {
             badge.frame = NSRect(x: left, y: 4, width: 20, height: 14)
             left += 24
         }
-        let width = ConsoleMessageCell.textWidth(bounds.width, indent: indent, link: !link.isHidden, repeats: badge.isHidden ? 1 : 2)
+        let width = Self.textWidth(bounds.width, indent: indent, link: !link.isHidden, repeats: badge.isHidden ? 1 : 2)
         text.frame = NSRect(x: left, y: 3, width: width, height: bounds.height - 6)
         link.frame = NSRect(x: bounds.width - Self.linkWidth - 6, y: 4, width: Self.linkWidth, height: 14)
     }
@@ -1108,6 +1110,7 @@ final class ConsolePrompt: FlippedView, NSTextViewDelegate {
         completions.isHidden = true
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -1319,6 +1322,8 @@ final class ConsolePrompt: FlippedView, NSTextViewDelegate {
 final class PromptTextView: NSTextView {
     fileprivate weak var prompt: ConsolePrompt?
 
+    // NSTextView handles every command the prompt doesn't take.
+    // swiftlint:disable:next prohibited_super_call
     override func doCommand(by selector: Selector) {
         if prompt?.handle(selector) == true { return }
         super.doCommand(by: selector)
@@ -1370,6 +1375,7 @@ private final class CompletionList: NSView, NSTableViewDataSource, NSTableViewDe
         addSubview(scroll)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }

@@ -1,0 +1,43 @@
+name: Check
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install tools
+        run: |
+          # The image's formula index is stale and its SwiftFormat too old
+          # for .swiftformat; update first so brew bundle upgrades it.
+          brew update --quiet
+          brew bundle
+          rustup toolchain install
+          swiftformat --version; swiftlint version; clang-format --version
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            core/target
+          key: cargo-${{ hashFiles('core/Cargo.lock', 'rust-toolchain.toml') }}
+      - run: scripts/check.sh
+
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install
+      - uses: actions/cache@v4
+        with:
+          path: third_party/cef
+          key: cef-${{ hashFiles('scripts/fetch-cef.sh') }}
+      - run: scripts/build.sh

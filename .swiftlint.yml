@@ -1,0 +1,117 @@
+# SwiftLint rules for shell/ and bench/. scripts/check.sh runs them through
+# scripts/swiftlint-ratchet.py with --strict, so a warning fails the check
+# like an error does. Code that broke a size rule before it existed is
+# listed in .swiftlint-baseline.json and may shrink but not grow.
+included:
+  - shell
+  - bench
+excluded:
+  - build
+  - third_party
+
+opt_in_rules:
+  - array_init
+  - collection_alignment
+  - contains_over_filter_count
+  - contains_over_filter_is_empty
+  - contains_over_first_not_nil
+  - contains_over_range_nil_comparison
+  - discouraged_none_name
+  - discouraged_object_literal
+  - empty_collection_literal
+  - empty_string
+  - explicit_init
+  - fatal_error_message
+  - first_where
+  - flatmap_over_map_reduce
+  - identical_operands
+  - last_where
+  - legacy_multiple
+  - local_doc_comment
+  - lower_acl_than_parent
+  - nimble_operator
+  - operator_usage_whitespace
+  - overridden_super_call
+  - prefer_self_in_static_references
+  - prefer_self_type_over_type_of_self
+  - prefer_zero_over_explicit_init
+  - private_swiftui_state
+  - prohibited_super_call
+  - reduce_into
+  - redundant_nil_coalescing
+  - redundant_type_annotation
+  - sorted_first_last
+  - static_operator
+  - toggle_bool
+  - unavailable_function
+  - unneeded_parentheses_in_closure_argument
+  - unowned_variable_capture
+  - weak_delegate
+  - yoda_condition
+
+disabled_rules:
+  # SwiftFormat owns layout.
+  - opening_brace
+  - trailing_comma
+  - vertical_parameter_alignment
+  - modifier_order
+  - statement_position
+  # Short names like x, y, id and dx are the clearest in drawing code.
+  - identifier_name
+  - type_name
+  # String(decoding:as:) is how the shell reads page and network bytes on
+  # purpose: invalid UTF-8 shows as a replacement character, not as nothing.
+  - optional_data_string_conversion
+
+# Size and complexity limits. Past the warning level a type, file or function
+# is doing more than one job and should be split.
+line_length:
+  warning: 140
+  error: 200
+  ignores_comments: true
+  ignores_urls: true
+  ignores_interpolated_strings: true
+file_length:
+  warning: 600
+  error: 1000
+  ignore_comment_only_lines: true
+type_body_length:
+  warning: 300
+  error: 500
+function_body_length:
+  warning: 60
+  error: 100
+function_parameter_count:
+  warning: 6
+  error: 8
+cyclomatic_complexity:
+  warning: 12
+  error: 20
+  ignores_case_statements: true
+nesting:
+  type_level: 2
+  function_level: 3
+large_tuple:
+  warning: 3
+  error: 4
+
+custom_rules:
+  no_print:
+    name: No print
+    regex: '^\s*(debugPrint|print|dump)\('
+    message: Use os.Logger, or write to FileHandle.standardError in command-line tools.
+    severity: warning
+    excluded:
+      - bench/.*
+      - shell/cli/.*
+  no_swiftui:
+    name: No SwiftUI
+    regex: '^\s*import\s+SwiftUI\b'
+    message: The shell is AppKit only; views update just the parts that changed.
+    severity: error
+  cef_only_in_engine:
+    name: CEF stays in the engine
+    regex: '\bCef[A-Z]\w*|\bcef_\w+'
+    message: Only shell/engine and shell/helper talk to CEF; go through MBEngine.
+    match_kinds: [identifier, typeidentifier]
+    severity: error

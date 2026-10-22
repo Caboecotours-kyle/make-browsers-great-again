@@ -21,6 +21,7 @@ final class ExtensionButtonsView: FlippedView {
         update()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func update() {
@@ -132,6 +133,7 @@ private final class ExtensionButton: HoverView {
         addSubview(badge)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func show(_ item: InstalledExtension, state: ExtensionHost.ActionState) {
@@ -301,13 +303,14 @@ extension NSColor {
     }
 }
 
+@MainActor
 extension InstalledExtension {
     /// Icons read from disk, by file (each version of an extension has a
     /// directory of its own).
-    @MainActor private static var icons: [URL: NSImage] = [:]
+    private static var icons: [URL: NSImage] = [:]
 
     /// Its icon, or its initial on a tile when it has none, as Chrome shows.
-    @MainActor func icon(size: Int) -> NSImage? {
+    func icon(size: Int) -> NSImage? {
         if let file = iconFile(size: size) {
             if let known = Self.icons[file] { return known }
             if let image = NSImage(contentsOf: file) {

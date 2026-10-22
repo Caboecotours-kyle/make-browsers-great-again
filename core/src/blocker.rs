@@ -36,7 +36,7 @@ const CACHE_FILE: &str = "engine.dat";
 /// Runs first on every page: a style element for hiding rules
 /// (`window.__mbgaAddCSS`), the page's own rules and scriptlets, and the
 /// collector that reports new class and id names in batches.
-const PAGE_SCRIPT: &str = r#"(function(){if(window.__mbgaAddCSS)return;var style=null,queue=[];
+const PAGE_SCRIPT: &str = r"(function(){if(window.__mbgaAddCSS)return;var style=null,queue=[];
 function add(c){if(!c)return;var r=document.documentElement;if(!r){queue.push(c);return;}
 if(!style||!style.isConnected){style=document.createElement('style');r.appendChild(style);}
 style.textContent+=c+'\n';}
@@ -44,11 +44,11 @@ window.__mbgaAddCSS=add;
 if(!document.documentElement){new MutationObserver(function(_,o){if(document.documentElement){o.disconnect();queue.splice(0).forEach(add);}}).observe(document,{childList:true});}
 add(__CSS__);
 try{__SCRIPTLETS__}catch(e){}
-__COLLECT__})();"#;
+__COLLECT__})();";
 
 /// Reports class and id names not seen before, at most every 300 ms and
 /// 500 of each per message, for generic hiding rules.
-const COLLECTOR: &str = r#"var seenC=new Set(),seenI=new Set(),pending=[],timer=0;
+const COLLECTOR: &str = r"var seenC=new Set(),seenI=new Set(),pending=[],timer=0;
 function scan(el,c,i){if(el.classList)for(var k of el.classList)if(!seenC.has(k)){seenC.add(k);c.push(k);}
 if(el.id&&!seenI.has(el.id)){seenI.add(el.id);i.push(el.id);}}
 function flush(){timer=0;var c=[],i=[];for(var n of pending.splice(0)){if(n.nodeType!==1)continue;scan(n,c,i);
@@ -56,7 +56,7 @@ var all=n.querySelectorAll('[class],[id]');for(var j=0;j<all.length;j++)scan(all
 for(var s=0;s<c.length||s<i.length;s+=500)console.debug('__mbga_cosmetic:'+JSON.stringify({c:c.slice(s,s+500),i:i.slice(s,s+500)}));}
 function later(n){pending.push(n);if(!timer)timer=setTimeout(flush,300);}
 function start(){later(document.documentElement);new MutationObserver(function(ms){for(var m of ms){if(m.type==='attributes')later(m.target);else m.addedNodes.forEach(later);}}).observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','id']});}
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();"#;
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();";
 
 /// What the page script's collector sends.
 #[derive(serde::Deserialize)]
@@ -219,9 +219,8 @@ fn use_scriptlets(engine: &mut Engine, dir: &Path) {
     // The reader panics on files it doesn't understand; a broken download
     // must not take the browser down.
     #[allow(deprecated)]
-    let resources = std::panic::catch_unwind(|| {
-        adblock::resources::resource_assembler::assemble_scriptlet_resources(&path)
-    });
+    let resources =
+        std::panic::catch_unwind(|| adblock::resources::resource_assembler::assemble_scriptlet_resources(&path));
     if let Ok(resources) = resources {
         engine.use_resources(resources);
     }

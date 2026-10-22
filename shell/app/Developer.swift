@@ -219,21 +219,21 @@ struct DevicePreset: Equatable {
     private static let android = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Mobile Safari/537.36"
 
     static let all = [
-        DevicePreset(name: "iPhone 16 Pro", symbol: "iphone", width: 402, height: 874, userAgent: iPhone),
-        DevicePreset(name: "iPhone SE", symbol: "iphone.gen1", width: 375, height: 667, userAgent: iPhone),
-        DevicePreset(name: "Pixel 9", symbol: "smartphone", width: 412, height: 923, userAgent: android),
-        DevicePreset(name: "iPad mini", symbol: "ipad", width: 744, height: 1133, userAgent: iPad),
-        DevicePreset(name: "iPad Pro 11″", symbol: "ipad", width: 834, height: 1210, userAgent: iPad),
-        DevicePreset(name: "Laptop", symbol: "laptopcomputer", width: 1280, height: 800, userAgent: nil),
+        Self(name: "iPhone 16 Pro", symbol: "iphone", width: 402, height: 874, userAgent: iPhone),
+        Self(name: "iPhone SE", symbol: "iphone.gen1", width: 375, height: 667, userAgent: iPhone),
+        Self(name: "Pixel 9", symbol: "smartphone", width: 412, height: 923, userAgent: android),
+        Self(name: "iPad mini", symbol: "ipad", width: 744, height: 1133, userAgent: iPad),
+        Self(name: "iPad Pro 11″", symbol: "ipad", width: 834, height: 1210, userAgent: iPad),
+        Self(name: "Laptop", symbol: "laptopcomputer", width: 1280, height: 800, userAgent: nil),
     ]
 }
 
 enum NetworkPreset: CaseIterable {
-    case none, fast4G, slow4G, threeG, offline
+    case unthrottled, fast4G, slow4G, threeG, offline
 
     var title: String {
         switch self {
-        case .none: "No Throttling"
+        case .unthrottled: "No Throttling"
         case .fast4G: "Fast 4G"
         case .slow4G: "Slow 4G"
         case .threeG: "3G"
@@ -244,7 +244,7 @@ enum NetworkPreset: CaseIterable {
     /// Round trip in ms and bytes per second each way, as Chrome's presets.
     var conditions: (latency: Double, throughput: Double) {
         switch self {
-        case .none: (0, 0)
+        case .unthrottled: (0, 0)
         case .fast4G: (60, 9_000_000 / 8)
         case .slow4G: (150, 1_600_000 / 8)
         case .threeG: (300, 780_000 / 8)
@@ -256,7 +256,7 @@ enum NetworkPreset: CaseIterable {
 enum ColorSchemePreview: String {
     case system, dark, light
 
-    var next: ColorSchemePreview {
+    var next: Self {
         switch self {
         case .system: .dark
         case .dark: .light
@@ -287,7 +287,7 @@ struct DevTabState: Equatable {
     var reducedMotion = false
     var cacheDisabled = false
     var scriptsDisabled = false
-    var network = NetworkPreset.none
+    var network = NetworkPreset.unthrottled
     var device: DevicePreset?
     var landscape = false
     var picking = false
@@ -392,6 +392,7 @@ final class DevToolbarView: NSView {
         update()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var isFlipped: Bool { true }
@@ -485,9 +486,9 @@ final class DevToolbarView: NSView {
     /// Where the pill's centre sits at its anchor at `width`.
     private func anchorCenter(width: CGFloat) -> CGFloat {
         switch anchor {
-        case .leading: return 12 + width / 2
-        case .center: return bounds.width / 2
-        case .trailing: return bounds.width - 12 - width / 2
+        case .leading: 12 + width / 2
+        case .center: bounds.width / 2
+        case .trailing: bounds.width - 12 - width / 2
         }
     }
 
@@ -649,6 +650,7 @@ final class DevPillView: HoverView {
         more.action = { [weak self] in self?.showMenu(self?.moreMenu(), under: self?.more) }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     // MARK: Content
@@ -690,7 +692,7 @@ final class DevPillView: HoverView {
             let size = state.viewport ?? .zero
             return "\(d.name), \(Int(size.width)) × \(Int(size.height))"
         } ?? "Device Preview"
-        more.isOn = state.cacheDisabled || state.scriptsDisabled || state.network != .none || state.reducedMotion
+        more.isOn = state.cacheDisabled || state.scriptsDisabled || state.network != .unthrottled || state.reducedMotion
         needsLayout = true
     }
 
@@ -1014,6 +1016,7 @@ final class DevButton: HoverView {
         setSymbol(symbol)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func setSymbol(_ name: String) {
@@ -1063,6 +1066,7 @@ final class DevCount: HoverView {
         addSubview(label)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     var preferredWidth: CGFloat { 4 + 12 + 3 + label.textWidth }
@@ -1117,6 +1121,7 @@ final class DevPhoneViewController: NSViewController {
         super.init(nibName: nil, bundle: nil)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func loadView() {

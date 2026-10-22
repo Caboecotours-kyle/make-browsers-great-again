@@ -41,6 +41,7 @@ final class SidebarRail: FlippedView {
         update()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     private var stale = false
@@ -107,7 +108,7 @@ final class SidebarRail: FlippedView {
             y += 9
         }
         place(favorites)
-        if favorites > 0 && pinned > 0 { divider() }
+        if favorites > 0, pinned > 0 { divider() }
         place(pinned)
         divider()
         add.frame = NSRect(x: (bounds.width - 28) / 2, y: y + 4, width: 28, height: 24)
@@ -138,6 +139,7 @@ private final class RailTabView: HoverView {
         addSubview(equalizer)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func configure(_ tab: TabInfo, space: SpaceInfo) {
@@ -196,6 +198,7 @@ private final class RailSpaceSwitcher: HoverView {
         addSubview(label)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func update() {

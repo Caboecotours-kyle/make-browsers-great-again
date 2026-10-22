@@ -33,16 +33,19 @@ pub fn load(path: &Path) -> Result<ImportedProfile, String> {
         id: "Safari".into(),
         name: "Safari".into(),
         favorites: Vec::new(),
-        spaces: vec![ImportedSpace { position: 0, name: "Safari".into(), icon: None, color: None, pinned, today: Vec::new() }],
+        spaces: vec![ImportedSpace {
+            position: 0,
+            name: "Safari".into(),
+            icon: None,
+            color: None,
+            pinned,
+            today: Vec::new(),
+        }],
     })
 }
 
 fn children(node: &Value) -> impl Iterator<Item = &Value> {
-    node.as_dictionary()
-        .and_then(|d| d.get("Children"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
+    node.as_dictionary().and_then(|d| d.get("Children")).and_then(Value::as_array).into_iter().flatten()
 }
 
 fn items(list: &Value) -> Vec<Item> {

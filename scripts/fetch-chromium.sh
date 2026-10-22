@@ -4,13 +4,13 @@
 # CEF is built on. Installs into third_party/chromium/.
 set -euo pipefail
 
-POSITION=1689411  # refs/heads/main@{#1689411}, 154.0.8037.0
+POSITION=1689411 # refs/heads/main@{#1689411}, 154.0.8037.0
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/third_party/chromium"
 DL="$ROOT/third_party/chromium-dl"
 URL="https://storage.googleapis.com/chromium-browser-snapshots/Mac_Arm/$POSITION/chrome-mac.zip"
 
-if [ -d "$DEST/chrome-mac/Chromium.app" ]; then
+if [[ -d "$DEST/chrome-mac/Chromium.app" ]]; then
   echo "Chromium already in $DEST"
   exit 0
 fi

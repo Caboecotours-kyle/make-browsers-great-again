@@ -5,13 +5,13 @@
 
 #import "MBEngine.h"
 
-#include <algorithm>
-#include <atomic>
-#include <cmath>
-#include <cerrno>
-#include <cstring>
 #include <fcntl.h>
 #include <unistd.h>
+#include <algorithm>
+#include <atomic>
+#include <cerrno>
+#include <cmath>
+#include <cstring>
 #include <functional>
 #include <map>
 #include <set>
@@ -112,36 +112,24 @@ constexpr char kFormTokenPlaceholder[] = "__MBGA_TOKEN__";
 const char* RequestKind(cef_resource_type_t type) {
   switch (type) {
     case RT_MAIN_FRAME:
-    case RT_NAVIGATION_PRELOAD_MAIN_FRAME:
-      return nullptr;
+    case RT_NAVIGATION_PRELOAD_MAIN_FRAME: return nullptr;
     case RT_SUB_FRAME:
-    case RT_NAVIGATION_PRELOAD_SUB_FRAME:
-      return "subdocument";
-    case RT_STYLESHEET:
-      return "stylesheet";
+    case RT_NAVIGATION_PRELOAD_SUB_FRAME: return "subdocument";
+    case RT_STYLESHEET: return "stylesheet";
     case RT_SCRIPT:
     case RT_WORKER:
     case RT_SHARED_WORKER:
-    case RT_SERVICE_WORKER:
-      return "script";
+    case RT_SERVICE_WORKER: return "script";
     case RT_IMAGE:
-    case RT_FAVICON:
-      return "image";
-    case RT_FONT_RESOURCE:
-      return "font";
+    case RT_FAVICON: return "image";
+    case RT_FONT_RESOURCE: return "font";
     case RT_OBJECT:
-    case RT_PLUGIN_RESOURCE:
-      return "object";
-    case RT_MEDIA:
-      return "media";
-    case RT_XHR:
-      return "xmlhttprequest";
-    case RT_PING:
-      return "ping";
-    case RT_CSP_REPORT:
-      return "csp_report";
-    default:
-      return "other";
+    case RT_PLUGIN_RESOURCE: return "object";
+    case RT_MEDIA: return "media";
+    case RT_XHR: return "xmlhttprequest";
+    case RT_PING: return "ping";
+    case RT_CSP_REPORT: return "csp_report";
+    default: return "other";
   }
 }
 
@@ -273,9 +261,9 @@ class BridgeResourceHandler : public CefResourceHandler {
       }
       g_extension_bridge(profile, extension, browser_id, path, text,
                          ^(NSString* json) {
-        self->data_ = json.UTF8String ?: "null";
-        callback->Continue();
-      });
+                           self->data_ = json.UTF8String ?: "null";
+                           callback->Continue();
+                         });
     });
     return true;
   }
@@ -397,8 +385,8 @@ CefRefPtr<CefRequestContext> ContextForPath(const std::string& path) {
 
 NSString* UniqueDownloadPath(NSString* suggested) {
   NSString* dir = [NSSearchPathForDirectoriesInDomains(
-      NSDownloadsDirectory, NSUserDomainMask, YES) firstObject]
-      ?: NSTemporaryDirectory();
+                      NSDownloadsDirectory, NSUserDomainMask, YES) firstObject]
+                      ?: NSTemporaryDirectory();
   NSString* name = suggested.length ? suggested.lastPathComponent : @"download";
   NSString* base = name.stringByDeletingPathExtension;
   NSString* ext = name.pathExtension;
@@ -420,7 +408,8 @@ void AskPermission(CefRefPtr<CefBrowser> browser,
                    void (^done)(BOOL allowed)) {
   NSString* host = [NSURL URLWithString:ToNS(origin)].host ?: ToNS(origin);
   MBPermissionPrompt* prompt = [[MBPermissionPrompt alloc]
-      initWithMessage:[NSString stringWithFormat:@"%@ wants to %@", host, action]
+      initWithMessage:[NSString
+                          stringWithFormat:@"%@ wants to %@", host, action]
                  done:done];
   NSView* browser_view =
       (__bridge NSView*)browser->GetHost()->GetWindowHandle();
@@ -456,8 +445,8 @@ NSString* DescribePrompt(uint32_t permissions) {
   if (permissions & CEF_PERMISSION_TYPE_NOTIFICATIONS) {
     return @"show notifications";
   }
-  if (permissions & (CEF_PERMISSION_TYPE_CAMERA_STREAM |
-                     CEF_PERMISSION_TYPE_MIC_STREAM)) {
+  if (permissions &
+      (CEF_PERMISSION_TYPE_CAMERA_STREAM | CEF_PERMISSION_TYPE_MIC_STREAM)) {
     return @"use your camera or microphone";
   }
   if (permissions & CEF_PERMISSION_TYPE_CLIPBOARD) {
@@ -494,9 +483,9 @@ bool IsReservedShortcut(NSEvent* event) {
     // Non-Latin layouts (e.g. Cyrillic): match by physical key instead, as
     // the menu does.
     static const std::map<unsigned short, unichar> kAnsiKeys = {
-        {17, 't'}, {13, 'w'}, {37, 'l'}, {12, 'q'}, {18, '1'}, {19, '2'},
-        {20, '3'}, {21, '4'}, {23, '5'}, {22, '6'}, {26, '7'}, {28, '8'},
-        {25, '9'}};
+        {17, 't'}, {13, 'w'}, {37, 'l'}, {12, 'q'}, {18, '1'},
+        {19, '2'}, {20, '3'}, {21, '4'}, {23, '5'}, {22, '6'},
+        {26, '7'}, {28, '8'}, {25, '9'}};
     auto it = kAnsiKeys.find(event.keyCode);
     if (it == kAnsiKeys.end()) {
       return false;
@@ -691,10 +680,11 @@ class BaseClient : public CefClient,
   }
   CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
 
-  bool OnBeforeDownload(CefRefPtr<CefBrowser> browser,
-                        CefRefPtr<CefDownloadItem> download_item,
-                        const CefString& suggested_name,
-                        CefRefPtr<CefBeforeDownloadCallback> callback) override {
+  bool OnBeforeDownload(
+      CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefDownloadItem> download_item,
+      const CefString& suggested_name,
+      CefRefPtr<CefBeforeDownloadCallback> callback) override {
     callback->Continue(UniqueDownloadPath(ToNS(suggested_name)).UTF8String,
                        false);
     return true;
@@ -895,20 +885,21 @@ class DevToolsClient : public BaseClient, public CefLifeSpanHandler {
   // The window comes a little after the browser; ask until it's there.
   void ReportWindow(CefRefPtr<CefBrowser> browser, int tries) {
     CefRefPtr<DevToolsClient> client(this);
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 25 * NSEC_PER_MSEC),
-                   dispatch_get_main_queue(), ^{
-                     NSView* content =
-                         (__bridge NSView*)browser->GetHost()->GetWindowHandle();
-                     if (DebugEvents()) {
-                       NSLog(@"devtools window: view=%@ window=%@", content,
-                             content.window);
-                     }
-                     if (content.window) {
-                       [client->view_ engineDevToolsOpened:content.window];
-                     } else if (tries > 0) {
-                       client->ReportWindow(browser, tries - 1);
-                     }
-                   });
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW, 25 * NSEC_PER_MSEC),
+        dispatch_get_main_queue(), ^{
+          NSView* content =
+              (__bridge NSView*)browser->GetHost()->GetWindowHandle();
+          if (DebugEvents()) {
+            NSLog(@"devtools window: view=%@ window=%@", content,
+                  content.window);
+          }
+          if (content.window) {
+            [client->view_ engineDevToolsOpened:content.window];
+          } else if (tries > 0) {
+            client->ReportWindow(browser, tries - 1);
+          }
+        });
   }
 
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
@@ -1090,10 +1081,10 @@ class WebClient : public BaseClient,
       return;
     }
     // Replacing the blank page keeps it out of the tab's history.
-    NSData* json = [NSJSONSerialization
-        dataWithJSONObject:@[ @(prepared_url_.c_str()) ]
-                   options:0
-                     error:nil];
+    NSData* json =
+        [NSJSONSerialization dataWithJSONObject:@[ @(prepared_url_.c_str()) ]
+                                        options:0
+                                          error:nil];
     NSString* array = [[NSString alloc] initWithData:json
                                             encoding:NSUTF8StringEncoding];
     NSString* script =
@@ -1264,8 +1255,8 @@ class WebClient : public BaseClient,
     if (web && !g_form_script.empty()) {
       form_token_ = NSUUID.UUID.UUIDString.UTF8String;
       std::string form = g_form_script;
-      for (size_t at = form.find(kFormTokenPlaceholder); at != std::string::npos;
-           at = form.find(kFormTokenPlaceholder, at)) {
+      for (size_t at = form.find(kFormTokenPlaceholder);
+           at != std::string::npos; at = form.find(kFormTokenPlaceholder, at)) {
         form.replace(at, strlen(kFormTokenPlaceholder), form_token_);
       }
       frame->ExecuteJavaScript(form, "", 0);
@@ -1278,11 +1269,13 @@ class WebClient : public BaseClient,
     if (frame->IsMain()) {
       frame->ExecuteJavaScript(kThemeColorScript, "", 0);
       // A failed load ends with the error page, which has no status.
-      [view_ engineDidFinishLoad:load_error_ != 0 ? load_error_ : httpStatusCode
-                        duration:CFAbsoluteTimeGetCurrent() - navigation_started_];
+      [view_
+          engineDidFinishLoad:load_error_ != 0 ? load_error_ : httpStatusCode
+                     duration:CFAbsoluteTimeGetCurrent() - navigation_started_];
       if (DebugEvents()) {
-        NSLog(@"load end %s (%d) after %.0f ms", frame->GetURL().ToString().c_str(),
-              httpStatusCode, (CFAbsoluteTimeGetCurrent() - created_) * 1000);
+        NSLog(@"load end %s (%d) after %.0f ms",
+              frame->GetURL().ToString().c_str(), httpStatusCode,
+              (CFAbsoluteTimeGetCurrent() - created_) * 1000);
       }
     }
   }
@@ -1295,8 +1288,9 @@ class WebClient : public BaseClient,
     // Aborted loads were replaced by another navigation.
     if (frame->IsMain() && errorCode != ERR_ABORTED) {
       load_error_ = errorCode;
-      [view_ engineDidFinishLoad:errorCode
-                        duration:CFAbsoluteTimeGetCurrent() - navigation_started_];
+      [view_
+          engineDidFinishLoad:errorCode
+                     duration:CFAbsoluteTimeGetCurrent() - navigation_started_];
     }
   }
 
@@ -1361,20 +1355,22 @@ class WebClient : public BaseClient,
     NSString* scheme = target.scheme.lowercaseString;
     static NSSet<NSString*>* web = [NSSet setWithArray:@[
       @"http", @"https", @"file", @"about", @"data", @"blob", @"javascript",
-      @"filesystem", @"ws", @"wss", @"chrome", @"chrome-extension",
-      @"devtools", @"view-source"
+      @"filesystem", @"ws", @"wss", @"chrome", @"chrome-extension", @"devtools",
+      @"view-source"
     ]];
     if (!scheme || [web containsObject:scheme]) {
       return false;
     }
-    NSURL* app = [NSWorkspace.sharedWorkspace URLForApplicationToOpenURL:target];
+    NSURL* app =
+        [NSWorkspace.sharedWorkspace URLForApplicationToOpenURL:target];
     if (!app) {
       return false;
     }
     NSString* name = [NSFileManager.defaultManager displayNameAtPath:app.path]
                          .stringByDeletingPathExtension;
     AskPermission(browser, browser->GetMainFrame()->GetURL(),
-                  [NSString stringWithFormat:@"open %@", name], ^(BOOL allowed) {
+                  [NSString stringWithFormat:@"open %@", name],
+                  ^(BOOL allowed) {
                     if (allowed) {
                       [NSWorkspace.sharedWorkspace openURL:target];
                     }
@@ -1415,17 +1411,17 @@ class WebClient : public BaseClient,
                      error:nil];
     NSString* host_array = [[NSString alloc] initWithData:host_json
                                                  encoding:NSUTF8StringEncoding];
-    NSString* guarded = [NSString
-        stringWithFormat:@"if(window===window.top&&location.hostname===%@[0]){%@}",
-                         host_array, script];
+    NSString* guarded =
+        [NSString stringWithFormat:
+                      @"if(window===window.top&&location.hostname===%@[0]){%@}",
+                      host_array, script];
     CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
     params->SetString("source", guarded.UTF8String);
     pending_add_ = host->ExecuteDevToolsMethod(
         0, "Page.addScriptToEvaluateOnNewDocument", params);
     if (DebugEvents()) {
       NSLog(@"page script for %s registered as message %d (%lu bytes)",
-            url.ToString().c_str(), pending_add_,
-            (unsigned long)script.length);
+            url.ToString().c_str(), pending_add_, (unsigned long)script.length);
     }
     return pending_add_ != 0;
   }
@@ -1507,7 +1503,9 @@ class WebClient : public BaseClient,
     NSData* data = [NSData dataWithBytesNoCopy:const_cast<void*>(message)
                                         length:message_size
                                   freeWhenDone:NO];
-    NSDictionary* object = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    NSDictionary* object = [NSJSONSerialization JSONObjectWithData:data
+                                                           options:0
+                                                             error:nil];
     if (![object isKindOfClass:NSDictionary.class]) {
       return false;
     }
@@ -1519,7 +1517,9 @@ class WebClient : public BaseClient,
       RawReply done = std::move(reply->second);
       session_replies_.erase(reply);
       id payload = object[@"error"] ?: object[@"result"] ?: @{};
-      NSData* json = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+      NSData* json = [NSJSONSerialization dataWithJSONObject:payload
+                                                     options:0
+                                                       error:nil];
       done(object[@"error"] == nil,
            std::string(static_cast<const char*>(json.bytes), json.length));
       return true;
@@ -1533,7 +1533,9 @@ class WebClient : public BaseClient,
     return false;
   }
 
-  void HandleEvent(CefRefPtr<CefBrowser> browser, NSString* method, NSDictionary* params) {
+  void HandleEvent(CefRefPtr<CefBrowser> browser,
+                   NSString* method,
+                   NSDictionary* params) {
     if (![params isKindOfClass:NSDictionary.class]) {
       return;
     }
@@ -1546,11 +1548,12 @@ class WebClient : public BaseClient,
       [view_ engineFrameAttached:info[@"targetId"] session:session];
       // Frames inside it too, and it mustn't wait for a debugger.
       CallInSession(browser, "Target.setAutoAttach",
-                    "{\"autoAttach\":true,\"waitForDebuggerOnStart\":false,\"flatten\":true}",
+                    "{\"autoAttach\":true,\"waitForDebuggerOnStart\":false,"
+                    "\"flatten\":true}",
                     session.UTF8String, [](bool, const std::string&) {});
       if ([params[@"waitingForDebugger"] boolValue]) {
-        CallInSession(browser, "Runtime.runIfWaitingForDebugger", "", session.UTF8String,
-                      [](bool, const std::string&) {});
+        CallInSession(browser, "Runtime.runIfWaitingForDebugger", "",
+                      session.UTF8String, [](bool, const std::string&) {});
       }
     } else if ([method isEqualToString:@"Target.detachedFromTarget"]) {
       if (NSString* session = params[@"sessionId"]) {
@@ -1567,7 +1570,8 @@ class WebClient : public BaseClient,
     }
     following_frames_ = true;
     CallRaw(browser, "Target.setAutoAttach",
-            "{\"autoAttach\":true,\"waitForDebuggerOnStart\":false,\"flatten\":true}",
+            "{\"autoAttach\":true,\"waitForDebuggerOnStart\":false,\"flatten\":"
+            "true}",
             [](bool, const std::string&) {});
   }
 
@@ -1585,14 +1589,18 @@ class WebClient : public BaseClient,
     } mutableCopy];
     if (!params.empty()) {
       NSData* data = [NSData dataWithBytes:params.data() length:params.size()];
-      id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+      id object = [NSJSONSerialization JSONObjectWithData:data
+                                                  options:0
+                                                    error:nil];
       if (![object isKindOfClass:NSDictionary.class]) {
         done(false, "{\"message\":\"params must be a JSON object\"}");
         return;
       }
       message[@"params"] = object;
     }
-    NSData* json = [NSJSONSerialization dataWithJSONObject:message options:0 error:nil];
+    NSData* json = [NSJSONSerialization dataWithJSONObject:message
+                                                   options:0
+                                                     error:nil];
     session_replies_[message_id] = std::move(done);
     if (!browser->GetHost()->SendDevToolsMessage(json.bytes, json.length)) {
       RawReply failed = std::move(session_replies_[message_id]);
@@ -1614,16 +1622,23 @@ class WebClient : public BaseClient,
       NSData* data = [NSData dataWithBytesNoCopy:const_cast<void*>(params)
                                           length:params_size
                                     freeWhenDone:NO];
-      id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-      [view_ engineDevToolsEvent:@(name.c_str())
-                          params:[object isKindOfClass:NSDictionary.class] ? object : @{}];
+      id object = [NSJSONSerialization JSONObjectWithData:data
+                                                  options:0
+                                                    error:nil];
+      [view_
+          engineDevToolsEvent:@(name.c_str())
+                       params:[object isKindOfClass:NSDictionary.class] ? object
+                                                                        : @{}];
     }
-    if (name.rfind("Target.", 0) == 0 || (recording_network_ && name.rfind("Network.", 0) == 0)) {
+    if (name.rfind("Target.", 0) == 0 ||
+        (recording_network_ && name.rfind("Network.", 0) == 0)) {
       NSData* data = [NSData dataWithBytesNoCopy:const_cast<void*>(params)
                                           length:params_size
                                     freeWhenDone:NO];
       HandleEvent(browser, @(name.c_str()),
-                  [NSJSONSerialization JSONObjectWithData:data options:0 error:nil]);
+                  [NSJSONSerialization JSONObjectWithData:data
+                                                  options:0
+                                                    error:nil]);
       return;
     }
     if (name == "Overlay.inspectNodeRequested" && picking_) {
@@ -1633,8 +1648,9 @@ class WebClient : public BaseClient,
         return;
       }
       CefRefPtr<CefDictionaryValue> args = CefDictionaryValue::Create();
-      args->SetInt("backendNodeId",
-                   int(Number(value->GetDictionary()->GetValue("backendNodeId"))));
+      args->SetInt(
+          "backendNodeId",
+          int(Number(value->GetDictionary()->GetValue("backendNodeId"))));
       SetPicking(browser, false);
       if (inspector_picks_) {
         [view_ engineDidPickNode:args->GetInt("backendNodeId")];
@@ -1652,7 +1668,9 @@ class WebClient : public BaseClient,
              if (quad && quad->GetSize() == 8) {
                // Page zoom scales CSS pixels; the point is in view points.
                double zoom = pow(1.2, browser->GetHost()->GetZoomLevel());
-               auto corner = [&](size_t i) { return Number(quad->GetValue(i)); };
+               auto corner = [&](size_t i) {
+                 return Number(quad->GetValue(i));
+               };
                at = CefPoint(int((corner(0) + corner(4)) / 2 * zoom),
                              int((corner(1) + corner(5)) / 2 * zoom));
              }
@@ -1752,7 +1770,8 @@ class WebClient : public BaseClient,
                            bool cache_disabled,
                            double latency,
                            double throughput) {
-    bool needed = cache_disabled || latency != 0 || throughput != 0 || recording_network_ || forwarding_;
+    bool needed = cache_disabled || latency != 0 || throughput != 0 ||
+                  recording_network_ || forwarding_;
     if (needed && !network_enabled_) {
       Call(browser, "Network.enable", nullptr);
     }
@@ -1762,7 +1781,8 @@ class WebClient : public BaseClient,
     CefRefPtr<CefDictionaryValue> conditions = CefDictionaryValue::Create();
     conditions->SetBool("offline", throughput < 0);
     conditions->SetDouble("latency", std::max(latency, 0.0));
-    conditions->SetDouble("downloadThroughput", throughput > 0 ? throughput : -1);
+    conditions->SetDouble("downloadThroughput",
+                          throughput > 0 ? throughput : -1);
     conditions->SetDouble("uploadThroughput", throughput > 0 ? throughput : -1);
     Call(browser, "Network.emulateNetworkConditions", conditions);
     if (!needed && network_enabled_) {
@@ -1771,7 +1791,8 @@ class WebClient : public BaseClient,
     network_enabled_ = needed;
   }
 
-  void CaptureFullPage(CefRefPtr<CefBrowser> browser, void (^completion)(NSData*)) {
+  void CaptureFullPage(CefRefPtr<CefBrowser> browser,
+                       void (^completion)(NSData*)) {
     CefRefPtr<WebClient> client(this);
     Call(browser, "Page.getLayoutMetrics", nullptr,
          [client, browser, completion](CefRefPtr<CefDictionaryValue> metrics) {
@@ -1886,12 +1907,13 @@ class WebClient : public BaseClient,
     MBWebView* view = view_;
     extension_items_.clear();
     menu_context_ = nil;
-    if (![view.delegate respondsToSelector:@selector(webView:contextMenuItemsFor:)]) {
+    if (![view.delegate
+            respondsToSelector:@selector(webView:contextMenuItemsFor:)]) {
       return;
     }
     NSDictionary* context = MenuContext(params);
-    NSArray<NSDictionary*>* items =
-        [view.delegate webView:view contextMenuItemsFor:context];
+    NSArray<NSDictionary*>* items = [view.delegate webView:view
+                                       contextMenuItemsFor:context];
     if (items.count == 0) {
       return;
     }
@@ -1950,9 +1972,8 @@ class WebClient : public BaseClient,
         return true;
       case kCopyLink:
         [NSPasteboard.generalPasteboard clearContents];
-        [NSPasteboard.generalPasteboard
-            setString:ToNS(params->GetLinkUrl())
-              forType:NSPasteboardTypeString];
+        [NSPasteboard.generalPasteboard setString:ToNS(params->GetLinkUrl())
+                                          forType:NSPasteboardTypeString];
         return true;
       case kInspect:
         if (inspector_picks_) {
@@ -2087,7 +2108,8 @@ class WebClient : public BaseClient,
 
 @end
 
-// ---------------------------------------------------------------- MBApplication
+// ----------------------------------------------------------------
+// MBApplication
 
 @interface MBApplication () <CefAppProtocol>
 @end
@@ -2123,7 +2145,8 @@ class WebClient : public BaseClient,
     if (DebugEvents()) {
       NSLog(@"Cmd+Q over a sheet: closing it, then quitting");
     }
-    [sheet_parent endSheet:NSApp.keyWindow returnCode:NSAlertSecondButtonReturn];
+    [sheet_parent endSheet:NSApp.keyWindow
+                returnCode:NSAlertSecondButtonReturn];
     dispatch_async(dispatch_get_main_queue(), ^{
       [NSApp terminate:nil];
     });
@@ -2197,17 +2220,17 @@ class CookieKeys : public CefCookieVisitor {
 @implementation MBCookie
 @end
 
-// --------------------------------------------------------------------- MBEngine
+// ---------------------------------------------------------------------
+// MBEngine
 
 @implementation MBEngine
 
-+ (void)showExtensionsForProfilePath:(NSString*)profilePath
-                                 url:(NSString*)url {
++ (void)showExtensionsForProfilePath:(NSString*)profilePath url:(NSString*)url {
   ExtensionsClient::Show(profilePath.UTF8String, url.UTF8String);
 }
 
 + (void)setExtensionBridge:(MBExtensionBridge)bridge
-              pageScript:(nullable MBPageScript)script {
+                pageScript:(nullable MBPageScript)script {
   g_extension_bridge = bridge;
   g_extension_script = script;
 }
@@ -2261,11 +2284,13 @@ class CookieKeys : public CefCookieVisitor {
 
 + (void)importCookies:(NSArray<MBCookie*>*)cookies
       intoProfilePath:(NSString*)profilePath
-           completion:(void (^)(NSInteger added, NSInteger kept,
+           completion:(void (^)(NSInteger added,
+                                NSInteger kept,
                                 NSInteger refused))completion {
   // Each cookie with the URL it's set for: https for secure ones, the
   // domain without its leading dot. A host-only cookie names no domain.
-  auto list = std::make_shared<std::vector<std::pair<std::string, CefCookie>>>();
+  auto list =
+      std::make_shared<std::vector<std::pair<std::string, CefCookie>>>();
   for (MBCookie* c in cookies) {
     std::string domain = c.domain.UTF8String ?: "";
     bool wide = !domain.empty() && domain[0] == '.';
@@ -2287,15 +2312,14 @@ class CookieKeys : public CefCookieVisitor {
     cookie.last_access.val = c.lastUsed;
     cookie.has_expires = c.expires != 0;
     cookie.expires.val = c.expires;
-    cookie.same_site = static_cast<cef_cookie_same_site_t>(
-        std::clamp(c.sameSite + 1, 0, 3));
-    cookie.priority = static_cast<cef_cookie_priority_t>(
-        std::clamp(c.priority - 1, -1, 1));
+    cookie.same_site =
+        static_cast<cef_cookie_same_site_t>(std::clamp(c.sameSite + 1, 0, 3));
+    cookie.priority =
+        static_cast<cef_cookie_priority_t>(std::clamp(c.priority - 1, -1, 1));
     std::string url = (c.secure ? "https://" : "http://") + host + path;
     list->emplace_back(url, cookie);
   }
-  CefRefPtr<CefRequestContext> context =
-      ContextForPath(profilePath.UTF8String);
+  CefRefPtr<CefRequestContext> context = ContextForPath(profilePath.UTF8String);
   auto finish = [completion](NSInteger added, NSInteger kept,
                              NSInteger refused) {
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -2308,64 +2332,64 @@ class CookieKeys : public CefCookieVisitor {
       finish(0, 0, list->size());
       return;
     }
-    manager->VisitAllCookies(new CookieKeys([manager, list, finish](
-                                                std::set<std::string> keys) {
-      struct Tally {
-        size_t pending = 0;
-        NSInteger added = 0, kept = 0, refused = 0;
-      };
-      auto tally = std::make_shared<Tally>();
-      std::vector<const std::pair<std::string, CefCookie>*> todo;
-      for (const auto& item : *list) {
-        CefCookie keyed = item.second;
-        if (!CefString(&keyed.domain).length()) {
-          // Stored host-only cookies carry their host as the domain.
-          std::string url = item.first;
-          size_t start = url.find("://") + 3;
-          CefString(&keyed.domain) =
-              url.substr(start, url.find('/', start) - start);
-        }
-        if (keys.count(CookieKey(keyed))) {
-          tally->kept++;
-        } else {
-          todo.push_back(&item);
-        }
-      }
-      tally->pending = todo.size();
-      auto settled = [manager, tally, finish] {
-        if (--tally->pending == 0) {
-          manager->FlushStore(nullptr);
-          finish(tally->added, tally->kept, tally->refused);
-        }
-      };
-      if (todo.empty()) {
-        finish(0, tally->kept, 0);
-        return;
-      }
-      for (const auto* item : todo) {
-        bool started = manager->SetCookie(
-            item->first, item->second,
-            new SetCookieCallback([tally, settled](bool success) {
-              if (success) {
-                tally->added++;
-              } else {
-                tally->refused++;
-              }
+    manager->VisitAllCookies(
+        new CookieKeys([manager, list, finish](std::set<std::string> keys) {
+          struct Tally {
+            size_t pending = 0;
+            NSInteger added = 0, kept = 0, refused = 0;
+          };
+          auto tally = std::make_shared<Tally>();
+          std::vector<const std::pair<std::string, CefCookie>*> todo;
+          for (const auto& item : *list) {
+            CefCookie keyed = item.second;
+            if (!CefString(&keyed.domain).length()) {
+              // Stored host-only cookies carry their host as the domain.
+              std::string url = item.first;
+              size_t start = url.find("://") + 3;
+              CefString(&keyed.domain) =
+                  url.substr(start, url.find('/', start) - start);
+            }
+            if (keys.count(CookieKey(keyed))) {
+              tally->kept++;
+            } else {
+              todo.push_back(&item);
+            }
+          }
+          tally->pending = todo.size();
+          auto settled = [manager, tally, finish] {
+            if (--tally->pending == 0) {
+              manager->FlushStore(nullptr);
+              finish(tally->added, tally->kept, tally->refused);
+            }
+          };
+          if (todo.empty()) {
+            finish(0, tally->kept, 0);
+            return;
+          }
+          for (const auto* item : todo) {
+            bool started = manager->SetCookie(
+                item->first, item->second,
+                new SetCookieCallback([tally, settled](bool success) {
+                  if (success) {
+                    tally->added++;
+                  } else {
+                    tally->refused++;
+                  }
+                  settled();
+                }));
+            if (!started) {
+              tally->refused++;
               settled();
-            }));
-        if (!started) {
-          tally->refused++;
-          settled();
-        }
-      }
-    }));
+            }
+          }
+        }));
   }));
 }
 
 + (void)setRequestFilter:(MBRequestFilter)filter
-               pageScript:(MBPageScript)script
-                pageReply:(MBPageReply)reply
-              earlyScript:(MBEarlyScript)early {
+              pageScript:(MBPageScript)script
+               pageReply:(MBPageReply)reply
+             earlyScript:(MBEarlyScript)early {
   g_request_filter = filter;
   g_page_script = script;
   g_page_reply = reply;
@@ -2405,7 +2429,8 @@ class CookieKeys : public CefCookieVisitor {
   g_pipe_read = fcntl(from_browser[0], F_DUPFD_CLOEXEC, 10);
   int browser_read = fcntl(to_browser[0], F_DUPFD, 10);
   int browser_write = fcntl(from_browser[1], F_DUPFD, 10);
-  for (int fd : {to_browser[0], to_browser[1], from_browser[0], from_browser[1]}) {
+  for (int fd :
+       {to_browser[0], to_browser[1], from_browser[0], from_browser[1]}) {
     close(fd);
   }
   bool claimed = g_pipe_write >= 0 && g_pipe_read >= 0 && browser_read >= 0 &&
@@ -2427,7 +2452,8 @@ class CookieKeys : public CefCookieVisitor {
     std::string buffer;
     char chunk[65536];
     ssize_t n;
-    while ((n = read(fd, chunk, sizeof chunk)) > 0 || (n < 0 && errno == EINTR)) {
+    while ((n = read(fd, chunk, sizeof chunk)) > 0 ||
+           (n < 0 && errno == EINTR)) {
       if (n < 0) {
         continue;
       }
@@ -2482,12 +2508,13 @@ class CookieKeys : public CefCookieVisitor {
 }
 
 + (BOOL)startWithArgc:(int)argc
-                    argv:(char**)argv
-           rootCachePath:(NSString*)rootCachePath
-     strictSiteIsolation:(BOOL)strictSiteIsolation
-         isolatedOrigins:(NSArray<NSString*>*)isolatedOrigins {
+                   argv:(char**)argv
+          rootCachePath:(NSString*)rootCachePath
+    strictSiteIsolation:(BOOL)strictSiteIsolation
+        isolatedOrigins:(NSArray<NSString*>*)isolatedOrigins {
   g_strict_site_isolation = strictSiteIsolation;
-  g_isolated_origins = [isolatedOrigins componentsJoinedByString:@","].UTF8String;
+  g_isolated_origins =
+      [isolatedOrigins componentsJoinedByString:@","].UTF8String;
   g_library_loader = new CefScopedLibraryLoader();
   if (!g_library_loader->LoadInMain()) {
     return NO;
@@ -2554,7 +2581,8 @@ class CookieKeys : public CefCookieVisitor {
 
 @end
 
-// -------------------------------------------------------------------- MBWebView
+// --------------------------------------------------------------------
+// MBWebView
 
 @implementation MBWebView {
   CefRefPtr<WebClient> _client;
@@ -2611,8 +2639,7 @@ class CookieKeys : public CefCookieVisitor {
     _client->DeferFirstLoad(start);
     start = "about:blank";
   }
-  if (!CefBrowserHost::CreateBrowser(info, _client, start, settings,
-                                     nullptr,
+  if (!CefBrowserHost::CreateBrowser(info, _client, start, settings, nullptr,
                                      ContextForPath(profilePath.UTF8String))) {
     _closing = YES;
     [g_views removeObject:self];
@@ -2642,7 +2669,8 @@ class CookieKeys : public CefCookieVisitor {
 - (void)viewDidUnhide {
   [super viewDidUnhide];
   [_prompts filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(
-                                     MBPermissionPrompt* prompt, id bindings) {
+                                                  MBPermissionPrompt* prompt,
+                                                  id bindings) {
               return !prompt.answered;
             }]];
   for (MBPermissionPrompt* prompt in [_prompts copy]) {
@@ -2811,7 +2839,8 @@ class CookieKeys : public CefCookieVisitor {
 - (void)setCacheDisabled:(BOOL)disabled {
   _cacheDisabled = disabled;
   if (_browser) {
-    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency, _throughput);
+    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency,
+                                 _throughput);
   }
 }
 
@@ -2825,11 +2854,13 @@ class CookieKeys : public CefCookieVisitor {
   _client->Call(_browser, "Emulation.setScriptExecutionDisabled", params);
 }
 
-- (void)emulateNetworkWithLatency:(double)latency throughput:(double)throughput {
+- (void)emulateNetworkWithLatency:(double)latency
+                       throughput:(double)throughput {
   _latency = latency;
   _throughput = throughput;
   if (_browser) {
-    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency, _throughput);
+    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency,
+                                 _throughput);
   }
 }
 
@@ -2877,22 +2908,23 @@ class CookieKeys : public CefCookieVisitor {
     }];
     return;
   }
-  _client->CallRaw(_browser, method.UTF8String, params.UTF8String ?: "",
-                   [completion](bool success, const std::string& json) {
-                     NSString* text = @(json.c_str());
-                     if (success) {
-                       completion(text, nil);
-                       return;
-                     }
-                     NSDictionary* error = [NSJSONSerialization
-                         JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding]
-                                    options:0
-                                      error:nil];
-                     completion(nil, [error isKindOfClass:NSDictionary.class] &&
-                                             error[@"message"]
-                                         ? error[@"message"]
-                                         : text);
-                   });
+  _client->CallRaw(
+      _browser, method.UTF8String, params.UTF8String ?: "",
+      [completion](bool success, const std::string& json) {
+        NSString* text = @(json.c_str());
+        if (success) {
+          completion(text, nil);
+          return;
+        }
+        NSDictionary* error = [NSJSONSerialization
+            JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding]
+                       options:0
+                         error:nil];
+        completion(nil,
+                   [error isKindOfClass:NSDictionary.class] && error[@"message"]
+                       ? error[@"message"]
+                       : text);
+      });
 }
 
 - (void)sendDevToolsCommand:(NSString*)method
@@ -2906,28 +2938,33 @@ class CookieKeys : public CefCookieVisitor {
   if (!_browser) {
     [self waitForBrowser:^(BOOL ready) {
       if (ready) {
-        [self sendDevToolsCommand:method params:params session:session completion:completion];
+        [self sendDevToolsCommand:method
+                           params:params
+                          session:session
+                       completion:completion];
       } else {
         completion(nil, @"the page isn't loaded");
       }
     }];
     return;
   }
-  _client->CallInSession(_browser, method.UTF8String, params.UTF8String ?: "", session.UTF8String,
-                         [completion](bool success, const std::string& json) {
-                           NSString* text = @(json.c_str());
-                           if (success) {
-                             completion(text, nil);
-                             return;
-                           }
-                           NSDictionary* error = [NSJSONSerialization
-                               JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding]
-                                          options:0
-                                            error:nil];
-                           completion(nil, [error isKindOfClass:NSDictionary.class] && error[@"message"]
-                                               ? error[@"message"]
-                                               : text);
-                         });
+  _client->CallInSession(
+      _browser, method.UTF8String, params.UTF8String ?: "", session.UTF8String,
+      [completion](bool success, const std::string& json) {
+        NSString* text = @(json.c_str());
+        if (success) {
+          completion(text, nil);
+          return;
+        }
+        NSDictionary* error = [NSJSONSerialization
+            JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding]
+                       options:0
+                         error:nil];
+        completion(nil,
+                   [error isKindOfClass:NSDictionary.class] && error[@"message"]
+                       ? error[@"message"]
+                       : text);
+      });
 }
 
 // Runs |then| once the browser exists (YES), or at once if it never will.
@@ -2962,7 +2999,8 @@ class CookieKeys : public CefCookieVisitor {
   _recordsNetwork = records;
   if (_browser) {
     _client->SetRecordingNetwork(records);
-    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency, _throughput);
+    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency,
+                                 _throughput);
   }
 }
 
@@ -2974,7 +3012,8 @@ class CookieKeys : public CefCookieVisitor {
 }
 
 - (void)engineFrameDetached:(NSString*)session {
-  [_frameSessions removeObjectsForKeys:[_frameSessions allKeysForObject:session]];
+  [_frameSessions
+      removeObjectsForKeys:[_frameSessions allKeysForObject:session]];
 }
 
 - (void)engineNetworkEvent:(NSString*)method params:(NSDictionary*)params {
@@ -2992,7 +3031,8 @@ class CookieKeys : public CefCookieVisitor {
   _forwardsDevToolsEvents = forwards;
   if (_browser) {
     _client->SetForwardingEvents(forwards);
-    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency, _throughput);
+    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency,
+                                 _throughput);
   }
 }
 
@@ -3140,7 +3180,8 @@ class CookieKeys : public CefCookieVisitor {
   }
   if (_recordsNetwork || _forwardsDevToolsEvents) {
     _client->SetRecordingNetwork(_recordsNetwork);
-    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency, _throughput);
+    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency,
+                                 _throughput);
   }
   if (_mediaFeatures.count > 0) {
     NSString* name = _mediaFeatures.allKeys.firstObject;
@@ -3153,7 +3194,8 @@ class CookieKeys : public CefCookieVisitor {
     [self setScriptsDisabled:YES];
   }
   if (_cacheDisabled || _latency != 0 || _throughput != 0) {
-    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency, _throughput);
+    _client->SetNetworkOverrides(_browser, _cacheDisabled, _latency,
+                                 _throughput);
   }
 }
 
@@ -3201,7 +3243,8 @@ class CookieKeys : public CefCookieVisitor {
   [self.delegate webView:self didChangeBlockedCount:count];
 }
 
-- (void)engineSetConsoleErrors:(NSUInteger)errors warnings:(NSUInteger)warnings {
+- (void)engineSetConsoleErrors:(NSUInteger)errors
+                      warnings:(NSUInteger)warnings {
   [self.delegate webView:self didChangeConsoleErrors:errors warnings:warnings];
 }
 

@@ -11,10 +11,13 @@ OUT="$ROOT/shell/resources/AppIcon.icon/Assets/art.png"
 
 CHROME=""
 for c in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-         "/Applications/Chromium.app/Contents/MacOS/Chromium"; do
+  "/Applications/Chromium.app/Contents/MacOS/Chromium"; do
   [[ -x "$c" ]] && CHROME="$c" && break
 done
-[[ -n "$CHROME" ]] || { echo "Needs Google Chrome or Chromium in /Applications" >&2; exit 1; }
+[[ -n "$CHROME" ]] || {
+  echo "Needs Google Chrome or Chromium in /Applications" >&2
+  exit 1
+}
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -36,7 +39,7 @@ trap 'rm -rf "$WORK"' EXIT
 HTML
   cat "$SVG"
   echo '</body></html>'
-} > "$WORK/icon.html"
+} >"$WORK/icon.html"
 
 "$CHROME" --headless --disable-gpu --hide-scrollbars --no-first-run \
   --user-data-dir="$WORK/profile" --window-size=1024,1024 \

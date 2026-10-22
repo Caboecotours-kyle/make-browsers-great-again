@@ -293,8 +293,10 @@ fn states_with_the_first_sleep_defaults_get_the_current_ones() {
     let mut p: model::Policy = serde_json::from_str(json).unwrap();
     p.upgrade_first_defaults();
     let current = model::Policy::default();
-    assert_eq!((p.sleep_after_secs, p.max_live_tabs, p.freeze_after_secs),
-               (current.sleep_after_secs, current.max_live_tabs, current.freeze_after_secs));
+    assert_eq!(
+        (p.sleep_after_secs, p.max_live_tabs, p.freeze_after_secs),
+        (current.sleep_after_secs, current.max_live_tabs, current.freeze_after_secs)
+    );
     assert_eq!(p.archive_after_hours, 12, "other choices are kept");
     // Values someone chose stay.
     let mut chosen: model::Policy = serde_json::from_str(r#"{"sleep_after_secs": 900, "max_live_tabs": 8}"#).unwrap();
@@ -370,7 +372,12 @@ fn kept_awake_sites_never_sleep_or_freeze() {
 #[test]
 fn sites_kept_awake_in_settings_cover_their_subdomains() {
     let mut s = State::new_default();
-    s.set_keep_awake_sites(&[" Slack.com ".into(), "https://www.mail.google.com/inbox".into(), "".into(), "slack.com".into()]);
+    s.set_keep_awake_sites(&[
+        " Slack.com ".into(),
+        "https://www.mail.google.com/inbox".into(),
+        String::new(),
+        "slack.com".into(),
+    ]);
     assert_eq!(s.keep_awake, vec!["slack.com", "mail.google.com"]);
     assert!(s.keeps_awake("https://app.slack.com/client"));
     assert!(s.keeps_awake("https://mail.google.com/"));
@@ -558,7 +565,7 @@ fn blocker_cancels_matching_requests_except_on_allowed_sites() {
 
 #[test]
 fn blocker_compiles_lists_once_and_loads_the_cache() {
-    let dir = std::path::PathBuf::from(temp_dir("filters"));
+    let dir = PathBuf::from(temp_dir("filters"));
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join(blocker::LISTS[0].0), "||ads.example.net^\n").unwrap();
     let mut first = blocker::Blocker::new(true, []);
@@ -583,7 +590,7 @@ fn ad_settings_survive_a_restart() {
     assert!(!reopened.snapshot().block_ads);
     // Off means the engine is never loaded, even with lists on disk.
     fs::create_dir_all(reopened.filter_dir()).unwrap();
-    fs::write(std::path::Path::new(&reopened.filter_dir()).join(blocker::LISTS[0].0), "||ads.example.net^\n").unwrap();
+    fs::write(Path::new(&reopened.filter_dir()).join(blocker::LISTS[0].0), "||ads.example.net^\n").unwrap();
     assert!(!reopened.load_filters());
     reopened.set_block_ads(true);
     assert!(reopened.load_filters());
@@ -631,14 +638,15 @@ fn generic_hiding_rules_follow_the_names_a_page_reports() {
 
 #[test]
 fn scriptlets_and_user_rules_come_from_the_filter_directory() {
-    let dir = std::path::PathBuf::from(temp_dir("scriptlets"));
+    let dir = PathBuf::from(temp_dir("scriptlets"));
     fs::create_dir_all(&dir).unwrap();
     fs::write(
         dir.join(blocker::SCRIPTLETS.0),
         "/// set-constant.js\n/// alias set.js\n(function() {\nwindow['{{1}}'] = '{{2}}' === 'true';\n})();\n\n",
     )
     .unwrap();
-    fs::write(dir.join(blocker::USER_RULES), "news.example.com##+js(set, mbgaFlag, true)\n||ads.example.net^\n").unwrap();
+    fs::write(dir.join(blocker::USER_RULES), "news.example.com##+js(set, mbgaFlag, true)\n||ads.example.net^\n")
+        .unwrap();
     let mut b = blocker::Blocker::new(true, []);
     assert!(b.load(&dir), "user rules alone are enough");
     let script = b.page_script("https://news.example.com/");
@@ -716,7 +724,8 @@ fn logins_are_offered_on_their_site_and_saving_is_asked_once() {
     // Other hosts of the same site get it, after the page's own; other
     // sites, insecure pages and other profiles don't.
     core.save_login(profile, "https://www.example.co.uk/".into(), "www".into(), "x".into());
-    let names = |url: &str, p: u64| core.logins_for_page(p, url.into()).into_iter().map(|l| l.username).collect::<Vec<_>>();
+    let names =
+        |url: &str, p: u64| core.logins_for_page(p, url.into()).into_iter().map(|l| l.username).collect::<Vec<_>>();
     assert_eq!(names("https://accounts.example.co.uk/", profile), ["me", "www"]);
     assert_eq!(names("https://shop.example.co.uk/", profile).len(), 2);
     assert!(names("https://other.co.uk/", profile).is_empty());
@@ -724,7 +733,10 @@ fn logins_are_offered_on_their_site_and_saving_is_asked_once() {
     assert!(names("https://accounts.example.co.uk/", other).is_empty());
 
     core.never_save_passwords(profile, "https://ads.example/x".into());
-    assert_eq!(core.password_offer(profile, "https://ads.example/".into(), "a".into(), "b".into()), PasswordOffer::Nothing);
+    assert_eq!(
+        core.password_offer(profile, "https://ads.example/".into(), "a".into(), "b".into()),
+        PasswordOffer::Nothing
+    );
     assert_eq!(core.never_saved_sites(profile), ["https://ads.example"]);
     let _ = fs::remove_dir_all(dir);
 }

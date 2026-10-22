@@ -120,6 +120,7 @@ final class SpacePageView: FlippedView, NSTableViewDataSource, NSTableViewDelega
         table.reloadData()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -363,7 +364,7 @@ final class SpacePageView: FlippedView, NSTableViewDataSource, NSTableViewDelega
 
     func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession,
                    endedAt screenPoint: NSPoint, operation: NSDragOperation) {
-        store.endDrag(at: screenPoint, accepted: operation != [])
+        store.endDrag(at: screenPoint, accepted: !operation.isEmpty)
     }
 
     // MARK: - Dropping in
@@ -372,7 +373,7 @@ final class SpacePageView: FlippedView, NSTableViewDataSource, NSTableViewDelega
                    proposedDropOperation operation: NSTableView.DropOperation) -> NSDragOperation {
         var operation = operation
         let intoFolder = operation == .on && rows.indices.contains(row) && {
-            if case .folder = rows[row] { return true } else { return false }
+            if case .folder = rows[row] { true } else { false }
         }()
         if operation == .on && !intoFolder {
             operation = .above
@@ -444,7 +445,7 @@ final class SidebarTableView: NSTableView {
     /// With responsive scrolling the scroll view takes a gesture's events
     /// straight from the queue after the first one, so the app's monitor
     /// never sees a horizontal swipe to switch spaces.
-    override class var isCompatibleWithResponsiveScrolling: Bool { false }
+    override static var isCompatibleWithResponsiveScrolling: Bool { false }
 
     /// The part its scroll view shows, ignoring the sidebar's clip. A page
     /// sliding away already sits at its destination outside the sidebar
@@ -503,6 +504,7 @@ final class SidebarRowView: NSTableRowView {
         layer?.addSublayer(fill)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -597,7 +599,7 @@ final class TabCellView: NSTableCellView, HoverAware {
         close.layer?.cornerRadius = 5
         close.layer?.cornerCurve = .continuous
         close.onAction { [weak self] in
-            guard let self, let data = self.data else { return }
+            guard let self, let data else { return }
             self.store.close(data.tab.id)
         }
         badge.image = .symbol("macwindow", size: 10, weight: .regular)
@@ -609,6 +611,7 @@ final class TabCellView: NSTableCellView, HoverAware {
         for view in [favicon, title, close, badge, equalizer] as [NSView] { addSubview(view) }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func configure(_ data: TabRowData, space: SpaceInfo) {
@@ -730,6 +733,7 @@ final class FolderCellView: NSTableCellView, NSTextFieldDelegate {
         chevron.contentsScale = window?.backingScaleFactor ?? 2
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func configure(_ row: PinnedRow, renaming: Bool) {
@@ -758,7 +762,7 @@ final class FolderCellView: NSTableCellView, NSTextFieldDelegate {
         // right angle.
         let turn = row.expanded ? CATransform3DMakeRotation(-.pi / 2, 0, 0, 1) : CATransform3DIdentity
         CATransaction.begin()
-        if expanded != row.expanded && !Motion.reduced && window != nil {
+        if expanded != row.expanded, !Motion.reduced, window != nil {
             CATransaction.setAnimationDuration(Motion.quick.duration)
             CATransaction.setAnimationTimingFunction(Motion.quick.timing)
         } else {
@@ -828,6 +832,7 @@ final class DividerCellView: NSTableCellView {
         addSubview(clear)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -878,6 +883,7 @@ final class NewTabCellView: NSTableCellView {
         addSubview(title)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -904,6 +910,7 @@ final class DropHintCellView: NSTableCellView {
         layer?.addSublayer(dash)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -952,6 +959,7 @@ final class SpaceHeaderView: FlippedView {
         update(space)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func update(_ space: SpaceInfo) {

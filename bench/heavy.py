@@ -14,8 +14,8 @@ import time
 from browsers import MBGA
 from common import WORK, log, measure_window, sample, sleep_until, summarize, wait_for_window
 
-SETTLE = 90          # seconds between the last tab opening and "loaded"
-IDLE_WINDOW = 120    # seconds of idle CPU/energy sampling
+SETTLE = 90  # seconds between the last tab opening and "loaded"
+IDLE_WINDOW = 120  # seconds of idle CPU/energy sampling
 IDLE_MARK = 12 * 60  # "after idle" sample, counted from the last tab opening
 if os.environ.get("BENCH_QUICK"):  # smoke test of the mechanics only
     SETTLE, IDLE_WINDOW, IDLE_MARK = 15, 10, 60
@@ -23,41 +23,86 @@ if os.environ.get("BENCH_QUICK"):  # smoke test of the mechanics only
 W = "https://en.wikipedia.org/wiki/"
 WORKLOAD = [
     {
-        "profile": "Personal", "space": "Home", "icon": "🏠", "color": 0x8B5CF6,
-        "favorites": ["https://www.youtube.com/", "https://x.com/",
-                      "https://www.spotify.com/", "https://www.netflix.com/"],
-        "folders": {"News": ["https://www.bbc.com/news", "https://www.bbc.com/sport",
-                             "https://arstechnica.com/", "https://techcrunch.com/"]},
+        "profile": "Personal",
+        "space": "Home",
+        "icon": "🏠",
+        "color": 0x8B5CF6,
+        "favorites": [
+            "https://www.youtube.com/",
+            "https://x.com/",
+            "https://www.spotify.com/",
+            "https://www.netflix.com/",
+        ],
+        "folders": {
+            "News": [
+                "https://www.bbc.com/news",
+                "https://www.bbc.com/sport",
+                "https://arstechnica.com/",
+                "https://techcrunch.com/",
+            ]
+        },
         "pinned": ["https://www.google.com/maps/search/coffee+near+san+francisco"],
-        "today": ["https://www.youtube.com/watch?v=aqz-KE-bpKQ", "https://www.amazon.com/",
-                  "https://www.amazon.com/s?k=mechanical+keyboard", "https://www.imdb.com/",
-                  "https://www.imdb.com/chart/top/", "https://www.twitch.tv/",
-                  "https://www.twitch.tv/directory", "https://maps.google.com/"],
+        "today": [
+            "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+            "https://www.amazon.com/",
+            "https://www.amazon.com/s?k=mechanical+keyboard",
+            "https://www.imdb.com/",
+            "https://www.imdb.com/chart/top/",
+            "https://www.twitch.tv/",
+            "https://www.twitch.tv/directory",
+            "https://maps.google.com/",
+        ],
     },
     {
-        "profile": "Work", "space": "Work", "icon": "💼", "color": 0x3B82F6,
-        "favorites": ["https://github.com/", "https://linear.app/",
-                      "https://stripe.com/", "https://www.google.com/"],
-        "folders": {"Repos": ["https://github.com/rust-lang/rust",
-                              "https://github.com/chromiumembedded/cef",
-                              "https://github.com/torvalds/linux", "https://github.com/apple/swift",
-                              "https://github.com/microsoft/vscode",
-                              "https://github.com/facebook/react"]},
+        "profile": "Work",
+        "space": "Work",
+        "icon": "💼",
+        "color": 0x3B82F6,
+        "favorites": ["https://github.com/", "https://linear.app/", "https://stripe.com/", "https://www.google.com/"],
+        "folders": {
+            "Repos": [
+                "https://github.com/rust-lang/rust",
+                "https://github.com/chromiumembedded/cef",
+                "https://github.com/torvalds/linux",
+                "https://github.com/apple/swift",
+                "https://github.com/microsoft/vscode",
+                "https://github.com/facebook/react",
+            ]
+        },
         "pinned": ["https://news.ycombinator.com/", "https://lobste.rs/"],
-        "today": ["https://news.ycombinator.com/newest", "https://www.cloudflare.com/",
-                  "https://tailwindcss.com/", "https://nodejs.org/en",
-                  "https://www.google.com/search?q=chromium+embedded+framework"],
+        "today": [
+            "https://news.ycombinator.com/newest",
+            "https://www.cloudflare.com/",
+            "https://tailwindcss.com/",
+            "https://nodejs.org/en",
+            "https://www.google.com/search?q=chromium+embedded+framework",
+        ],
     },
     {
-        "profile": "Research", "space": "Research", "icon": "📚", "color": 0x10B981,
-        "favorites": ["https://www.wikipedia.org/", "https://www.apple.com/",
-                      "https://www.microsoft.com/"],
-        "folders": {"Wiki": [W + "Web_browser", W + "Chromium_(web_browser)",
-                             W + "Rust_(programming_language)",
-                             W + "Swift_(programming_language)", W + "MacOS"]},
+        "profile": "Research",
+        "space": "Research",
+        "icon": "📚",
+        "color": 0x10B981,
+        "favorites": ["https://www.wikipedia.org/", "https://www.apple.com/", "https://www.microsoft.com/"],
+        "folders": {
+            "Wiki": [
+                W + "Web_browser",
+                W + "Chromium_(web_browser)",
+                W + "Rust_(programming_language)",
+                W + "Swift_(programming_language)",
+                W + "MacOS",
+            ]
+        },
         "pinned": ["https://archive.org/"],
-        "today": [W + "Linux", W + "Internet", W + "Arc_(web_browser)", W + "Apple_silicon",
-                  W + "WebKit", "https://www.producthunt.com/", "https://archive.org/details/texts"],
+        "today": [
+            W + "Linux",
+            W + "Internet",
+            W + "Arc_(web_browser)",
+            W + "Apple_silicon",
+            W + "WebKit",
+            "https://www.producthunt.com/",
+            "https://archive.org/details/texts",
+        ],
     },
 ]
 
@@ -97,8 +142,9 @@ def run_chromium(browser):
 
     with open(os.path.join(data, "Local State")) as f:
         local_state = json.load(f)
-    result["memory_saver_state"] = (local_state.get("performance_tuning", {})
-                                    .get("high_efficiency_mode", {}).get("state"))
+    result["memory_saver_state"] = (
+        local_state.get("performance_tuning", {}).get("high_efficiency_mode", {}).get("state")
+    )
 
     log(f"{browser.key}: quitting")
     browser.quit(proc)
@@ -125,8 +171,7 @@ def loaded_titles(data):
     return sum(1 for t in tabs if t["title"])
 
 
-def run_mbga(name="heavy", sleeping=False, idle=True, restore_test=True, idle_cpu=True,
-             late_sample=0):
+def run_mbga(name="heavy", sleeping=False, idle=True, restore_test=True, idle_cpu=True, late_sample=0):
     data = os.path.join(WORK, f"mbga-{name}")
     policy = {"sleep_after_secs": 600, "max_live_tabs": 8} if sleeping else {}
     MBGA.prepare(data, WORKLOAD, **policy)
@@ -143,8 +188,10 @@ def run_mbga(name="heavy", sleeping=False, idle=True, restore_test=True, idle_cp
     result["loaded"] = summarize(sample(proc.pid))
     result["tabs_with_title"] = loaded_titles(data)
     MBGA.check_profiles(data)
-    log(f"mbga {name}: loaded {result['loaded']['total_mb']:.0f} MB, "
-        f"{result['tabs_with_title']}/50 tabs reported a title")
+    log(
+        f"mbga {name}: loaded {result['loaded']['total_mb']:.0f} MB, "
+        f"{result['tabs_with_title']}/50 tabs reported a title"
+    )
     if late_sample:
         sleep_until(t0, late_sample)
         result["late"] = summarize(sample(proc.pid))
@@ -182,8 +229,7 @@ def restore(launch, quit, after_window=None):
 
 def run(browser, scenario):
     if browser.key == "mbga":
-        return run_mbga(scenario, sleeping=scenario == "heavy-sleep",
-                        restore_test=scenario == "heavy")
+        return run_mbga(scenario, sleeping=scenario == "heavy-sleep", restore_test=scenario == "heavy")
     if scenario == "heavy":
         return run_chromium(browser)
     return None

@@ -244,6 +244,7 @@ final class WebContainerView: NSView {
         layer?.backgroundColor = NSColor.white.cgColor
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     var cornerRadius: CGFloat {
@@ -501,6 +502,7 @@ final class DevToolsHeaderView: FlippedView {
         layer?.addSublayer(line)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -533,6 +535,7 @@ final class DevToolsResizeHandle: NSView {
         wantsLayer = true
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func resetCursorRects() {
@@ -569,12 +572,13 @@ final class PageCardView: NSView {
         addSubview(container)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
 
-    /// Card corners and edge, or none for full screen.
-    // Set on every layout pass, so only a real change redraws.
+    /// Card corners and edge, or none for full screen. Set on every layout
+    /// pass, so only a real change redraws.
     var isCard = true {
         didSet { if isCard != oldValue { needsDisplay = true; needsLayout = true } }
     }

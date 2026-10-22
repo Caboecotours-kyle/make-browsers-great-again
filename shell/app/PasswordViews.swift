@@ -144,6 +144,7 @@ private final class SuggestionRow: FlippedView {
         update()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -198,7 +199,7 @@ final class SaveOfferPanel: FloatingPanel {
 
     func show(site: String, username: String, update: Bool, tab: UInt64, at view: NSView, in window: NSWindow,
               _ answer: @escaping (Choice) -> Void) {
-        self.tabID = tab
+        tabID = tab
         self.answer = answer
         for subview in card.subviews { subview.removeFromSuperview() }
 
@@ -264,7 +265,7 @@ final class SaveOfferPanel: FloatingPanel {
     }
 
     private func finish(_ choice: Choice) {
-        let answer = self.answer
+        let answer = answer
         dismiss()
         answer?(choice)
     }
@@ -333,6 +334,7 @@ final class PasswordListView: NSStackView, NSTableViewDataSource, NSTableViewDel
         addArrangedSubview(scroll)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func controlTextDidChange(_ obj: Notification) { filter() }

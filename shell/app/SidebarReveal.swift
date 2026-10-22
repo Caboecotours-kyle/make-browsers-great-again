@@ -59,7 +59,7 @@ final class SidebarReveal {
         guard fromTop >= -reach, point.y >= frame.minY - reach else { return .away }
         // Anything left of the window counts: the screen edge, or past the
         // window when it doesn't touch the edge.
-        if x <= edge && fromTop >= 0 && point.y >= frame.minY { return .edge }
+        if x <= edge, fromTop >= 0, point.y >= frame.minY { return .edge }
         if x <= sidebarWidth + reach { return .reach }
         return .away
     }
@@ -72,7 +72,7 @@ final class SidebarReveal {
         let zone = zone()
         if store.sidebarPeek {
             let held = NSEvent.pressedMouseButtons != 0
-            if zone == .away && !menuOpen && !held {
+            if zone == .away, !menuOpen, !held {
                 startOnce(&closeTimer, after: graceDelay) { [weak self] in
                     guard let self, self.zone() == .away, !self.menuOpen else { return }
                     self.store?.sidebarPeek = false

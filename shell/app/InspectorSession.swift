@@ -9,7 +9,7 @@ import AppKit
 /// A JSON object from the DevTools protocol.
 typealias JSON = [String: Any]
 
-extension Dictionary where Key == String, Value == Any {
+extension [String: Any] {
     func str(_ key: String) -> String? { self[key] as? String }
     func num(_ key: String) -> Double? { (self[key] as? NSNumber)?.doubleValue }
     func int(_ key: String) -> Int? { (self[key] as? NSNumber)?.intValue }
@@ -394,12 +394,12 @@ enum RemoteValue {
     /// The colour DevTools gives a value of this type.
     static func color(_ object: JSON) -> NSColor {
         switch object.str("type") {
-        case "string": return InspectorTheme.string
-        case "number", "bigint", "boolean": return InspectorTheme.number
-        case "undefined": return .tertiaryLabelColor
-        case "symbol": return InspectorTheme.string
-        case "function": return InspectorTheme.keyword
-        default: return object.str("subtype") == "null" ? .tertiaryLabelColor : .labelColor
+        case "string": InspectorTheme.string
+        case "number", "bigint", "boolean": InspectorTheme.number
+        case "undefined": .tertiaryLabelColor
+        case "symbol": InspectorTheme.string
+        case "function": InspectorTheme.keyword
+        default: object.str("subtype") == "null" ? .tertiaryLabelColor : .labelColor
         }
     }
 }

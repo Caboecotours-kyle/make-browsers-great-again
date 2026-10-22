@@ -115,7 +115,7 @@ final class NetRequest {
     /// The script line or document that made it, short.
     var initiatorLabel: String {
         guard let initiator else { return "" }
-        if let frame = initiator.obj("stack")?.list("callFrames").first(where: { ($0.str("url") ?? "") != "" }) {
+        if let frame = initiator.obj("stack")?.list("callFrames").first(where: { !($0.str("url") ?? "").isEmpty }) {
             return "\(Self.short(frame.str("url") ?? "")):\((frame.int("lineNumber") ?? 0) + 1)"
         }
         if let url = initiator.str("url"), !url.isEmpty {
@@ -186,7 +186,7 @@ final class NetworkModel: InspectorModel {
         }
     }
     var throttle: NetworkPreset {
-        get { session?.developerState?().network ?? .none }
+        get { session?.developerState?().network ?? .unthrottled }
         set {
             session?.updateDeveloperState? { $0.network = newValue }
             changed.send()
@@ -263,7 +263,6 @@ final class NetworkModel: InspectorModel {
     func clearBrowserCache() {
         session?.call("Network.clearBrowserCache")
     }
-
 
     /// The response body: text, or base64 for binary responses.
     func body(of request: NetRequest) async -> (text: String, base64: Bool)? {
@@ -474,7 +473,7 @@ private enum NetKind: Int, CaseIterable {
         }
     }
 
-    static func of(_ request: NetRequest) -> NetKind {
+    static func of(_ request: NetRequest) -> Self {
         if request.mime == "application/wasm" { return .wasm }
         switch request.type {
         case "Fetch", "XHR": return .fetch
@@ -589,6 +588,7 @@ final class NetworkPanel: InspectorPanelView, NSTableViewDataSource, NSTableView
         for view in [toolbar, typeBar, split!, footer] as [NSView] { addSubview(view) }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -614,8 +614,8 @@ final class NetworkPanel: InspectorPanelView, NSTableViewDataSource, NSTableView
         model?.changed.stopObserving(self)
         model = session?.model(NetworkModel.self)
         model?.changed.observe(self) { [weak self] in
-            guard let self, self.isShown else { return }
-            self.reloader.schedule()
+            guard let self, isShown else { return }
+            reloader.schedule()
         }
         detail.session = session
         detail.model = model
@@ -645,15 +645,14 @@ final class NetworkPanel: InspectorPanelView, NSTableViewDataSource, NSTableView
 
     private func sorted(_ requests: [NetRequest]) -> [NetRequest] {
         guard !sortKey.isEmpty else { return requests }
-        let order: (NetRequest, NetRequest) -> Bool
-        switch sortKey {
-        case "name": order = { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
-        case "status": order = { ($0.status ?? -1) < ($1.status ?? -1) }
-        case "type": order = { $0.typeLabel < $1.typeLabel }
-        case "initiator": order = { $0.initiatorLabel < $1.initiatorLabel }
-        case "size": order = { $0.transferred < $1.transferred }
-        case "time": order = { ($0.duration ?? .infinity) < ($1.duration ?? .infinity) }
-        default: order = { $0.start < $1.start }
+        let order: (NetRequest, NetRequest) -> Bool = switch sortKey {
+        case "name": { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+        case "status": { ($0.status ?? -1) < ($1.status ?? -1) }
+        case "type": { $0.typeLabel < $1.typeLabel }
+        case "initiator": { $0.initiatorLabel < $1.initiatorLabel }
+        case "size": { $0.transferred < $1.transferred }
+        case "time": { ($0.duration ?? .infinity) < ($1.duration ?? .infinity) }
+        default: { $0.start < $1.start }
         }
         return requests.sorted { ascending ? order($0, $1) : order($1, $0) }
     }
@@ -682,7 +681,7 @@ final class NetworkPanel: InspectorPanelView, NSTableViewDataSource, NSTableView
         record.isOn = model.recording
         preserve.isOn = model.preservesLog
         noCache.isOn = model.cacheDisabled
-        throttleButton.isOn = model.throttle != .none
+        throttleButton.isOn = model.throttle != .unthrottled
         throttleButton.toolTip = "Throttling: \(model.throttle.title)"
         blockedButton.isOn = !model.blocked.isEmpty
         blockedButton.isHidden = model.blocked.isEmpty
@@ -935,7 +934,7 @@ private enum NetCopy {
     }
 
     static func fetch(_ request: NetRequest, body: String?) -> String {
-        let skipped: Set<String> = ["host", "connection", "content-length", "cookie", "user-agent", "referer", "accept-encoding"]
+        let skipped: Set = ["host", "connection", "content-length", "cookie", "user-agent", "referer", "accept-encoding"]
         let headers = request.sentHeaders.filter { !$0.name.hasPrefix(":") && !skipped.contains($0.name.lowercased()) }
         var lines = ["fetch(\(json(request.url)), {"]
         var options: [String] = []
@@ -999,6 +998,7 @@ private final class FooterBar: FlippedView {
         layer?.addSublayer(line)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -1108,6 +1108,7 @@ private final class RequestDetailView: FlippedView {
         }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {

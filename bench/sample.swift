@@ -5,7 +5,7 @@ import Darwin
 import Foundation
 
 guard CommandLine.arguments.count == 2, let root = pid_t(CommandLine.arguments[1]) else {
-    FileHandle.standardError.write("usage: sample <root-pid>\n".data(using: .utf8)!)
+    FileHandle.standardError.write(Data("usage: sample <root-pid>\n".utf8))
     exit(2)
 }
 
@@ -90,4 +90,4 @@ let out: [String: Any] = [
     "footprint": footprint, "cpu_ns": cpu, "energy_nj": energy, "wakeups": wakeups,
     "procs": procs,
 ]
-print(String(data: try! JSONSerialization.data(withJSONObject: out), encoding: .utf8)!)
+print(String(decoding: try JSONSerialization.data(withJSONObject: out), as: UTF8.self))

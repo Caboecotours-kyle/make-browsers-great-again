@@ -140,13 +140,7 @@ impl From<DropTarget> for Container {
     fn from(t: DropTarget) -> Container {
         match t {
             DropTarget::Favorites { profile_id } => Container::Favorites { profile_id },
-            DropTarget::Pinned {
-                space_id,
-                folder_id,
-            } => Container::Pinned {
-                space_id,
-                folder_id,
-            },
+            DropTarget::Pinned { space_id, folder_id } => Container::Pinned { space_id, folder_id },
             DropTarget::Today { space_id } => Container::Today { space_id },
         }
     }
@@ -212,13 +206,7 @@ pub struct ImportedProfileLink {
 }
 
 fn import_counts(c: import::Counts, profiles: Vec<ImportedProfileLink>) -> ImportSummary {
-    ImportSummary {
-        spaces: c.spaces,
-        pinned: c.pinned,
-        favorites: c.favorites,
-        today: c.today,
-        profiles,
-    }
+    ImportSummary { spaces: c.spaces, pinned: c.pinned, favorites: c.favorites, today: c.today, profiles }
 }
 
 /// A cookie of another browser, for the engine to set.
@@ -253,7 +241,7 @@ pub struct CookieRead {
 pub struct SavedLogin {
     pub id: u64,
     pub profile_id: u64,
-    /// "https://example.com": where it was saved.
+    /// "<https://example.com">: where it was saved.
     pub origin: String,
     /// "example.com", as shown to people.
     pub site: String,
@@ -270,7 +258,9 @@ pub enum PasswordOffer {
     Nothing,
     Save,
     /// The saved login with that username has another password now.
-    Update { login_id: u64 },
+    Update {
+        login_id: u64,
+    },
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
@@ -329,11 +319,13 @@ pub struct BrowserCore {
     blocker: RwLock<blocker::Blocker>,
 }
 
+/// A length as the u32 that crosses to Swift, saturating instead of wrapping.
+pub(crate) fn to_u32(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
 fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+    SystemTime::now().duration_since(UNIX_EPOCH).ok().and_then(|d| u64::try_from(d.as_millis()).ok()).unwrap_or(0)
 }
 
 const STATE_FILE: &str = "state.json";
@@ -341,17 +333,11 @@ const HISTORY_FILE: &str = "history.json";
 const PASSWORDS_FILE: &str = "passwords.json";
 
 fn load_history(dir: &Path) -> history::History {
-    fs::read(dir.join(HISTORY_FILE))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    fs::read(dir.join(HISTORY_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
 fn load_passwords(dir: &Path) -> passwords::Store {
-    fs::read(dir.join(PASSWORDS_FILE))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    fs::read(dir.join(PASSWORDS_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
 /// Writes `value` as JSON next to its final path, then renames it into place.
@@ -419,7 +405,7 @@ fn flatten(state: &State, nodes: &[Node], depth: u32, parent: Option<Id>, out: &
                         id: *id,
                         depth,
                         parent_id: parent,
-                        index: index as u32,
+                        index: to_u32(index),
                         tab: Some(tab_info(state, t)),
                         folder_name: None,
                         expanded: false,
@@ -427,21 +413,16 @@ fn flatten(state: &State, nodes: &[Node], depth: u32, parent: Option<Id>, out: &
                     });
                 }
             }
-            Node::Folder {
-                id,
-                name,
-                expanded,
-                children,
-            } => {
+            Node::Folder { id, name, expanded, children } => {
                 out.push(PinnedRow {
                     id: *id,
                     depth,
                     parent_id: parent,
-                    index: index as u32,
+                    index: to_u32(index),
                     tab: None,
                     folder_name: Some(name.clone()),
                     expanded: *expanded,
-                    child_count: children.len() as u32,
+                    child_count: to_u32(children.len()),
                 });
                 if *expanded {
                     flatten(state, children, depth + 1, Some(*id), out);
@@ -454,7 +435,7 @@ fn flatten(state: &State, nodes: &[Node], depth: u32, parent: Option<Id>, out: &
 fn fnv1a(s: &str) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
     for b in s.bytes() {
-        h ^= b as u64;
+        h ^= u64::from(b);
         h = h.wrapping_mul(0x100000001b3);
     }
     h
@@ -467,7 +448,7 @@ fn host_of(url: &str) -> &str {
 
 impl BrowserCore {
     fn lock(&self) -> MutexGuard<'_, Inner> {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Runs a mutation and marks the state changed.
@@ -544,11 +525,7 @@ impl BrowserCore {
                         .filter_map(|id| s.tabs.get(id).map(|t| tab_info(s, t)))
                         .collect(),
                     pinned,
-                    today: space
-                        .today
-                        .iter()
-                        .filter_map(|id| s.tabs.get(id).map(|t| tab_info(s, t)))
-                        .collect(),
+                    today: space.today.iter().filter_map(|id| s.tabs.get(id).map(|t| tab_info(s, t))).collect(),
                     active_tab: space.active_tab,
                 }
             })
@@ -559,7 +536,7 @@ impl BrowserCore {
             .map(|p| ProfileInfo {
                 id: p.id,
                 name: p.name.clone(),
-                space_count: s.spaces.iter().filter(|sp| sp.profile_id == p.id).count() as u32,
+                space_count: to_u32(s.spaces.iter().filter(|sp| sp.profile_id == p.id).count()),
             })
             .collect();
         Snapshot {
@@ -595,9 +572,7 @@ impl BrowserCore {
     }
 
     pub fn profile_dir(&self, profile_id: u64) -> String {
-        profile_dir_in(&self.lock().data_dir, profile_id)
-            .to_string_lossy()
-            .into_owned()
+        profile_dir_in(&self.lock().data_dir, profile_id).to_string_lossy().into_owned()
     }
 
     pub fn profile_of_tab(&self, tab_id: u64) -> Option<u64> {
@@ -611,7 +586,7 @@ impl BrowserCore {
     }
 
     pub fn rename_profile(&self, id: u64, name: String) {
-        self.mutate(|s, _| s.rename_profile(id, &name))
+        self.mutate(|s, _| s.rename_profile(id, &name));
     }
 
     /// Returns the closed favorites, or None if it is the last profile or a
@@ -632,7 +607,7 @@ impl BrowserCore {
     }
 
     pub fn update_space(&self, id: u64, name: String, icon: String, color: u32) {
-        self.mutate(|s, _| s.update_space(id, &name, &icon, color))
+        self.mutate(|s, _| s.update_space(id, &name, &icon, color));
     }
 
     /// Returns the live tabs that must be reloaded under the new profile.
@@ -646,11 +621,11 @@ impl BrowserCore {
     }
 
     pub fn move_space(&self, id: u64, index: u32) {
-        self.mutate(|s, _| s.move_space(id, index as usize))
+        self.mutate(|s, _| s.move_space(id, index as usize));
     }
 
     pub fn set_active_space(&self, id: u64) {
-        self.mutate(|s, now| s.set_active_space(id, now))
+        self.mutate(|s, now| s.set_active_space(id, now));
     }
 
     // ------------------------------------------------------------------ tabs
@@ -666,7 +641,7 @@ impl BrowserCore {
     }
 
     pub fn activate_tab(&self, space_id: u64, tab_id: u64) {
-        self.mutate(|s, now| s.activate_tab(space_id, tab_id, now))
+        self.mutate(|s, now| s.activate_tab(space_id, tab_id, now));
     }
 
     pub fn update_tab(&self, id: u64, url: Option<String>, title: Option<String>) {
@@ -675,8 +650,7 @@ impl BrowserCore {
             return;
         };
         // Engines repeat the same title/URL often; skip no-op updates.
-        let changed = url.as_ref().is_some_and(|u| *u != t.url)
-            || title.as_ref().is_some_and(|x| *x != t.title);
+        let changed = url.as_ref().is_some_and(|u| *u != t.url) || title.as_ref().is_some_and(|x| *x != t.title);
         if changed {
             let url_changed = url.as_ref().is_some_and(|u| *u != t.url);
             inner.state.update_tab(id, url.as_deref(), title.as_deref());
@@ -722,8 +696,7 @@ impl BrowserCore {
 
     /// Undoes the most recent close, clear, tidy-up or folder deletion.
     pub fn undo_close(&self) -> Option<ReopenOutcome> {
-        self.mutate(|s, _| s.reopen_last())
-            .map(|(space_id, tabs)| ReopenOutcome { space_id, tabs })
+        self.mutate(|s, _| s.reopen_last()).map(|(space_id, tabs)| ReopenOutcome { space_id, tabs })
     }
 
     /// Reopens one closed tab at the top of Today. Returns its space.
@@ -738,7 +711,7 @@ impl BrowserCore {
             if shown {
                 s.shown_elsewhere.push(id);
             }
-        })
+        });
     }
 
     /// Selects a tab in a space with tabs but none selected. Returns it if
@@ -769,7 +742,7 @@ impl BrowserCore {
 
     /// How many Today tabs of a space nobody has looked at for `hours`.
     pub fn idle_today_count(&self, space_id: u64, hours: u32) -> u32 {
-        self.lock().state.idle_today(space_id, hours, now_ms()).len() as u32
+        to_u32(self.lock().state.idle_today(space_id, hours, now_ms()).len())
     }
 
     /// Archives a space's Today tabs untouched for `hours`, as one undoable
@@ -790,12 +763,12 @@ impl BrowserCore {
     }
 
     pub fn set_archive_after_hours(&self, hours: u32) {
-        self.mutate(|s, _| s.policy.archive_after_hours = hours)
+        self.mutate(|s, _| s.policy.archive_after_hours = hours);
     }
 
     /// Remembers that the person answered the offer to tidy up.
     pub fn answer_cleanup(&self) {
-        self.mutate(|s, _| s.cleanup_answered = true)
+        self.mutate(|s, _| s.cleanup_answered = true);
     }
 
     /// Stores a favicon (PNG) for the tab's host and attaches it to the tab.
@@ -828,11 +801,11 @@ impl BrowserCore {
     }
 
     pub fn rename_folder(&self, id: u64, name: String) {
-        self.mutate(|s, _| s.rename_folder(id, &name))
+        self.mutate(|s, _| s.rename_folder(id, &name));
     }
 
     pub fn set_folder_expanded(&self, id: u64, expanded: bool) {
-        self.mutate(|s, _| s.set_folder_expanded(id, expanded))
+        self.mutate(|s, _| s.set_folder_expanded(id, expanded));
     }
 
     pub fn delete_folder(&self, id: u64) -> Vec<u64> {
@@ -866,28 +839,28 @@ impl BrowserCore {
     // ------------------------------------------------------------- lifecycle
 
     pub fn set_live(&self, id: u64, live: bool) {
-        self.mutate(|s, now| s.set_live(id, live, now))
+        self.mutate(|s, now| s.set_live(id, live, now));
     }
 
     pub fn set_audible(&self, id: u64, audible: bool) {
-        self.mutate(|s, _| s.set_audible(id, audible))
+        self.mutate(|s, _| s.set_audible(id, audible));
     }
 
     /// Exempts the site of `url` from sleeping and freezing, or stops doing so.
     pub fn set_keep_awake(&self, url: String, keep: bool) {
-        self.mutate(|s, _| s.set_keep_awake(&url, keep))
+        self.mutate(|s, _| s.set_keep_awake(&url, keep));
     }
 
     /// Replaces the sites kept awake: domains or addresses, each covering
     /// its subdomains.
     pub fn set_keep_awake_sites(&self, sites: Vec<String>) {
-        self.mutate(|s, _| s.set_keep_awake_sites(&sites))
+        self.mutate(|s, _| s.set_keep_awake_sites(&sites));
     }
 
     /// Keeps one tab loaded whatever the sleep policy: never put to sleep,
     /// frozen or archived, and loaded at launch. Or lets it sleep again.
     pub fn set_always_awake(&self, id: u64, awake: bool) {
-        self.mutate(|s, _| s.set_always_awake(id, awake))
+        self.mutate(|s, _| s.set_always_awake(id, awake));
     }
 
     /// Tabs kept always awake, which the shell loads at launch.
@@ -946,7 +919,7 @@ impl BrowserCore {
     /// Whether the engine should cancel a request for `url` made by the
     /// page at `page`. `kind` is "script", "image", "subdocument" and so on.
     pub fn should_block(&self, url: String, page: String, kind: String) -> bool {
-        self.blocker.read().unwrap_or_else(|e| e.into_inner()).should_block(&url, &page, &kind)
+        self.blocker.read().unwrap_or_else(std::sync::PoisonError::into_inner).should_block(&url, &page, &kind)
     }
 
     /// The script to run in `page` as it starts loading: hiding rules,
@@ -954,17 +927,17 @@ impl BrowserCore {
     /// Whether `page` gets scriptlets, which must run before its own
     /// scripts: only then does a new tab wait for them before loading.
     pub fn needs_early_script(&self, page: String) -> bool {
-        self.blocker.read().unwrap_or_else(|e| e.into_inner()).needs_early_script(&page)
+        self.blocker.read().unwrap_or_else(std::sync::PoisonError::into_inner).needs_early_script(&page)
     }
 
     pub fn page_script(&self, page: String) -> String {
-        self.blocker.read().unwrap_or_else(|e| e.into_inner()).page_script(&page)
+        self.blocker.read().unwrap_or_else(std::sync::PoisonError::into_inner).page_script(&page)
     }
 
     /// A script adding the generic hiding rules for the class and id names
     /// a page reported, or "".
     pub fn cosmetic_reply(&self, page: String, report: String) -> String {
-        self.blocker.read().unwrap_or_else(|e| e.into_inner()).cosmetic_reply(&page, &report)
+        self.blocker.read().unwrap_or_else(std::sync::PoisonError::into_inner).cosmetic_reply(&page, &report)
     }
 
     /// Turning blocking off frees the engine; after turning it on, call
@@ -972,9 +945,13 @@ impl BrowserCore {
     pub fn set_block_ads(&self, enabled: bool) {
         self.mutate(|s, _| s.block_ads = enabled);
         let old = {
-            let mut blocker = self.blocker.write().unwrap_or_else(|e| e.into_inner());
+            let mut blocker = self.blocker.write().unwrap_or_else(std::sync::PoisonError::into_inner);
             blocker.enabled = enabled;
-            if enabled { None } else { blocker.unload() }
+            if enabled {
+                None
+            } else {
+                blocker.unload()
+            }
         };
         // Freed outside the lock, which requests wait on.
         drop(old);
@@ -986,7 +963,7 @@ impl BrowserCore {
             s.set_ads_allowed(&url, allowed);
             s.ads_allowed.clone()
         });
-        self.blocker.write().unwrap_or_else(|e| e.into_inner()).allowed = sites.into_iter().collect();
+        self.blocker.write().unwrap_or_else(std::sync::PoisonError::into_inner).allowed = sites.into_iter().collect();
     }
 
     /// How long a background tab stays loaded while idle, and how many
@@ -996,7 +973,7 @@ impl BrowserCore {
         self.mutate(|s, _| {
             s.policy.sleep_after_secs = if sleep_after_secs == 0 { 0 } else { sleep_after_secs.max(30) };
             s.policy.max_live_tabs = max_live_tabs;
-        })
+        });
     }
 
     /// Chooses tabs to put to sleep, marks them asleep and returns them. The
@@ -1039,12 +1016,12 @@ impl BrowserCore {
     // ------------------------------------------------------- process model
 
     pub fn set_strict_site_isolation(&self, strict: bool) {
-        self.mutate(|s, _| s.policy.strict_site_isolation = strict)
+        self.mutate(|s, _| s.policy.strict_site_isolation = strict);
     }
 
     /// Origins that keep a dedicated renderer when strict isolation is off.
     pub fn isolated_origins(&self) -> Vec<String> {
-        model::ALWAYS_ISOLATED_ORIGINS.iter().map(|o| o.to_string()).collect()
+        model::ALWAYS_ISOLATED_ORIGINS.iter().map(ToString::to_string).collect()
     }
 
     // ---------------------------------------------------------------- misc
@@ -1268,7 +1245,13 @@ impl BrowserCore {
     /// Imports the passwords of a profile found by `detect_browsers` into
     /// MBGA's profile `into`. Chromium-based browsers need the password from
     /// their keychain item. Call it off the main thread, once unlocked.
-    pub fn import_browser_passwords(&self, source_id: String, profile_id: String, password: Option<Vec<u8>>, into: u64) -> PasswordImportOutcome {
+    pub fn import_browser_passwords(
+        &self,
+        source_id: String,
+        profile_id: String,
+        password: Option<Vec<u8>>,
+        into: u64,
+    ) -> PasswordImportOutcome {
         let source = self.lock().detected.iter().find(|s| s.id == source_id).cloned();
         let Some(source) = source else { return PasswordImportOutcome::failed("That browser is no longer there.") };
         match import::passwords::read(&source, &profile_id, password.as_deref()) {
@@ -1324,7 +1307,7 @@ impl BrowserCore {
     /// Builds a new engine (compiling the lists if allowed and needed) and
     /// swaps it in. Nothing loads while blocking is off.
     fn load_filters_from_disk(&self, compile: bool) -> bool {
-        if !self.blocker.read().unwrap_or_else(|e| e.into_inner()).enabled {
+        if !self.blocker.read().unwrap_or_else(std::sync::PoisonError::into_inner).enabled {
             return false;
         }
         let dir = PathBuf::from(self.filter_dir());
@@ -1333,7 +1316,7 @@ impl BrowserCore {
         if !loaded {
             return false;
         }
-        let mut blocker = self.blocker.write().unwrap_or_else(|e| e.into_inner());
+        let mut blocker = self.blocker.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         fresh.enabled = blocker.enabled;
         fresh.allowed = std::mem::take(&mut blocker.allowed);
         let old = std::mem::replace(&mut *blocker, fresh);
@@ -1345,7 +1328,9 @@ impl BrowserCore {
 
     fn merge_logins(&self, read: import::passwords::Read, into: u64) -> PasswordImportOutcome {
         let mut inner = self.lock();
-        let Some(key) = inner.password_key.clone() else { return PasswordImportOutcome::failed("Passwords are locked.") };
+        let Some(key) = inner.password_key.clone() else {
+            return PasswordImportOutcome::failed("Passwords are locked.");
+        };
         let merged = inner.passwords.merge(&key, into, &read.logins, &read.never, now_ms());
         inner.passwords_dirty = true;
         PasswordImportOutcome {

@@ -221,10 +221,9 @@ final class AgentServer {
     }
 
     private nonisolated static func encode(_ reply: AgentReply) -> Data {
-        let object: [String: Any]
-        switch reply {
-        case .success(let text): object = ["ok": true, "text": text]
-        case .failure(let error): object = ["ok": false, "error": error]
+        let object: [String: Any] = switch reply {
+        case .success(let text): ["ok": true, "text": text]
+        case .failure(let error): ["ok": false, "error": error]
         }
         return (try? JSONSerialization.data(withJSONObject: object)) ?? Data("{\"ok\":false}".utf8)
     }
@@ -254,10 +253,10 @@ struct AgentPreferences: Codable, Equatable {
     /// Sites agents may not read, use or open, e.g. "bank.com".
     var blockedSites: [String] = []
 
-    static func load(from directory: URL) -> AgentPreferences {
+    static func load(from directory: URL) -> Self {
         guard let data = try? Data(contentsOf: directory.appendingPathComponent("agents.json")),
-              let preferences = try? JSONDecoder().decode(AgentPreferences.self, from: data)
-        else { return AgentPreferences() }
+              let preferences = try? JSONDecoder().decode(Self.self, from: data)
+        else { return Self() }
         return preferences
     }
 

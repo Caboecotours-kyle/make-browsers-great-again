@@ -71,7 +71,7 @@ pub fn read(source: &Source, profile_id: &str, password: Option<&[u8]>, now_ms: 
         return Err("Safari's cookies can't be imported.".into());
     }
     let db = database(source, profile_id).ok_or("It has no cookies.")?;
-    let now = UNIX_EPOCH_US + now_ms as i64 * 1000;
+    let now = UNIX_EPOCH_US + now_ms.cast_signed() * 1000;
     let cookies = if source.kind == Kind::Firefox {
         super::read_copy(&db, read_firefox)?
     } else {

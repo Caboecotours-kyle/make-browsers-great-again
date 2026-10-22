@@ -89,6 +89,7 @@ final class CommandBarView: NSView, NSTextFieldDelegate, NSTableViewDataSource, 
         reload()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var isFlipped: Bool { true }
@@ -432,6 +433,7 @@ private final class CommandBarCard: FlippedView {
         layer?.masksToBounds = false
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -465,6 +467,7 @@ private final class CommandRowView: NSTableRowView {
         layer?.addSublayer(fill)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -500,6 +503,7 @@ private final class CommandItemCell: NSTableCellView {
         for view in [icon, emoji, title, subtitle, chip] as [NSView] { addSubview(view) }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -581,108 +585,108 @@ struct CommandAction {
 
     /// The commands that make sense right now.
     @MainActor
-    static func all(for store: BrowserStore) -> [CommandAction] {
-        var list: [CommandAction] = []
+    static func all(for store: BrowserStore) -> [Self] {
+        var list: [Self] = []
         if let tab = store.visibleTab {
             let space = store.activeSpace
             let pinned = store.isPinned(tab.id, in: space) || store.isFavorite(tab.id, in: space)
             list += [
-                CommandAction(id: "pin", title: pinned ? "Unpin Tab" : "Pin Tab", symbol: pinned ? "pin.slash" : "pin",
-                              shortcut: "⌘D") { store.togglePin(tab.id) },
-                CommandAction(id: "favorite", title: "Add to Favorites", symbol: "star", keywords: ["fav"]) {
+                Self(id: "pin", title: pinned ? "Unpin Tab" : "Pin Tab", symbol: pinned ? "pin.slash" : "pin",
+                     shortcut: "⌘D") { store.togglePin(tab.id) },
+                Self(id: "favorite", title: "Add to Favorites", symbol: "star", keywords: ["fav"]) {
                     store.addFavorite(tab.id)
                 },
-                CommandAction(id: "copy", title: "Copy URL", symbol: "link", shortcut: "⇧⌘C", keywords: ["link", "share"]) {
+                Self(id: "copy", title: "Copy URL", symbol: "link", shortcut: "⇧⌘C", keywords: ["link", "share"]) {
                     store.copyVisibleURL()
                 },
-                CommandAction(id: "reload", title: "Reload Page", symbol: "arrow.clockwise", shortcut: "⌘R", keywords: ["refresh"]) {
+                Self(id: "reload", title: "Reload Page", symbol: "arrow.clockwise", shortcut: "⌘R", keywords: ["refresh"]) {
                     store.reload()
                 },
-                CommandAction(id: "duplicate", title: "Duplicate Tab", symbol: "plus.square.on.square") {
+                Self(id: "duplicate", title: "Duplicate Tab", symbol: "plus.square.on.square") {
                     store.duplicate(tab, in: space)
                 },
-                CommandAction(id: "little", title: "Open in Little Window", symbol: "macwindow.on.rectangle",
-                              keywords: ["pop", "out", "float", "window"]) {
+                Self(id: "little", title: "Open in Little Window", symbol: "macwindow.on.rectangle",
+                     keywords: ["pop", "out", "float", "window"]) {
                     store.openInLittleWindow(tab.id)
                 },
-                CommandAction(id: "close", title: pinned ? "Unload Tab" : "Close Tab", symbol: "xmark", shortcut: "⌘W") {
+                Self(id: "close", title: pinned ? "Unload Tab" : "Close Tab", symbol: "xmark", shortcut: "⌘W") {
                     store.close(tab.id)
                 },
-                CommandAction(id: "devtools", title: "Developer Tools", symbol: "hammer", shortcut: "⌥⌘I", keywords: ["inspect", "console"]) {
+                Self(id: "devtools", title: "Developer Tools", symbol: "hammer", shortcut: "⌥⌘I", keywords: ["inspect", "console"]) {
                     store.showDevTools()
                 },
-                CommandAction(id: "console", title: "JavaScript Console", symbol: "terminal", shortcut: "⌥⌘J",
-                              keywords: ["devtools", "js", "log"]) {
+                Self(id: "console", title: "JavaScript Console", symbol: "terminal", shortcut: "⌥⌘J",
+                     keywords: ["devtools", "js", "log"]) {
                     store.openDevTools()
                 },
-                CommandAction(id: "network-panel", title: "Network Requests", symbol: "arrow.up.arrow.down",
-                              keywords: ["devtools", "requests", "fetch", "xhr"]) {
+                Self(id: "network-panel", title: "Network Requests", symbol: "arrow.up.arrow.down",
+                     keywords: ["devtools", "requests", "fetch", "xhr"]) {
                     store.showInspector(.network)
                 },
-                CommandAction(id: "chrome-devtools", title: "Chrome DevTools", symbol: "wrench.and.screwdriver", shortcut: "⇧⌥⌘I",
-                              keywords: ["inspect", "devtools"]) {
+                Self(id: "chrome-devtools", title: "Chrome DevTools", symbol: "wrench.and.screwdriver", shortcut: "⇧⌥⌘I",
+                     keywords: ["inspect", "devtools"]) {
                     store.openChromeDevTools()
                 },
             ]
             if let site = tab.site, store.blockAds {
-                list.append(CommandAction(id: "ads", title: tab.adsAllowed ? "Block Ads on \(site)" : "Allow Ads on \(site)",
-                                          symbol: "shield.lefthalf.filled", keywords: ["adblock", "trackers", "blocker"]) {
-                    store.setAdsAllowed(!tab.adsAllowed, for: tab)
-                })
+                list.append(Self(id: "ads", title: tab.adsAllowed ? "Block Ads on \(site)" : "Allow Ads on \(site)",
+                                 symbol: "shield.lefthalf.filled", keywords: ["adblock", "trackers", "blocker"]) {
+                        store.setAdsAllowed(!tab.adsAllowed, for: tab)
+                    })
             }
-            list.append(CommandAction(id: "tab-awake", title: tab.alwaysAwake ? "Let This Tab Sleep" : "Keep This Tab Always Awake",
-                                      symbol: tab.alwaysAwake ? "moon.zzz" : "sun.max", keywords: ["sleep", "awake", "live", "unload"]) {
-                store.setAlwaysAwake(!tab.alwaysAwake, for: tab.id)
-            })
-            if let site = tab.site {
-                list.append(CommandAction(id: "awake", title: tab.keepAwake ? "Let \(site) Sleep" : "Keep \(site) Awake",
-                                          symbol: tab.keepAwake ? "moon.zzz" : "sun.max", keywords: ["sleep", "awake"]) {
-                    store.setKeepAwake(!tab.keepAwake, for: tab)
+            list.append(Self(id: "tab-awake", title: tab.alwaysAwake ? "Let This Tab Sleep" : "Keep This Tab Always Awake",
+                             symbol: tab.alwaysAwake ? "moon.zzz" : "sun.max", keywords: ["sleep", "awake", "live", "unload"]) {
+                    store.setAlwaysAwake(!tab.alwaysAwake, for: tab.id)
                 })
+            if let site = tab.site {
+                list.append(Self(id: "awake", title: tab.keepAwake ? "Let \(site) Sleep" : "Keep \(site) Awake",
+                                 symbol: tab.keepAwake ? "moon.zzz" : "sun.max", keywords: ["sleep", "awake"]) {
+                        store.setKeepAwake(!tab.keepAwake, for: tab)
+                    })
             }
         }
         list += [
-            CommandAction(id: "new-space", title: "New Space…", symbol: "square.stack", shortcut: "⇧⌘N") {
+            Self(id: "new-space", title: "New Space…", symbol: "square.stack", shortcut: "⇧⌘N") {
                 store.spaceEditor = SpaceEditorRequest(spaceID: nil)
             },
-            CommandAction(id: "edit-space", title: "Edit Space…", symbol: "pencil", keywords: ["rename", "color", "icon"]) {
+            Self(id: "edit-space", title: "Edit Space…", symbol: "pencil", keywords: ["rename", "color", "icon"]) {
                 store.spaceEditor = SpaceEditorRequest(spaceID: store.activeSpace.id)
             },
-            CommandAction(id: "new-folder", title: "New Folder", symbol: "folder.badge.plus", shortcut: "⌥⌘N") {
+            Self(id: "new-folder", title: "New Folder", symbol: "folder.badge.plus", shortcut: "⌥⌘N") {
                 store.newFolder()
             },
-            CommandAction(id: "clear", title: "Clear Today Tabs", symbol: "archivebox", shortcut: "⇧⌘K", keywords: ["archive", "clean", "tidy"]) {
+            Self(id: "clear", title: "Clear Today Tabs", symbol: "archivebox", shortcut: "⇧⌘K", keywords: ["archive", "clean", "tidy"]) {
                 store.clearToday(store.activeSpace.id)
             },
-            CommandAction(id: "focus", title: store.layout == .focus ? "Leave Focus Mode" : "Focus Mode", symbol: "rectangle.inset.filled",
-                          shortcut: "⌘S", keywords: ["hide", "sidebar", "zen"]) {
+            Self(id: "focus", title: store.layout == .focus ? "Leave Focus Mode" : "Focus Mode", symbol: "rectangle.inset.filled",
+                 shortcut: "⌘S", keywords: ["hide", "sidebar", "zen"]) {
                 store.toggleSidebar()
             },
-            CommandAction(id: "compact", title: store.layout == .compact ? "Full Sidebar" : "Compact Sidebar",
-                          symbol: "sidebar.squares.left", keywords: ["rail", "icons", "narrow", "layout"]) {
+            Self(id: "compact", title: store.layout == .compact ? "Full Sidebar" : "Compact Sidebar",
+                 symbol: "sidebar.squares.left", keywords: ["rail", "icons", "narrow", "layout"]) {
                 store.setLayout(store.layout == .compact ? .full : .compact)
             },
-            CommandAction(id: "import", title: "Import from Another Browser…", symbol: "square.and.arrow.down", keywords: ["chrome", "arc", "safari"]) {
+            Self(id: "import", title: "Import from Another Browser…", symbol: "square.and.arrow.down", keywords: ["chrome", "arc", "safari"]) {
                 store.importSheet = ImportRequest(firstLaunch: false)
             },
-            CommandAction(id: "import-sign-ins", title: "Import Sign-ins…", symbol: "person.badge.key",
-                          keywords: ["cookies", "logged out", "login", "arc", "chrome", "firefox"]) {
+            Self(id: "import-sign-ins", title: "Import Sign-ins…", symbol: "person.badge.key",
+                 keywords: ["cookies", "logged out", "login", "arc", "chrome", "firefox"]) {
                 store.openSettings?(.privacy)
             },
-            CommandAction(id: "block-ads", title: store.blockAds ? "Turn Off Ad Blocking" : "Block Ads and Trackers",
-                          symbol: "shield", keywords: ["adblock", "trackers", "privacy"]) {
+            Self(id: "block-ads", title: store.blockAds ? "Turn Off Ad Blocking" : "Block Ads and Trackers",
+                 symbol: "shield", keywords: ["adblock", "trackers", "privacy"]) {
                 store.setBlockAds(!store.blockAds)
             },
-            CommandAction(id: "my-filters", title: "Edit My Filters…", symbol: "line.3.horizontal.decrease.circle",
-                          keywords: ["adblock", "rules", "custom", "block"]) {
+            Self(id: "my-filters", title: "Edit My Filters…", symbol: "line.3.horizontal.decrease.circle",
+                 keywords: ["adblock", "rules", "custom", "block"]) {
                 NSWorkspace.shared.open(URL(fileURLWithPath: store.core.userFiltersPath()))
             },
-            CommandAction(id: "extensions", title: "Extensions…", symbol: "puzzlepiece.extension",
-                          keywords: ["chrome", "web store", "add-ons", "ublock", "install"]) {
+            Self(id: "extensions", title: "Extensions…", symbol: "puzzlepiece.extension",
+                 keywords: ["chrome", "web store", "add-ons", "ublock", "install"]) {
                 store.showExtensions()
             },
-            CommandAction(id: "reload-filters", title: "Reload Filters", symbol: "arrow.triangle.2.circlepath",
-                          keywords: ["adblock", "rules", "lists"]) {
+            Self(id: "reload-filters", title: "Reload Filters", symbol: "arrow.triangle.2.circlepath",
+                 keywords: ["adblock", "rules", "lists"]) {
                 Task {
                     let loaded = await AdBlocking.reload(core: store.core)
                     store.showToast(Toast(message: loaded ? "Filters reloaded" : "Ad blocking is off",
@@ -690,47 +694,47 @@ struct CommandAction {
                     if loaded { store.reload() }
                 }
             },
-            CommandAction(id: "update", title: Updater.shared.readyVersion.map { "Restart to Update to \($0)" } ?? "Check for Updates",
-                          symbol: "arrow.down.circle", keywords: ["upgrade", "version", "new", "relaunch"]) {
+            Self(id: "update", title: Updater.shared.readyVersion.map { "Restart to Update to \($0)" } ?? "Check for Updates",
+                 symbol: "arrow.down.circle", keywords: ["upgrade", "version", "new", "relaunch"]) {
                 if Updater.shared.readyVersion != nil {
                     Updater.shared.restartToUpdate()
                 } else {
                     Updater.shared.check(userInitiated: true)
                 }
             },
-            CommandAction(id: "clear-history", title: "Clear History", symbol: "clock.arrow.circlepath", keywords: ["forget", "privacy"]) {
+            Self(id: "clear-history", title: "Clear History", symbol: "clock.arrow.circlepath", keywords: ["forget", "privacy"]) {
                 store.core.clearHistory()
                 store.showToast(Toast(message: "History cleared", symbol: "clock.arrow.circlepath"))
             },
         ]
         list += developerActions(for: store)
         if store.canReopen {
-            list.append(CommandAction(id: "reopen", title: "Reopen Closed Tab", symbol: "arrow.uturn.backward", shortcut: "⇧⌘T",
-                                      keywords: ["undo", "restore"]) { store.undoClose() })
+            list.append(Self(id: "reopen", title: "Reopen Closed Tab", symbol: "arrow.uturn.backward", shortcut: "⇧⌘T",
+                             keywords: ["undo", "restore"]) { store.undoClose() })
         }
         let matchPage = UserDefaults.standard.bool(forKey: TintStyle.matchPageKey)
-        list.append(CommandAction(id: "match-page", title: matchPage ? "Use Space Colour" : "Match Page Colour",
-                                  symbol: "eyedropper", keywords: ["theme", "tint", "color", "colour"]) {
-            UserDefaults.standard.set(!matchPage, forKey: TintStyle.matchPageKey)
-        })
-        for style in TintStyle.allCases {
-            list.append(CommandAction(id: "tint-\(style.rawValue)", title: "Sidebar Colour: \(style.title)", symbol: "paintpalette",
-                                      keywords: ["theme", "tint", "color", "appearance"]) {
-                UserDefaults.standard.set(style.rawValue, forKey: TintStyle.defaultsKey)
+        list.append(Self(id: "match-page", title: matchPage ? "Use Space Colour" : "Match Page Colour",
+                         symbol: "eyedropper", keywords: ["theme", "tint", "color", "colour"]) {
+                UserDefaults.standard.set(!matchPage, forKey: TintStyle.matchPageKey)
             })
+        for style in TintStyle.allCases {
+            list.append(Self(id: "tint-\(style.rawValue)", title: "Sidebar Colour: \(style.title)", symbol: "paintpalette",
+                             keywords: ["theme", "tint", "color", "appearance"]) {
+                    UserDefaults.standard.set(style.rawValue, forKey: TintStyle.defaultsKey)
+                })
         }
         return list
     }
 
     /// Developer Mode's tools, and the switch to turn it on.
     @MainActor
-    private static func developerActions(for store: BrowserStore) -> [CommandAction] {
+    private static func developerActions(for store: BrowserStore) -> [Self] {
         var list = [
-            CommandAction(id: "settings", title: "Settings…", symbol: "gearshape", shortcut: "⌘,", keywords: ["preferences", "options"]) {
+            Self(id: "settings", title: "Settings…", symbol: "gearshape", shortcut: "⌘,", keywords: ["preferences", "options"]) {
                 store.openSettings?(nil)
             },
-            CommandAction(id: "developer-mode", title: DeveloperSettings.enabled ? "Turn Off Developer Mode" : "Turn On Developer Mode",
-                          symbol: "hammer", keywords: ["dev", "toolbar", "localhost"]) {
+            Self(id: "developer-mode", title: DeveloperSettings.enabled ? "Turn Off Developer Mode" : "Turn On Developer Mode",
+                 symbol: "hammer", keywords: ["dev", "toolbar", "localhost"]) {
                 UserDefaults.standard.set(!DeveloperSettings.enabled, forKey: DeveloperSettings.enabledKey)
             },
         ]
@@ -738,40 +742,40 @@ struct CommandAction {
         let state = store.visibleDevState
         let keywords = ["dev", "developer"]
         list += [
-            CommandAction(id: "dev-toolbar", title: store.developerToolbarShown ? "Hide Developer Toolbar" : "Show Developer Toolbar",
-                          symbol: "wrench.and.screwdriver", shortcut: "⇧⌘D", keywords: keywords) { store.toggleDeveloperToolbar() },
-            CommandAction(id: "hard-reload", title: "Reload Without Cache", symbol: "arrow.clockwise", shortcut: "⇧⌘R",
-                          keywords: keywords + ["hard", "refresh", "empty"]) { store.hardReload() },
-            CommandAction(id: "pick", title: "Pick an Element", symbol: "cursorarrow.rays", shortcut: "⌥⌘C",
-                          keywords: keywords + ["inspect", "select"]) { store.togglePicking() },
-            CommandAction(id: "screenshot", title: "Screenshot the Whole Page", symbol: "camera.viewfinder",
-                          keywords: keywords + ["capture", "full", "image"]) { store.screenshotPage() },
-            CommandAction(id: "view-source", title: "View Page Source", symbol: "chevron.left.forwardslash.chevron.right", shortcut: "⌥⌘U",
-                          keywords: keywords + ["html", "code"]) { store.viewSource() },
-            CommandAction(id: "clear-site", title: "Clear Site Data and Reload", symbol: "trash",
-                          keywords: keywords + ["cookies", "storage", "cache", "reset"]) { store.clearSiteData() },
-            CommandAction(id: "cache", title: state.cacheDisabled ? "Enable Cache" : "Disable Cache", symbol: "externaldrive",
-                          keywords: keywords + ["network"]) { store.updateDev { $0.cacheDisabled.toggle() } },
-            CommandAction(id: "scripts", title: state.scriptsDisabled ? "Enable JavaScript" : "Disable JavaScript", symbol: "curlybraces",
-                          keywords: keywords + ["js"]) { store.toggleScripts() },
+            Self(id: "dev-toolbar", title: store.developerToolbarShown ? "Hide Developer Toolbar" : "Show Developer Toolbar",
+                 symbol: "wrench.and.screwdriver", shortcut: "⇧⌘D", keywords: keywords) { store.toggleDeveloperToolbar() },
+            Self(id: "hard-reload", title: "Reload Without Cache", symbol: "arrow.clockwise", shortcut: "⇧⌘R",
+                 keywords: keywords + ["hard", "refresh", "empty"]) { store.hardReload() },
+            Self(id: "pick", title: "Pick an Element", symbol: "cursorarrow.rays", shortcut: "⌥⌘C",
+                 keywords: keywords + ["inspect", "select"]) { store.togglePicking() },
+            Self(id: "screenshot", title: "Screenshot the Whole Page", symbol: "camera.viewfinder",
+                 keywords: keywords + ["capture", "full", "image"]) { store.screenshotPage() },
+            Self(id: "view-source", title: "View Page Source", symbol: "chevron.left.forwardslash.chevron.right", shortcut: "⌥⌘U",
+                 keywords: keywords + ["html", "code"]) { store.viewSource() },
+            Self(id: "clear-site", title: "Clear Site Data and Reload", symbol: "trash",
+                 keywords: keywords + ["cookies", "storage", "cache", "reset"]) { store.clearSiteData() },
+            Self(id: "cache", title: state.cacheDisabled ? "Enable Cache" : "Disable Cache", symbol: "externaldrive",
+                 keywords: keywords + ["network"]) { store.updateDev { $0.cacheDisabled.toggle() } },
+            Self(id: "scripts", title: state.scriptsDisabled ? "Enable JavaScript" : "Disable JavaScript", symbol: "curlybraces",
+                 keywords: keywords + ["js"]) { store.toggleScripts() },
         ]
         for scheme in [ColorSchemePreview.dark, .light, .system] where scheme != state.colorScheme {
-            list.append(CommandAction(id: "scheme-\(scheme.rawValue)", title: "Preview Colour Scheme: \(scheme.title)", symbol: scheme.symbol,
-                                      keywords: keywords + ["dark", "light", "mode", "appearance", "color"]) {
-                store.updateDev { $0.colorScheme = scheme }
-            })
+            list.append(Self(id: "scheme-\(scheme.rawValue)", title: "Preview Colour Scheme: \(scheme.title)", symbol: scheme.symbol,
+                             keywords: keywords + ["dark", "light", "mode", "appearance", "color"]) {
+                    store.updateDev { $0.colorScheme = scheme }
+                })
         }
         for preset in DevicePreset.all where preset != state.device {
-            list.append(CommandAction(id: "device-\(preset.name)", title: "Preview on \(preset.name)", symbol: preset.symbol,
-                                      keywords: keywords + ["device", "responsive", "mobile", "viewport"]) { store.setDevice(preset) })
+            list.append(Self(id: "device-\(preset.name)", title: "Preview on \(preset.name)", symbol: preset.symbol,
+                             keywords: keywords + ["device", "responsive", "mobile", "viewport"]) { store.setDevice(preset) })
         }
         if state.device != nil {
-            list.append(CommandAction(id: "device-off", title: "Stop Device Preview", symbol: "rectangle",
-                                      keywords: keywords + ["responsive", "desktop"]) { store.setDevice(nil) })
+            list.append(Self(id: "device-off", title: "Stop Device Preview", symbol: "rectangle",
+                             keywords: keywords + ["responsive", "desktop"]) { store.setDevice(nil) })
         }
         for preset in NetworkPreset.allCases where preset != state.network {
-            list.append(CommandAction(id: "network-\(preset)", title: "Network: \(preset.title)", symbol: "wifi",
-                                      keywords: keywords + ["throttle", "slow", "offline"]) { store.updateDev { $0.network = preset } })
+            list.append(Self(id: "network-\(preset)", title: "Network: \(preset.title)", symbol: "wifi",
+                             keywords: keywords + ["throttle", "slow", "offline"]) { store.updateDev { $0.network = preset } })
         }
         return list
     }

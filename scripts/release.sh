@@ -71,10 +71,13 @@ plistlib.dump({"method": "developer-id", "teamID": team, "signingStyle": "automa
               open(f"{out}/ExportOptions.plist", "wb"))
 PY
 xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist "$OUT/ExportOptions.plist" \
-  -allowProvisioningUpdates > "$OUT/upload.log" 2>&1 || { tail -20 "$OUT/upload.log" >&2; exit 1; }
+  -allowProvisioningUpdates >"$OUT/upload.log" 2>&1 || {
+  tail -20 "$OUT/upload.log" >&2
+  exit 1
+}
 # Apple usually takes a few minutes.
 for _ in $(seq 120); do
-  if xcodebuild -exportNotarizedApp -archivePath "$ARCHIVE" -exportPath "$OUT/notarized" > "$OUT/notarized.log" 2>&1; then
+  if xcodebuild -exportNotarizedApp -archivePath "$ARCHIVE" -exportPath "$OUT/notarized" >"$OUT/notarized.log" 2>&1; then
     break
   fi
   if ! grep -q "not ready for distribution" "$OUT/notarized.log"; then
@@ -134,7 +137,7 @@ PREVIOUS="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)"
   echo "Or download MBGA.dmg below, open it and drag MBGA to Applications."
   echo
   echo "Once installed, MBGA updates itself."
-} > "$OUT/notes.md"
+} >"$OUT/notes.md"
 
 gh release create "$TAG" "$OUT/MBGA.dmg" "$OUT/MBGA.zip" "$OUT/update.json" \
   --target "$(git rev-parse HEAD)" --title "MBGA $VERSION" --notes-file "$OUT/notes.md"

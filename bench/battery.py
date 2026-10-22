@@ -18,8 +18,19 @@ import os
 import time
 
 from browsers import MBGA
-from common import (DEVTOOLS_PORT, WORK, DevTools, activate, log, measure_window, page_targets,
-                    page_url, sleep_until, wait_for_window, window_bounds)
+from common import (
+    DEVTOOLS_PORT,
+    WORK,
+    DevTools,
+    activate,
+    log,
+    measure_window,
+    page_targets,
+    page_url,
+    sleep_until,
+    wait_for_window,
+    window_bounds,
+)
 
 WINDOW = 120
 SETTLE = 30
@@ -49,8 +60,7 @@ def run(browser, scenario):
         result["attempts"] = attempt
         if result["check"]["ok"]:
             break
-        log(f"{browser.key} {scenario}: not valid, " +
-            ("retrying" if attempt < ATTEMPTS else "giving up"))
+        log(f"{browser.key} {scenario}: not valid, " + ("retrying" if attempt < ATTEMPTS else "giving up"))
     return result
 
 
@@ -69,14 +79,17 @@ def run_once(browser, scenario):
     # DevTools is only used outside the measurement windows, to check the
     # pages stayed on screen and did what the scenario needs.
     if is_mbga:
-        tabs = ({"pinned": background, "today": [front]} if scenario == "battery-pinned"
-                else {"today": background + [front]})
+        tabs = (
+            {"pinned": background, "today": [front]}
+            if scenario == "battery-pinned"
+            else {"today": [*background, front]}
+        )
         MBGA.prepare(data, [{"space": "Bench", **tabs}])
         proc = MBGA.launch(data, devtools=True)
     else:
         browser.prepare(data)
         # Chromium shows the first URL given on the command line.
-        proc = browser.launch(data, [front] + background, devtools=True)
+        proc = browser.launch(data, [front, *background], devtools=True)
     result = {"first_window_s": wait_for_window(proc.pid)}
     time.sleep(2)
     if is_mbga and background:
@@ -93,13 +106,14 @@ def run_once(browser, scenario):
         result["early"] = measure_window(proc.pid, WINDOW)
         sleep_until(t0, 6 * 60 if WINDOW >= 60 else 60)
         result["late"] = measure_window(proc.pid, WINDOW)
-        summary = (f"early {result['early']['power_mw']:.0f} mW, "
-                   f"late {result['late']['power_mw']:.0f} mW")
+        summary = f"early {result['early']['power_mw']:.0f} mW, late {result['late']['power_mw']:.0f} mW"
     else:
         result["idle"] = measure_window(proc.pid, WINDOW)
-        summary = (f"{result['idle']['power_mw']:.0f} mW, {result['idle']['cpu_percent']:.1f}% CPU, "
-                   f"{result['idle']['gpu_percent']:.1f}% GPU, "
-                   f"impact {result['idle']['energy_impact']:.1f}")
+        summary = (
+            f"{result['idle']['power_mw']:.0f} mW, {result['idle']['cpu_percent']:.1f}% CPU, "
+            f"{result['idle']['gpu_percent']:.1f}% GPU, "
+            f"impact {result['idle']['energy_impact']:.1f}"
+        )
     result["check"] = check(proc.pid, scenario, front, hidden_before)
     log(f"{browser.key} {scenario}: {summary}; check {result['check']}")
     browser.quit(proc)
@@ -110,10 +124,10 @@ def run_once(browser, scenario):
 CHECKS = {
     "battery-static": "true",
     "battery-busy": "new Promise(r => { let n = 0; const f = () => ++n < 30 ? "
-                    "requestAnimationFrame(f) : r(true); requestAnimationFrame(f); "
-                    "setTimeout(() => r(n), 2000); })",
+    "requestAnimationFrame(f) : r(true); requestAnimationFrame(f); "
+    "setTimeout(() => r(n), 2000); })",
     "battery-video": "new Promise(r => { const v = document.querySelector('video'); "
-                     "const t = v.currentTime; setTimeout(() => r(!v.paused && v.currentTime != t), 500); })",
+    "const t = v.currentTime; setTimeout(() => r(!v.paused && v.currentTime != t), 500); })",
     "battery-background": "true",
     "battery-pinned": "true",
 }

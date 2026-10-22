@@ -1,0 +1,29 @@
+# Editors pick these up, and shfmt reads its settings from here.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+[*.{swift,rs,py}]
+indent_size = 4
+
+[*.{mm,h,cc,cpp}]
+indent_size = 2
+
+[*.{sh,bash}]
+indent_size = 2
+switch_case_indent = true
+binary_next_line = true
+
+[{CMakeLists.txt,*.cmake,*.json,*.yml,*.yaml,*.toml,*.js,*.html,*.css,*.in}]
+indent_size = 2
+
+[Makefile]
+indent_style = tab
+
+[*.md]
+trim_trailing_whitespace = false

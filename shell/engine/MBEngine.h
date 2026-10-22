@@ -104,7 +104,7 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
 /// ("normal", "checkbox", "radio" or "separator"), "enabled", "checked",
 /// and "children" for a submenu.
 - (NSArray<NSDictionary*>*)webView:(MBWebView*)view
-             contextMenuItemsFor:(NSDictionary*)context;
+               contextMenuItemsFor:(NSDictionary*)context;
 /// One of those items was chosen.
 - (void)webView:(MBWebView*)view
     choseContextMenuItem:(NSString*)itemID
@@ -167,10 +167,10 @@ typedef NS_ENUM(NSInteger, MBChromeCommand) {
 /// Without strict site isolation, sites share a few renderer processes and
 /// only |isolatedOrigins| (and sites that request it) get their own.
 + (BOOL)startWithArgc:(int)argc
-                    argv:(char* _Nullable* _Nonnull)argv
-           rootCachePath:(NSString*)rootCachePath
-     strictSiteIsolation:(BOOL)strictSiteIsolation
-         isolatedOrigins:(NSArray<NSString*>*)isolatedOrigins;
+                   argv:(char* _Nullable* _Nonnull)argv
+          rootCachePath:(NSString*)rootCachePath
+    strictSiteIsolation:(BOOL)strictSiteIsolation
+        isolatedOrigins:(NSArray<NSString*>*)isolatedOrigins;
 
 /// Runs the native event loop until -closeAllAndQuit completes.
 + (void)runMessageLoop;
@@ -189,7 +189,8 @@ typedef NS_ENUM(NSInteger, MBChromeCommand) {
 /// thread with how many were added, kept and refused.
 + (void)importCookies:(NSArray<MBCookie*>*)cookies
       intoProfilePath:(NSString*)profilePath
-           completion:(void (^)(NSInteger added, NSInteger kept,
+           completion:(void (^)(NSInteger added,
+                                NSInteger kept,
                                 NSInteger refused))completion
     NS_SWIFT_NAME(importCookies(_:intoProfilePath:completion:));
 
@@ -236,9 +237,9 @@ typedef void (^MBExtensionBridge)(NSString* profilePath,
 
 /// Turns on ad blocking. Call before the first web view is created.
 + (void)setRequestFilter:(MBRequestFilter)filter
-               pageScript:(MBPageScript)script
-                pageReply:(MBPageReply)reply
-              earlyScript:(MBEarlyScript)early;
+              pageScript:(MBPageScript)script
+               pageReply:(MBPageReply)reply
+             earlyScript:(MBEarlyScript)early;
 
 /// JavaScript run in every web page as it starts loading, e.g. to watch its
 /// sign-in forms. "__MBGA_TOKEN__" in it becomes a secret of that page,
@@ -325,7 +326,8 @@ typedef void (^MBExtensionBridge)(NSString* profilePath,
 /// own: each gets a DevTools session in -frameSessions.
 - (void)attachToFrames;
 /// Cross-site frames DevTools can reach: frame id → session id.
-@property(nonatomic, readonly) NSDictionary<NSString*, NSString*>* frameSessions;
+@property(nonatomic, readonly)
+    NSDictionary<NSString*, NSString*>* frameSessions;
 /// Reports the page's network requests through the delegate.
 @property(nonatomic) BOOL recordsNetwork;
 /// Sends every DevTools event of the page to the delegate, for the

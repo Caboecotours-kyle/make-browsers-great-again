@@ -30,50 +30,109 @@ def get(d, *path):
     return d
 
 
-def metric(group, title, unit, better, mbga_path, base_path=None, digits=0, note=""):
-    return {"group": group, "title": title, "unit": unit, "better": better, "digits": digits,
-            "mbga": mbga_path, "base": base_path or mbga_path, "note": note}
+def metric(group, title, unit, better, mbga_path, base_path=None, *, digits=0, note=""):  # noqa: PLR0913 (one named field each)
+    return {
+        "group": group,
+        "title": title,
+        "unit": unit,
+        "better": better,
+        "digits": digits,
+        "mbga": mbga_path,
+        "base": base_path or mbga_path,
+        "note": note,
+    }
 
 
 METRICS = [
-    metric("Battery", "50 tabs, idle after 12 min", "Energy Impact", "lower",
-           ("heavy", "idle_after", "energy_impact"), digits=1,
-           note="Activity Monitor's Energy Impact, summed over the browser's processes"),
-    metric("Battery", "50 tabs, idle after 12 min", "CPU power, mW", "lower",
-           ("heavy", "idle_after", "power_mw"), digits=1),
-    metric("Battery", "Plain article on screen", "Energy Impact", "lower",
-           ("battery-static", "idle", "energy_impact"), digits=1),
-    metric("Battery", "Ad-heavy page on screen", "Energy Impact", "lower",
-           ("battery-busy", "idle", "energy_impact"), digits=1),
-    metric("Battery", "Ad-heavy page on screen", "GPU busy, %", "lower",
-           ("battery-busy", "idle", "gpu_percent"), digits=1),
-    metric("Battery", "1080p video playing", "Energy Impact", "lower",
-           ("battery-video", "idle", "energy_impact"), digits=1),
-    metric("Battery", "1080p video playing", "GPU busy, %", "lower",
-           ("battery-video", "idle", "gpu_percent"), digits=1),
-    metric("Battery", "10 ad-heavy tabs in background, first minutes", "Energy Impact", "lower",
-           ("battery-background", "early", "energy_impact"), digits=1),
-    metric("Battery", "10 ad-heavy tabs in background, after 6 min", "Energy Impact", "lower",
-           ("battery-background", "late", "energy_impact"), digits=1),
-    metric("Battery", "10 ad-heavy pinned tabs in background, first minutes", "Energy Impact",
-           "lower", ("battery-pinned", "early", "energy_impact"),
-           ("battery-background", "early", "energy_impact"), digits=1,
-           note="MBGA keeps pinned tabs running; Chromium has no pinned distinction"),
-    metric("Battery", "10 ad-heavy pinned tabs in background, after 6 min", "Energy Impact",
-           "lower", ("battery-pinned", "late", "energy_impact"),
-           ("battery-background", "late", "energy_impact"), digits=1),
+    metric(
+        "Battery",
+        "50 tabs, idle after 12 min",
+        "Energy Impact",
+        "lower",
+        ("heavy", "idle_after", "energy_impact"),
+        digits=1,
+        note="Activity Monitor's Energy Impact, summed over the browser's processes",
+    ),
+    metric(
+        "Battery", "50 tabs, idle after 12 min", "CPU power, mW", "lower", ("heavy", "idle_after", "power_mw"), digits=1
+    ),
+    metric(
+        "Battery",
+        "Plain article on screen",
+        "Energy Impact",
+        "lower",
+        ("battery-static", "idle", "energy_impact"),
+        digits=1,
+    ),
+    metric(
+        "Battery",
+        "Ad-heavy page on screen",
+        "Energy Impact",
+        "lower",
+        ("battery-busy", "idle", "energy_impact"),
+        digits=1,
+    ),
+    metric(
+        "Battery", "Ad-heavy page on screen", "GPU busy, %", "lower", ("battery-busy", "idle", "gpu_percent"), digits=1
+    ),
+    metric(
+        "Battery", "1080p video playing", "Energy Impact", "lower", ("battery-video", "idle", "energy_impact"), digits=1
+    ),
+    metric(
+        "Battery", "1080p video playing", "GPU busy, %", "lower", ("battery-video", "idle", "gpu_percent"), digits=1
+    ),
+    metric(
+        "Battery",
+        "10 ad-heavy tabs in background, first minutes",
+        "Energy Impact",
+        "lower",
+        ("battery-background", "early", "energy_impact"),
+        digits=1,
+    ),
+    metric(
+        "Battery",
+        "10 ad-heavy tabs in background, after 6 min",
+        "Energy Impact",
+        "lower",
+        ("battery-background", "late", "energy_impact"),
+        digits=1,
+    ),
+    metric(
+        "Battery",
+        "10 ad-heavy pinned tabs in background, first minutes",
+        "Energy Impact",
+        "lower",
+        ("battery-pinned", "early", "energy_impact"),
+        ("battery-background", "early", "energy_impact"),
+        digits=1,
+        note="MBGA keeps pinned tabs running; Chromium has no pinned distinction",
+    ),
+    metric(
+        "Battery",
+        "10 ad-heavy pinned tabs in background, after 6 min",
+        "Energy Impact",
+        "lower",
+        ("battery-pinned", "late", "energy_impact"),
+        ("battery-background", "late", "energy_impact"),
+        digits=1,
+    ),
     metric("Memory", "50 tabs loaded", "MB", "lower", ("heavy", "loaded", "total_mb")),
     metric("Memory", "50 tabs after 12 idle min", "MB", "lower", ("heavy", "after_idle", "total_mb")),
-    metric("Memory", "50 tabs after 12 min, MBGA sleeping idle tabs", "MB", "lower",
-           ("heavy-sleep", "after_idle", "total_mb"), ("heavy", "after_idle", "total_mb"),
-           note="MBGA with its default tab sleeping; Chromium keeps every tab"),
-    metric("Memory", "90 s after restoring 50 tabs", "MB", "lower",
-           ("heavy", "restore", "at_90s", "total_mb")),
+    metric(
+        "Memory",
+        "50 tabs after 12 min, MBGA sleeping idle tabs",
+        "MB",
+        "lower",
+        ("heavy-sleep", "after_idle", "total_mb"),
+        ("heavy", "after_idle", "total_mb"),
+        note="MBGA with its default tab sleeping; Chromium keeps every tab",
+    ),
+    metric("Memory", "90 s after restoring 50 tabs", "MB", "lower", ("heavy", "restore", "at_90s", "total_mb")),
     metric("Speed", "Speedometer 3.1", "score", "higher", ("speedometer", "score"), digits=1),
-    metric("Speed", "Cold start to window", "seconds", "lower", ("startup", "first_window_s"),
-           digits=2),
-    metric("Speed", "Restoring 50 tabs, to window", "seconds", "lower",
-           ("heavy", "restore", "first_window_s"), digits=2),
+    metric("Speed", "Cold start to window", "seconds", "lower", ("startup", "first_window_s"), digits=2),
+    metric(
+        "Speed", "Restoring 50 tabs, to window", "seconds", "lower", ("heavy", "restore", "first_window_s"), digits=2
+    ),
     metric("Speed", "Memory 10 s after a cold start", "MB", "lower", ("startup", "memory_mb")),
 ]
 
@@ -94,10 +153,19 @@ def load_runs():
 
 def build(runs):
     changes = [r for r in runs if "mbga" in r["results"]]
-    out = {"changes": [{"label": r.get("label") or r.get("subject") or r["file"],
-                        "commit": r.get("commit", ""), "date": r["date"],
-                        "dirty": r.get("dirty", False)} for r in changes],
-           "metrics": [], "versions": {}}
+    out = {
+        "changes": [
+            {
+                "label": r.get("label") or r.get("subject") or r["file"],
+                "commit": r.get("commit", ""),
+                "date": r["date"],
+                "dirty": r.get("dirty", False),
+            }
+            for r in changes
+        ],
+        "metrics": [],
+        "versions": {},
+    }
     for r in runs:
         out["versions"].update(r.get("versions", {}))
     for m in METRICS:
@@ -108,8 +176,7 @@ def build(runs):
             series[ref] = values[-1] if values else None
         if all(v is None for v in series["mbga"]) and series["chromium"] is None:
             continue
-        out["metrics"].append({**{k: m[k] for k in ("group", "title", "unit", "better", "digits",
-                                                    "note")}, **series})
+        out["metrics"].append({**{k: m[k] for k in ("group", "title", "unit", "better", "digits", "note")}, **series})
     return out
 
 

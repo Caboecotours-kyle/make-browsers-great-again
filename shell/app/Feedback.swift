@@ -28,6 +28,7 @@ final class ToastView: FlippedView {
         for view in [icon, message, undo, shortcut] as [NSView] { addSubview(view) }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -116,6 +117,7 @@ final class MiniPlayerView: HoverView {
         for view in [icon, title, equalizer, subtitle, playPause, hide] as [NSView] { addSubview(view) }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     private var paused: Bool { media.map { store.pausedMediaTab == $0.tab.id } ?? false }
@@ -224,6 +226,7 @@ final class UpdateCardView: HoverView {
         for view in [icon, title, subtitle, hide] as [NSView] { addSubview(view) }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func update(version: String) {
@@ -287,6 +290,7 @@ final class CleanupCellView: NSTableCellView {
         for view in [title, detail, notNow, once, daily] { addSubview(view) }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var isFlipped: Bool { true }
@@ -349,6 +353,7 @@ final class DropPreviewView: NSView {
         for view in [icon, title, bigIcon, hint] as [NSView] { addSubview(view) }
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var isFlipped: Bool { true }
@@ -411,6 +416,7 @@ final class EmptySpaceHintView: FlippedView {
         addSubview(field)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func update() {}
@@ -449,6 +455,7 @@ final class ElsewhereHintView: FlippedView {
         layer?.addSublayer(picture)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func update() {
@@ -491,6 +498,7 @@ private final class EmptySearchField: HoverView {
         appearance = NSAppearance(named: .aqua)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {

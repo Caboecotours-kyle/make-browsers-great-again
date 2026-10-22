@@ -121,7 +121,23 @@ const ARC_DIR: &str = "Arc";
 pub fn detect(home: &Path, exclude: &Path) -> Vec<Source> {
     let support = home.join("Library/Application Support");
     let mut sources = Vec::new();
+    detect_arc(&support, &mut sources);
+    detect_chromium(&support, exclude, &mut sources);
+    detect_firefox(&support, &mut sources);
+    detect_safari(home, &mut sources);
 
+    // A browser with nothing but sign-ins or passwords is still worth
+    // bringing.
+    sources.retain(|s| {
+        s.error.is_some()
+            || s.profiles.iter().any(|p| {
+                count(p).total() > 0 || cookies::database(s, &p.id).is_some() || passwords::count(s, &p.id) > 0
+            })
+    });
+    sources
+}
+
+fn detect_arc(support: &Path, sources: &mut Vec<Source>) {
     let arc = support.join(ARC_DIR);
     if arc.join(arc::SIDEBAR_FILE).exists() {
         let (profiles, error) = match arc::load(&arc) {
@@ -138,13 +154,17 @@ pub fn detect(home: &Path, exclude: &Path) -> Vec<Source> {
             error,
         });
     }
+}
 
+/// The known Chromium browsers, then any fork that looks like one.
+fn detect_chromium(support: &Path, exclude: &Path, sources: &mut Vec<Source>) {
+    let arc = support.join(ARC_DIR);
     let mut chromium_dirs: Vec<(PathBuf, String, Option<String>, &'static str)> = CHROMIUM_BROWSERS
         .iter()
         .map(|(dir, name, bundle, icon)| (support.join(dir), name.to_string(), Some(bundle.to_string()), *icon))
         .collect();
     // Unknown Chromium forks: any "Local State" one or two levels down.
-    for dir in subdirs(&support).into_iter().flat_map(|d| {
+    for dir in subdirs(support).into_iter().flat_map(|d| {
         let nested = subdirs(&d);
         std::iter::once(d).chain(nested)
     }) {
@@ -153,7 +173,7 @@ pub fn detect(home: &Path, exclude: &Path) -> Vec<Source> {
             || dir.starts_with(exclude)
             || exclude.starts_with(&dir);
         if !known && dir.join("Local State").exists() {
-            chromium_dirs.push((dir.clone(), display_name(&support, &dir), None, "🌐"));
+            chromium_dirs.push((dir.clone(), display_name(support, &dir), None, "🌐"));
         }
     }
     for (dir, name, bundle_id, icon) in chromium_dirs {
@@ -179,14 +199,17 @@ pub fn detect(home: &Path, exclude: &Path) -> Vec<Source> {
             error: None,
         });
     }
+}
 
+/// The known Firefox browsers, then any fork that looks like one.
+fn detect_firefox(support: &Path, sources: &mut Vec<Source>) {
     let mut firefox_dirs: Vec<(PathBuf, String, Option<String>, &'static str)> = FIREFOX_BROWSERS
         .iter()
         .map(|(dir, name, bundle, icon)| (support.join(dir), name.to_string(), Some(bundle.to_string()), *icon))
         .collect();
-    for dir in subdirs(&support) {
+    for dir in subdirs(support) {
         if !firefox_dirs.iter().any(|(d, ..)| *d == dir) && dir.join("profiles.ini").exists() {
-            firefox_dirs.push((dir.clone(), display_name(&support, &dir), None, "🦊"));
+            firefox_dirs.push((dir.clone(), display_name(support, &dir), None, "🦊"));
         }
     }
     for (dir, name, bundle_id, icon) in firefox_dirs {
@@ -214,7 +237,9 @@ pub fn detect(home: &Path, exclude: &Path) -> Vec<Source> {
             profiles: loaded,
         });
     }
+}
 
+fn detect_safari(home: &Path, sources: &mut Vec<Source>) {
     let safari = home.join("Library/Safari/Bookmarks.plist");
     if Path::new("/Applications/Safari.app").exists() || safari.exists() {
         let (profiles, error) = match safari::load(&safari) {
@@ -234,19 +259,9 @@ pub fn detect(home: &Path, exclude: &Path) -> Vec<Source> {
             });
         }
     }
-
-    // A browser with nothing but sign-ins or passwords is still worth
-    // bringing.
-    sources.retain(|s| {
-        s.error.is_some()
-            || s.profiles.iter().any(|p| {
-                count(p).total() > 0 || cookies::database(s, &p.id).is_some() || passwords::count(s, &p.id) > 0
-            })
-    });
-    sources
 }
 
-/// Runs `read` on a copy of the SQLite database at `path`: browsers keep
+/// Runs `read` on a copy of the `SQLite` database at `path`: browsers keep
 /// theirs locked while they run.
 fn read_copy<T>(path: &Path, read: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, String> {
     static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -318,7 +333,7 @@ fn tabs_in(items: &[Item]) -> u32 {
 
 pub fn count(p: &ImportedProfile) -> Counts {
     Counts {
-        spaces: p.spaces.len() as u32,
+        spaces: crate::to_u32(p.spaces.len()),
         pinned: p.spaces.iter().map(|s| tabs_in(&s.pinned)).sum(),
         favorites: tabs_in(&p.favorites),
         today: p.spaces.iter().map(|s| tabs_in(&s.today)).sum(),
@@ -371,7 +386,7 @@ pub fn apply(state: &mut State, sources: &[(&Source, &ImportedProfile)], now: u6
         let pinned = nodes(state, &space.pinned, now);
         counts.pinned += tabs_in(&space.pinned);
         let today: Vec<Id> = flatten(&space.today).into_iter().map(|t| new_tab(state, t, false, now)).collect();
-        counts.today += today.len() as u32;
+        counts.today += crate::to_u32(today.len());
         let s = state.spaces.iter_mut().find(|s| s.id == space_id).expect("space just created");
         s.pinned = pinned;
         s.today = today;
@@ -393,7 +408,7 @@ fn flatten(items: &[Item]) -> Vec<&Item> {
         .iter()
         .flat_map(|i| match i {
             Item::Folder { children, .. } => flatten(children),
-            tab => vec![tab],
+            tab @ Item::Tab { .. } => vec![tab],
         })
         .collect()
 }

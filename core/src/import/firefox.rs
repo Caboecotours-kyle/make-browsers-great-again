@@ -1,4 +1,4 @@
-//! Firefox and its forks (Zen, LibreWolf, Waterfox): profiles from
+//! Firefox and its forks (Zen, `LibreWolf`, Waterfox): profiles from
 //! "profiles.ini" and bookmarks from each profile's "places.sqlite".
 
 use super::{ImportedProfile, ImportedSpace, Item};
@@ -40,21 +40,32 @@ pub fn profiles(data_dir: &Path) -> Vec<(String, String)> {
 
 pub fn profile_path(data_dir: &Path, path: &str) -> PathBuf {
     let p = Path::new(path);
-    if p.is_absolute() { p.to_path_buf() } else { data_dir.join(p) }
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        data_dir.join(p)
+    }
 }
 
 /// Bookmarks of one profile as a space named `space_name`. Firefox keeps the
 /// database locked while it runs, so a copy is read instead.
 pub fn load(data_dir: &Path, path: &str, name: &str, space_name: &str) -> Result<ImportedProfile, String> {
     let dir = profile_path(data_dir, path);
-    let result = super::read_copy(&dir.join("places.sqlite"), read_bookmarks)
-        .map_err(|e| format!("Can't read bookmarks: {e}"));
+    let result =
+        super::read_copy(&dir.join("places.sqlite"), read_bookmarks).map_err(|e| format!("Can't read bookmarks: {e}"));
     let pinned = result?;
     Ok(ImportedProfile {
         id: path.to_string(),
         name: name.to_string(),
         favorites: Vec::new(),
-        spaces: vec![ImportedSpace { position: 0, name: space_name.to_string(), icon: None, color: None, pinned, today: Vec::new() }],
+        spaces: vec![ImportedSpace {
+            position: 0,
+            name: space_name.to_string(),
+            icon: None,
+            color: None,
+            pinned,
+            today: Vec::new(),
+        }],
     })
 }
 

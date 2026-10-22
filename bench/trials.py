@@ -34,15 +34,19 @@ TRIALS = {
     # Power: candidates found in the engine's feature list.
     "60hz": "--enable-features=ThrottleMainFrameTo60Hz",
     "unimportant-frames": "--enable-features=ThrottleUnimportantFrameTimers,ThrottleUnimportantFrameRate",
-    "unimportant-frames-250ms": ("--enable-features=ThrottleUnimportantFrameTimers:"
-                                 "unimportant_frame_timers_throttled_wake_up_interval_millis/250,"
-                                 "ThrottleUnimportantFrameRate"),
+    "unimportant-frames-250ms": (
+        "--enable-features=ThrottleUnimportantFrameTimers:"
+        "unimportant_frame_timers_throttled_wake_up_interval_millis/250,"
+        "ThrottleUnimportantFrameRate"
+    ),
     "align-wakeups": "--enable-features=AlignWakeUps",
     "timer-slack": "--enable-features=TimerSlackMac",
     "no-damage-frames": "--enable-features=ThrottleRepeatedNoDamageFrames",
     "video-frame-rate": "--enable-features=OnBeginFrameThrottleVideo,SingleVideoFrameRateThrottling",
-    "background-gc": ("--enable-features=V8SingleThreadedGCInBackground,"
-                      "RestrictThreadPoolInBackground,IsolatesPriorityBestEffortWhenHidden"),
+    "background-gc": (
+        "--enable-features=V8SingleThreadedGCInBackground,"
+        "RestrictThreadPoolInBackground,IsolatesPriorityBestEffortWhenHidden"
+    ),
     "intensive-throttling-60s": "--enable-features=IntensiveWakeUpThrottling:grace_period_seconds/60",
     "invisible-svg": "--enable-features=InvisibleSVGAnimationThrottling",
     # Speed: what the memory defaults cost.
@@ -55,16 +59,22 @@ TRIALS = {
 def run_trial(scenario):
     if scenario == "heavy":
         r = heavy.run_mbga("trial", idle=False, restore_test=False, idle_cpu=False, late_sample=LATE)
-        return {"total_mb": r["loaded"]["total_mb"], "late_mb": r.get("late", {}).get("total_mb"),
-                "processes": r["loaded"]["processes"], "tabs_with_title": r["tabs_with_title"],
-                "by_kind": r["loaded"]["by_kind"]}
+        return {
+            "total_mb": r["loaded"]["total_mb"],
+            "late_mb": r.get("late", {}).get("total_mb"),
+            "processes": r["loaded"]["processes"],
+            "tabs_with_title": r["tabs_with_title"],
+            "by_kind": r["loaded"]["by_kind"],
+        }
     if scenario in ("speedometer", "startup"):
         return speed.run(MBGA, scenario)
     r = battery.run(MBGA, scenario)
     windows = {k: r[k] for k in ("idle", "early", "late") if k in r}
-    return {k: {m: w[m] for m in ("energy_impact", "power_mw", "cpu_percent", "gpu_percent",
-                                  "wakeups_per_s")} | {"by_kind": w["by_kind"]}
-            for k, w in windows.items()}
+    return {
+        k: {m: w[m] for m in ("energy_impact", "power_mw", "cpu_percent", "gpu_percent", "wakeups_per_s")}
+        | {"by_kind": w["by_kind"]}
+        for k, w in windows.items()
+    }
 
 
 def main():
@@ -72,7 +82,7 @@ def main():
     parser.add_argument("--scenario", default="heavy")
     parser.add_argument("trials", nargs="*")
     args = parser.parse_args()
-    names = args.trials or (list(TRIALS) + ["defaults"])
+    names = args.trials or ([*list(TRIALS), "defaults"])
     build_tools()
     os.makedirs(WORK, exist_ok=True)
     results = []
@@ -105,8 +115,10 @@ def main():
             for w in ("idle", "early", "late"):
                 if w in r:
                     m = r[w]
-                    print(f"{r['trial']:26} {w:7} {m['energy_impact']:7.1f} {m['power_mw']:7.1f} "
-                          f"{m['cpu_percent']:7.2f} {m['gpu_percent']:7.2f} {m['wakeups_per_s']:7.1f}")
+                    print(
+                        f"{r['trial']:26} {w:7} {m['energy_impact']:7.1f} {m['power_mw']:7.1f} "
+                        f"{m['cpu_percent']:7.2f} {m['gpu_percent']:7.2f} {m['wakeups_per_s']:7.1f}"
+                    )
     print(f"\nresults: {out}")
 
 

@@ -358,7 +358,7 @@ final class ElementsModel: InspectorModel {
     func callOn(_ node: DOMNode, _ function: String, returnByValue: Bool = true) async -> Any? {
         guard let session, let object = await resolve(node), let id = object.str("objectId") else { return nil }
         let result = try? await session.send("Runtime.callFunctionOn", ["objectId": id, "functionDeclaration": function,
-                                                                         "returnByValue": returnByValue])
+                                                                        "returnByValue": returnByValue])
         return result?.obj("result")?["value"]
     }
 
@@ -456,7 +456,7 @@ enum DOMText {
     }
 
     static let voidElements: Set<String> = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
-                                             "param", "source", "track", "wbr"]
+                                            "param", "source", "track", "wbr"]
 }
 
 // MARK: - Panel
@@ -524,6 +524,7 @@ final class ElementsPanel: InspectorPanelView, NSOutlineViewDataSource, NSOutlin
         addSubview(split)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -548,7 +549,7 @@ final class ElementsPanel: InspectorPanelView, NSOutlineViewDataSource, NSOutlin
     }
 
     override func sessionChanged() {
-        for signal in [model?.reset, model?.selectionChanged].compactMap({ $0 }) { signal.stopObserving(self) }
+        for signal in [model?.reset, model?.selectionChanged].compactMap(\.self) { signal.stopObserving(self) }
         model?.nodeChanged.stopObserving(self)
         model?.revealed.stopObserving(self)
         model = isShown ? session?.model(ElementsModel.self) : nil
@@ -793,8 +794,8 @@ final class ElementsPanel: InspectorPanelView, NSOutlineViewDataSource, NSOutlin
                 sub.add("Copy Styles") {
                     Task {
                         let text = await model.callOn(node, """
-                            function(){ const s = getComputedStyle(this); let out = ''; for (const p of s) out += p + ': ' + s.getPropertyValue(p) + ';\\n'; return out }
-                            """) as? String
+                        function(){ const s = getComputedStyle(this); let out = ''; for (const p of s) out += p + ': ' + s.getPropertyValue(p) + ';\\n'; return out }
+                        """) as? String
                         if let text { Format.copy(text) }
                     }
                 }
@@ -867,32 +868,32 @@ final class ElementsPanel: InspectorPanelView, NSOutlineViewDataSource, NSOutlin
     private func copySelector(_ node: DOMNode, kind: String) {
         guard let model else { return }
         let function = """
-            function(kind){
-              const el = this;
-              if (kind === 'xpath') {
-                const parts = [];
-                for (let n = el; n && n.nodeType === 1; n = n.parentNode) {
-                  if (n.id) { parts.unshift('//*[@id="' + n.id + '"]'); return parts.join('/') }
-                  let i = 1; for (let s = n.previousElementSibling; s; s = s.previousElementSibling) if (s.localName === n.localName) i++;
-                  parts.unshift(n.localName + '[' + i + ']');
-                }
-                return '/' + parts.join('/');
-              }
-              const parts = [];
-              for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
-                if (n.id && /^[A-Za-z][\\w-]*$/.test(n.id)) { parts.unshift('#' + n.id); break }
-                let part = n.localName;
-                const parent = n.parentElement;
-                if (parent) {
-                  const same = [...parent.children].filter(c => c.localName === n.localName);
-                  if (same.length > 1) part += ':nth-child(' + ([...parent.children].indexOf(n) + 1) + ')';
-                }
-                parts.unshift(part);
-              }
-              const selector = parts.join(' > ');
-              return kind === 'js' ? 'document.querySelector(' + JSON.stringify(selector) + ')' : selector;
+        function(kind){
+          const el = this;
+          if (kind === 'xpath') {
+            const parts = [];
+            for (let n = el; n && n.nodeType === 1; n = n.parentNode) {
+              if (n.id) { parts.unshift('//*[@id="' + n.id + '"]'); return parts.join('/') }
+              let i = 1; for (let s = n.previousElementSibling; s; s = s.previousElementSibling) if (s.localName === n.localName) i++;
+              parts.unshift(n.localName + '[' + i + ']');
             }
-            """
+            return '/' + parts.join('/');
+          }
+          const parts = [];
+          for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+            if (n.id && /^[A-Za-z][\\w-]*$/.test(n.id)) { parts.unshift('#' + n.id); break }
+            let part = n.localName;
+            const parent = n.parentElement;
+            if (parent) {
+              const same = [...parent.children].filter(c => c.localName === n.localName);
+              if (same.length > 1) part += ':nth-child(' + ([...parent.children].indexOf(n) + 1) + ')';
+            }
+            parts.unshift(part);
+          }
+          const selector = parts.join(' > ');
+          return kind === 'js' ? 'document.querySelector(' + JSON.stringify(selector) + ')' : selector;
+        }
+        """
         Task {
             guard let object = await model.resolve(node), let id = object.str("objectId"), let session else { return }
             let result = try? await session.send("Runtime.callFunctionOn", [
@@ -1048,7 +1049,7 @@ final class DOMOutlineView: InspectorOutlineView {
     }
 
     override func mouseMoved(with event: NSEvent) {
-        let row = self.row(at: convert(event.locationInWindow, from: nil))
+        let row = row(at: convert(event.locationInWindow, from: nil))
         let value = row >= 0 ? row : nil
         guard value != hovered else { return }
         setRowHovered(hovered, false)
@@ -1088,6 +1089,7 @@ final class BreadcrumbBar: FlippedView {
         addSubview(scroll)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var wantsUpdateLayer: Bool { true }
@@ -1176,6 +1178,7 @@ final class ElementSidebar: FlippedView {
         styles.sidebar = self
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -1356,6 +1359,7 @@ final class StylesView: FlippedView {
         addSubview(empty)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -1477,14 +1481,14 @@ final class StylesView: FlippedView {
     /// Properties children take from their parents.
     static func inherits(_ name: String) -> Bool {
         if name.hasPrefix("--") { return true }
-        let inherited: Set<String> = ["color", "cursor", "direction", "font", "font-family", "font-size", "font-style", "font-variant",
-                                      "font-weight", "font-stretch", "font-feature-settings", "letter-spacing", "line-height",
-                                      "list-style", "list-style-type", "list-style-position", "list-style-image", "quotes",
-                                      "text-align", "text-indent", "text-transform", "text-shadow", "visibility", "white-space",
-                                      "word-break", "word-spacing", "word-wrap", "overflow-wrap", "caret-color", "tab-size",
-                                      "-webkit-font-smoothing", "text-rendering", "hyphens", "orientation", "writing-mode",
-                                      "border-collapse", "border-spacing", "caption-side", "empty-cells", "speak", "accent-color",
-                                      "color-scheme", "pointer-events", "user-select", "-webkit-text-fill-color"]
+        let inherited: Set = ["color", "cursor", "direction", "font", "font-family", "font-size", "font-style", "font-variant",
+                              "font-weight", "font-stretch", "font-feature-settings", "letter-spacing", "line-height",
+                              "list-style", "list-style-type", "list-style-position", "list-style-image", "quotes",
+                              "text-align", "text-indent", "text-transform", "text-shadow", "visibility", "white-space",
+                              "word-break", "word-spacing", "word-wrap", "overflow-wrap", "caret-color", "tab-size",
+                              "-webkit-font-smoothing", "text-rendering", "hyphens", "orientation", "writing-mode",
+                              "border-collapse", "border-spacing", "caption-side", "empty-cells", "speak", "accent-color",
+                              "color-scheme", "pointer-events", "user-select", "-webkit-text-fill-color"]
         return inherited.contains(name)
     }
 
@@ -1690,6 +1694,7 @@ final class RuleBlock: FlippedView, NSViewToolTipOwner {
         super.init(frame: .zero)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     /// Its height at `width`, or 0 when filtered out.
@@ -1881,7 +1886,7 @@ final class RuleBlock: FlippedView, NSViewToolTipOwner {
     }
 
     private func selectorRect(_ y: CGFloat) -> NSRect {
-        let source = self.source == nil ? 0 : sourceRect(y).width
+        let source = source == nil ? 0 : sourceRect(y).width
         return NSRect(x: 8, y: y + 4, width: max(bounds.width - 24 - source, 40), height: 16)
     }
 
@@ -2191,6 +2196,7 @@ final class ComputedView: FlippedView, NSTableViewDataSource, NSTableViewDelegat
         addSubview(scroll)
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func layout() {
@@ -2219,7 +2225,7 @@ final class ComputedView: FlippedView, NSTableViewDataSource, NSTableViewDelegat
         session.call("CSS.getMatchedStylesForNode", ["nodeId": node.id]) { [weak self] result, _ in
             guard let self, self.node === node else { return }
             var names = Set<String>()
-            let styles = [result?.obj("inlineStyle")].compactMap { $0 } + (result?.list("matchedCSSRules") ?? []).compactMap { $0.obj("rule")?.obj("style") }
+            let styles = [result?.obj("inlineStyle")].compactMap(\.self) + (result?.list("matchedCSSRules") ?? []).compactMap { $0.obj("rule")?.obj("style") }
             for style in styles { for property in style.list("cssProperties") { if let name = property.str("name") { names.insert(name) } } }
             authored = names
             applyFilter()
@@ -2356,6 +2362,7 @@ enum TextEditPopover {
             view = root
         }
 
+        @available(*, unavailable)
         required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
         override func viewDidAppear() {

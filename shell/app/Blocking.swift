@@ -10,15 +10,15 @@ enum AdBlocking {
     /// is created. The closures run on the engine's network thread, so they
     /// only touch the core, which is thread-safe.
     nonisolated static func install(core: BrowserCore) {
-        MBEngine.setRequestFilter({ url, page, kind in
+        MBEngine.setRequestFilter { url, page, kind in
             core.shouldBlock(url: url, page: page, kind: kind)
-        }, pageScript: { page in
+        } pageScript: { page in
             core.pageScript(page: page)
-        }, pageReply: { page, report in
+        } pageReply: { page, report in
             core.cosmeticReply(page: page, report: report)
-        }, earlyScript: { page in
+        } earlyScript: { page in
             core.needsEarlyScript(page: page)
-        })
+        }
     }
 
     /// Reloads the engine, for after editing My Filters.

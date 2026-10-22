@@ -14,7 +14,7 @@ enum Menus {
             menu.add(pinned ? "Unpin Tab" : "Pin Tab") { store.togglePin(tab.id, in: space) }
         }
         let others = store.snapshot.spaces.filter { $0.id != space.id }
-        if !favorite && !others.isEmpty {
+        if !favorite, !others.isEmpty {
             menu.addSubmenu(titled: "Move to Space") { sub in
                 for other in others {
                     sub.add("\(other.icon) \(other.name)") { store.move(tab.id, to: .today(spaceId: other.id), index: 0) }
@@ -35,7 +35,7 @@ enum Menus {
             store.openInLittleWindow(tab.id)
         }
         menu.addItem(.separator())
-        if tab.live && !(favorite || pinned) {
+        if tab.live, !(favorite || pinned) {
             menu.add("Sleep Tab") { store.sleep(tab.id) }
         }
         menu.add(favorite || pinned ? "Unload Tab" : "Close Tab") { store.close(tab.id) }
