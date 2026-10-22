@@ -44,7 +44,12 @@ def launch(data, spaces, **env):
 
 def mbga(socket, *args):
     out = subprocess.run(
-        ["mbga", *args], env={**os.environ, "MBGA_SOCKET": socket}, capture_output=True, text=True, timeout=60
+        ["mbga", *args],
+        env={**os.environ, "MBGA_SOCKET": socket},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
     )
     if out.returncode:
         raise RuntimeError(f"mbga {' '.join(args)}: {out.stdout}{out.stderr}")
@@ -109,7 +114,9 @@ def quit(step, proc):
 def main():
     if sys.argv[1:2] == ["--app"]:
         MBGA.binary = os.path.join(sys.argv[2], "Contents", "MacOS", "MBGA")
-    if subprocess.run(["lsof", "-nP", f"-iTCP:{DEVTOOLS_PORT}", "-sTCP:LISTEN"], capture_output=True).stdout:
+    if subprocess.run(
+        ["lsof", "-nP", f"-iTCP:{DEVTOOLS_PORT}", "-sTCP:LISTEN"], capture_output=True, check=False
+    ).stdout:
         raise SystemExit(f"port {DEVTOOLS_PORT} is in use")
     data = os.path.join(WORK, "visibility")
     a, b = page_url("busy.html?a"), page_url("busy.html?b")

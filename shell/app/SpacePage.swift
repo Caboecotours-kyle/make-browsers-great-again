@@ -364,7 +364,7 @@ final class SpacePageView: FlippedView, NSTableViewDataSource, NSTableViewDelega
 
     func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession,
                    endedAt screenPoint: NSPoint, operation: NSDragOperation) {
-        store.endDrag(at: screenPoint, accepted: operation != [])
+        store.endDrag(at: screenPoint, accepted: !operation.isEmpty)
     }
 
     // MARK: - Dropping in
@@ -445,7 +445,7 @@ final class SidebarTableView: NSTableView {
     /// With responsive scrolling the scroll view takes a gesture's events
     /// straight from the queue after the first one, so the app's monitor
     /// never sees a horizontal swipe to switch spaces.
-    override class var isCompatibleWithResponsiveScrolling: Bool { false }
+    override static var isCompatibleWithResponsiveScrolling: Bool { false }
 
     /// The part its scroll view shows, ignoring the sidebar's clip. A page
     /// sliding away already sits at its destination outside the sidebar

@@ -490,7 +490,8 @@ final class AgentCommands {
         switch command {
         case "back": view.goBack()
         case "forward": view.goForward()
-        default: args.has("hard") ? view.reloadIgnoringCache() : view.reload()
+        default:
+            if args.has("hard") { view.reloadIgnoringCache() } else { view.reload() }
         }
         try await Task.sleep(for: .milliseconds(150))
         try await waitForLoad(id, timeout: 15)
@@ -795,7 +796,7 @@ final class AgentCommands {
                 out.append("\(indent)[frame] \(label) (not read yet; snapshot again)")
                 continue
             }
-            let inner = (try? await call(id, view, "snapshot", framed, in: frame) as? String) ?? nil
+            let inner = (try? await call(id, view, "snapshot", framed, in: frame) as? String)
             guard let inner else {
                 out.append("\(indent)[frame] \(label) (couldn't be read)")
                 continue

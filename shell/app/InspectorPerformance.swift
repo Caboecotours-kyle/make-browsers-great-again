@@ -777,23 +777,23 @@ private final class MetricTile: FlippedView {
         let format: (Double) -> String
         let detail: ((PerformanceSample) -> String?)?
 
-        static let all: [Spec] = [
-            Spec(key: "cpu", title: "CPU usage", color: .systemBlue, fromZero: true, fixedMax: 100,
+        static let all: [Self] = [
+            Self(key: "cpu", title: "CPU usage", color: .systemBlue, fromZero: true, fixedMax: 100,
                  format: { String(format: "%.0f%%", $0) }, detail: nil),
-            Spec(key: "heap", title: "JS heap", color: .systemPurple, fromZero: false, fixedMax: nil,
+            Self(key: "heap", title: "JS heap", color: .systemPurple, fromZero: false, fixedMax: nil,
                  format: { Format.bytes($0) }, detail: { "of " + Format.bytes($0.values["heapTotal"] ?? 0) }),
-            Spec(key: "nodes", title: "DOM nodes", color: .systemGreen, fromZero: false, fixedMax: nil,
+            Self(key: "nodes", title: "DOM nodes", color: .systemGreen, fromZero: false, fixedMax: nil,
                  format: { Int($0).formatted() }, detail: nil),
-            Spec(key: "listeners", title: "Event listeners", color: .systemOrange, fromZero: false, fixedMax: nil,
+            Self(key: "listeners", title: "Event listeners", color: .systemOrange, fromZero: false, fixedMax: nil,
                  format: { Int($0).formatted() }, detail: nil),
-            Spec(key: "documents", title: "Documents", color: .systemTeal, fromZero: false, fixedMax: nil,
+            Self(key: "documents", title: "Documents", color: .systemTeal, fromZero: false, fixedMax: nil,
                  format: { Int($0).formatted() }, detail: { s in
                      let frames = Int(s.values["frames"] ?? 0)
                      return "\(frames) frame\(frames == 1 ? "" : "s")"
                  }),
-            Spec(key: "layouts", title: "Layouts", color: .systemPink, fromZero: true, fixedMax: nil,
+            Self(key: "layouts", title: "Layouts", color: .systemPink, fromZero: true, fixedMax: nil,
                  format: { String(format: "%.1f /s", $0) }, detail: nil),
-            Spec(key: "styles", title: "Style recalcs", color: .systemIndigo, fromZero: true, fixedMax: nil,
+            Self(key: "styles", title: "Style recalcs", color: .systemIndigo, fromZero: true, fixedMax: nil,
                  format: { String(format: "%.1f /s", $0) }, detail: nil),
         ]
     }
@@ -893,7 +893,8 @@ private final class Sparkline: NSView {
         let line = NSBezierPath()
         line.move(to: point(0))
         for i in 1..<values.count { line.line(to: point(i)) }
-        let area = line.copy() as! NSBezierPath
+        let area = NSBezierPath()
+        area.append(line)
         area.line(to: NSPoint(x: point(values.count - 1).x, y: plot.maxY))
         area.line(to: NSPoint(x: point(0).x, y: plot.maxY))
         area.close()

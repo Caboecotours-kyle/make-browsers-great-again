@@ -21,6 +21,10 @@ ignore = [
     "RUF001",   # the reports print typographic characters on purpose
 ]
 
+[lint.per-file-ignores]
+# Holds the trend report's JavaScript, whose lines are the browser's business.
+"bench/trend.py" = ["E501"]
+
 [lint.pylint]
 max-args = 7
 max-positional-args = 7

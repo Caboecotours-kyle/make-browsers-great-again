@@ -590,7 +590,7 @@ private final class FavoriteTileView: HoverView, NSDraggingSource {
     }
 
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
-        store.endDrag(at: screenPoint, accepted: operation != [])
+        store.endDrag(at: screenPoint, accepted: !operation.isEmpty)
     }
 }
 

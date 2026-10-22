@@ -68,9 +68,8 @@ pub fn count(source: &Source, profile_id: &str) -> u32 {
                 .ok()
             })
             .sum(),
-        Kind::Firefox => {
-            firefox_logins(&firefox::profile_path(Path::new(&source.id), profile_id)).map_or(0, |l| l.len() as u32)
-        }
+        Kind::Firefox => firefox_logins(&firefox::profile_path(Path::new(&source.id), profile_id))
+            .map_or(0, |l| crate::to_u32(l.len())),
         Kind::Safari => 0,
     }
 }
@@ -162,7 +161,7 @@ fn chromium_ms(us: i64) -> u64 {
     if us <= UNIX_EPOCH_US {
         0
     } else {
-        ((us - UNIX_EPOCH_US) / 1000) as u64
+        ((us - UNIX_EPOCH_US) / 1000).cast_unsigned()
     }
 }
 
@@ -237,13 +236,14 @@ fn firefox_key(profile: &Path) -> Result<Vec<u8>, String> {
         Some(plain) if plain.starts_with(b"password-check") => {}
         _ => return Err(FIREFOX_PRIMARY_PASSWORD.into()),
     }
-    // The logins key is the one with NSS's fixed key ID.
-    const KEY_ID: [u8; 16] = [0xf8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
     keys.iter()
         .filter(|(_, id)| id.as_slice() == KEY_ID)
         .find_map(|(sealed, _)| decrypt_pbe(sealed, &salt, b""))
         .ok_or_else(|| "Can't decrypt its password key.".into())
 }
+
+/// NSS's fixed ID for the key that seals Firefox's logins.
+const KEY_ID: [u8; 16] = [0xf8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
 
 mod oid {
     pub const PBES2: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0d];
@@ -292,17 +292,17 @@ fn inner(mut contents: &[u8]) -> Option<Vec<(u8, &[u8])>> {
 
 #[cfg(test)]
 fn encode_len(len: usize) -> Vec<u8> {
-    if len < 0x80 {
-        return vec![len as u8];
+    if let Ok(byte @ 0..0x80) = u8::try_from(len) {
+        return vec![byte];
     }
     let bytes: Vec<u8> = len.to_be_bytes().into_iter().skip_while(|&b| b == 0).collect();
-    let mut out = vec![0x80 | bytes.len() as u8];
+    let mut out = vec![0x80 | u8::try_from(bytes.len()).expect("a usize has at most 8 bytes")];
     out.extend(bytes);
     out
 }
 
 fn integer(contents: &[u8]) -> u32 {
-    contents.iter().fold(0u32, |n, &b| n << 8 | b as u32)
+    contents.iter().fold(0u32, |n, &b| n << 8 | u32::from(b))
 }
 
 /// Decrypts a password-based encrypted blob of "key4.db" (the password

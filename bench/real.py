@@ -30,7 +30,6 @@ keeps running. The harness waits until you have left the machine alone for
 import argparse
 import json
 import os
-import platform
 import re
 import shutil
 import subprocess
@@ -44,6 +43,7 @@ from common import (
     activate,
     build_tools,
     log,
+    machine,
     measure_window,
     quit_app,
     sample,
@@ -65,7 +65,7 @@ FAVORITE_KEYS = [18, 19, 20, 21, 23, 22, 26, 28]  # 1-8: Cmd+9 is the last tab
 
 def hid_idle_seconds():
     """How long since the last keyboard or mouse input."""
-    out = subprocess.run(["ioreg", "-c", "IOHIDSystem", "-d", "4"], capture_output=True, text=True).stdout
+    out = subprocess.run(["ioreg", "-c", "IOHIDSystem", "-d", "4"], capture_output=True, text=True, check=False).stdout
     m = re.search(r'"HIDIdleTime" = (\d+)', out)
     return int(m.group(1)) / 1e9 if m else 0.0
 
@@ -95,7 +95,7 @@ def measure(pid, seconds):
 
 
 def running(binary):
-    out = subprocess.run(["pgrep", "-f", f"^{re.escape(binary)}$"], capture_output=True, text=True).stdout
+    out = subprocess.run(["pgrep", "-f", f"^{re.escape(binary)}$"], capture_output=True, text=True, check=False).stdout
     return [int(p) for p in out.split()]
 
 
@@ -108,6 +108,7 @@ class Arc:
             ["defaults", "read", os.path.join(ARC_APP, "Contents", "Info.plist"), "CFBundleShortVersionString"],
             capture_output=True,
             text=True,
+            check=False,
         ).stdout.strip()
 
     def script(self, source, timeout=60):
@@ -116,6 +117,7 @@ class Arc:
             capture_output=True,
             text=True,
             timeout=timeout,
+            check=False,
         )
         if out.returncode:
             raise RuntimeError(f"arc: {out.stderr.strip()}")
@@ -193,7 +195,7 @@ class MbgaCopy:
     def version(self):
         if os.path.abspath(self.app) == MBGA.app:
             return subprocess.run(
-                ["git", "-C", ROOT, "rev-parse", "--short", "HEAD"], capture_output=True, text=True
+                ["git", "-C", ROOT, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False
             ).stdout.strip()
         return self.app
 
@@ -213,7 +215,12 @@ class MbgaCopy:
 
     def mbga(self, *args):
         out = subprocess.run(
-            ["mbga", *args], env={**os.environ, "MBGA_SOCKET": self.socket}, capture_output=True, text=True, timeout=60
+            ["mbga", *args],
+            env={**os.environ, "MBGA_SOCKET": self.socket},
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
         )
         if out.returncode:
             raise RuntimeError(f"mbga {' '.join(args)}: {out.stdout}{out.stderr}".strip())
@@ -270,12 +277,12 @@ def run_once(browser, open_all=True):
     result["late"] = measure(pid, WINDOW)
     sleep_until(t0, END)
     result["memory_end"] = summarize(sample(pid))
-    e, l = result["early"], result["late"]
+    early, late = result["early"], result["late"]
     log(
         f"{browser.key}: {result['memory_end']['total_mb']:.0f} MB at {clock(END)}; "
-        f"idle {e['cpu_percent']:.1f}% / {l['cpu_percent']:.1f}% CPU, "
-        f"{e['power_mw']:.0f} / {l['power_mw']:.0f} mW, "
-        f"impact {e['energy_impact']:.1f} / {l['energy_impact']:.1f}"
+        f"idle {early['cpu_percent']:.1f}% / {late['cpu_percent']:.1f}% CPU, "
+        f"{early['power_mw']:.0f} / {late['power_mw']:.0f} mW, "
+        f"impact {early['energy_impact']:.1f} / {late['energy_impact']:.1f}"
     )
     browser.quit(pid)
     time.sleep(5)
@@ -287,7 +294,10 @@ def clock(seconds):
 
 
 def print_summary(results):
-    span = lambda start: f"idle {clock(start)}-{clock(start + WINDOW)}"
+
+    def span(start):
+        return f"idle {clock(start)}-{clock(start + WINDOW)}"
+
     head = ["browser", "tabs", "MB loaded", f"MB at {clock(END)}", span(EARLY), span(LATE)]
     rows = []
     for key, runs in results.items():
@@ -304,9 +314,9 @@ def print_summary(results):
                     for w in (r["early"], r["late"])
                 ]
             )
-    widths = [max(len(x) for x in col) for col in zip(head, *rows)]
-    for row in [head] + rows:
-        print("  ".join(c.ljust(w) for c, w in zip(row, widths)))
+    widths = [max(len(x) for x in col) for col in zip(head, *rows, strict=True)]
+    for row in [head, *rows]:
+        print("  ".join(c.ljust(w) for c, w in zip(row, widths, strict=True)))
 
 
 def main():
@@ -339,14 +349,16 @@ def main():
     build_tools()
     os.makedirs(WORK, exist_ok=True)
 
-    git = lambda *a: subprocess.run(["git", "-C", ROOT, *a], capture_output=True, text=True).stdout.strip()
+    def git(*a):
+        return subprocess.run(["git", "-C", ROOT, *a], capture_output=True, text=True, check=False).stdout.strip()
+
     results = {
         "format": 2,
         "kind": "real-profile-as-launched" if args.as_launched else "real-profile",
         "date": time.strftime("%Y-%m-%d %H:%M"),
         "commit": git("rev-parse", "--short", "HEAD"),
         "subject": git("log", "-1", "--format=%s"),
-        "machine": f"{platform.machine()} {subprocess.run(['sysctl', '-n', 'machdep.cpu.brand_string'], capture_output=True, text=True).stdout.strip()}",
+        "machine": machine(),
         "versions": {b.key: b.version() for b in browsers},
         "results": {b.key: [] for b in browsers},
     }
@@ -361,7 +373,7 @@ def main():
                 json.dump(results, f, indent=2)
     finally:
         if arc_was_open and not running(Arc.binary):
-            subprocess.run(["open", "-a", ARC_APP])
+            subprocess.run(["open", "-a", ARC_APP], check=False)
     log(f"results written to {path}")
     print_summary(results["results"])
 

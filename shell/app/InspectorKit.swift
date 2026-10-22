@@ -375,7 +375,7 @@ final class InspectorFilterField: NSSearchField {
     var onChange: ((String) -> Void)?
     private let fill = FillLayer()
 
-    override class var cellClass: AnyClass? {
+    override static var cellClass: AnyClass? {
         get { Cell.self }
         set {}
     }
@@ -653,11 +653,6 @@ class InspectorOutlineView: NSOutlineView {
     override func keyDown(with event: NSEvent) {
         if onKey?(event) == true { return }
         super.keyDown(with: event)
-    }
-
-    // No disclosure triangle space wasted at the root of flat lists.
-    override func frameOfOutlineCell(atRow row: Int) -> NSRect {
-        super.frameOfOutlineCell(atRow: row)
     }
 }
 
@@ -1011,7 +1006,7 @@ final class ValueTreeView: NSScrollView, NSOutlineViewDataSource, NSOutlineViewD
 enum CodeLanguage {
     case javascript, css, html, json, plain
 
-    static func guess(mime: String, url: String) -> CodeLanguage {
+    static func guess(mime: String, url: String) -> Self {
         let path = URL(string: url)?.path.lowercased() ?? url.lowercased()
         if mime.contains("json") || path.hasSuffix(".json") || path.hasSuffix(".map") { return .json }
         if mime.contains("javascript") || mime.contains("ecmascript") || [".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"].contains(where: path.hasSuffix) {

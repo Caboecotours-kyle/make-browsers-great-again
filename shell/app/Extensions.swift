@@ -1321,15 +1321,15 @@ final class ExtensionHost {
 
 /// A JSON value that can be saved, for extensions' menu items.
 enum JSONValue: Codable {
-    case string(String), number(Double), bool(Bool), array([JSONValue]), object([String: JSONValue])
+    case string(String), number(Double), bool(Bool), array([Self]), object([String: Self])
 
     init?(_ any: Any) {
         switch any {
         case let n as NSNumber where CFGetTypeID(n) == CFBooleanGetTypeID(): self = .bool(n.boolValue)
         case let n as NSNumber: self = .number(n.doubleValue)
         case let s as String: self = .string(s)
-        case let a as [Any]: self = .array(a.compactMap(JSONValue.init))
-        case let o as [String: Any]: self = .object(o.compactMapValues(JSONValue.init))
+        case let a as [Any]: self = .array(a.compactMap(Self.init))
+        case let o as [String: Any]: self = .object(o.compactMapValues(Self.init))
         default: return nil
         }
     }
@@ -1339,8 +1339,8 @@ enum JSONValue: Codable {
         if let b = try? c.decode(Bool.self) { self = .bool(b) }
         else if let n = try? c.decode(Double.self) { self = .number(n) }
         else if let s = try? c.decode(String.self) { self = .string(s) }
-        else if let a = try? c.decode([JSONValue].self) { self = .array(a) }
-        else { self = .object(try c.decode([String: JSONValue].self)) }
+        else if let a = try? c.decode([Self].self) { self = .array(a) }
+        else { self = .object(try c.decode([String: Self].self)) }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1422,12 +1422,12 @@ struct InstalledExtension {
         return result
     }
 
-    static func load(_ id: String, profile: String) -> InstalledExtension? {
+    static func load(_ id: String, profile: String) -> Self? {
         all(in: profile).first { $0.id == id }
     }
 
     /// The profile's extensions, without Chrome's built-in ones.
-    static func all(in profile: String) -> [InstalledExtension] {
+    static func all(in profile: String) -> [Self] {
         let base = URL(fileURLWithPath: profile)
         var settings: [String: Any] = [:]
         for file in ["Preferences", "Secure Preferences"] {
@@ -1436,7 +1436,7 @@ struct InstalledExtension {
                   let found = (prefs["extensions"] as? [String: Any])?["settings"] as? [String: Any] else { continue }
             settings.merge(found) { $1 }
         }
-        return settings.compactMap { id, value -> InstalledExtension? in
+        return settings.compactMap { id, value -> Self? in
             guard let entry = value as? [String: Any], let path = entry["path"] as? String else { return nil }
             // 5 and 10 are Chrome's own (the PDF viewer and such).
             let location = entry["location"] as? Int ?? 0
@@ -1453,10 +1453,10 @@ struct InstalledExtension {
             let disabledBits = entry["disable_reasons"] as? Int ?? 0
             let enabled = reasons.isEmpty && disabledBits == 0 && entry["state"] as? Int != 0
             let granted = entry["active_permissions"] as? [String: Any] ?? [:]
-            return InstalledExtension(id: id, name: localized(manifest["name"] as? String ?? id, directory: directory, manifest: manifest),
-                                      directory: directory, enabled: enabled, manifest: manifest,
-                                      permissions: Set(granted["api"] as? [String] ?? []),
-                                      hosts: (granted["explicit_host"] as? [String] ?? []) + (granted["scriptable_host"] as? [String] ?? []))
+            return Self(id: id, name: localized(manifest["name"] as? String ?? id, directory: directory, manifest: manifest),
+                        directory: directory, enabled: enabled, manifest: manifest,
+                        permissions: Set(granted["api"] as? [String] ?? []),
+                        hosts: (granted["explicit_host"] as? [String] ?? []) + (granted["scriptable_host"] as? [String] ?? []))
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }

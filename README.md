@@ -193,7 +193,8 @@ scripts/build.sh --run    # build and launch
 
 The app is written to `build/cmake/out/MBGA.app`. Browser data lives in
 `~/Library/Application Support/MBGA`. Run the core's tests with
-`cargo test --manifest-path core/Cargo.toml`.
+`cargo test --manifest-path core/Cargo.toml`, or everything with
+`scripts/check.sh` (see [Checks](#checks)).
 
 Builds from source don't update themselves, so a release never replaces the
 copy you're working on. `scripts/build.sh --release` builds one that does,
@@ -216,6 +217,46 @@ avoids a keychain prompt on every rebuild. Configure with
 `-DMBGA_MOCK_KEYCHAIN=OFF` for a release that encrypts cookies with the real
 keychain. With the mock keychain, the key sealing saved passwords sits in
 `passwords.key` in the data folder rather than in the keychain.
+
+## Checks
+
+Every change has to pass `scripts/check.sh`: the pre-commit hook runs it
+(`scripts/build.sh` turns the hook on), and so does CI on every push and pull
+request. `brew bundle` installs the tools; Rust's version is pinned in
+`rust-toolchain.toml`. `scripts/check.sh --fix` formats everything and
+applies the linters' safe fixes.
+
+| Code | Formatter | Linter |
+| --- | --- | --- |
+| Rust (`core/`) | rustfmt (`core/rustfmt.toml`) | clippy, pedantic, warnings are errors (`core/Cargo.toml`) |
+| Swift (`shell/`, `bench/`) | SwiftFormat (`.swiftformat`) | SwiftLint `--strict` (`.swiftlint.yml`) |
+| Objective-C++ (`shell/engine/`, `shell/helper/`) | clang-format, Chromium style (`.clang-format`) | |
+| Python (`bench/`) | ruff (`ruff.toml`) | ruff |
+| Shell (`scripts/`) | shfmt (`.editorconfig`) | ShellCheck (`.shellcheckrc`) |
+
+Beyond style, the checks hold the architecture in place:
+
+- Only `shell/engine/` and `shell/helper/` include CEF; the rest of the shell
+  goes through `MBEngine`.
+- The shell is AppKit: SwiftUI isn't imported.
+- `unsafe` Rust is confined to `core/src/crypto.rs`, and each block says
+  why it's sound.
+- The core doesn't print, panic on `unwrap()` or leave `todo!()` behind.
+- Files, types and functions have size and complexity limits (SwiftLint's
+  `file_length`, `type_body_length`, `function_body_length` and
+  `cyclomatic_complexity`, clippy's `too_many_lines` and
+  `cognitive_complexity`, ruff's pylint rules). Past the limit, split the
+  code by what it does.
+
+Swift that was over a size limit before the limit existed is listed in
+`.swiftlint-baseline.json`. `scripts/swiftlint-ratchet.py` lets that code
+shrink but not grow, and holds everything else to the limits in full.
+Regenerate the list with
+`swiftlint lint --write-baseline .swiftlint-baseline.json` only when a rule
+changes, never to let new code in.
+
+Commits that only reformat go in `.git-blame-ignore-revs`, so `git blame`
+skips them (`scripts/build.sh` sets that up too).
 
 ## Not yet built
 

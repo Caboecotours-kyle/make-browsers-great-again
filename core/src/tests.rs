@@ -375,7 +375,7 @@ fn sites_kept_awake_in_settings_cover_their_subdomains() {
     s.set_keep_awake_sites(&[
         " Slack.com ".into(),
         "https://www.mail.google.com/inbox".into(),
-        "".into(),
+        String::new(),
         "slack.com".into(),
     ]);
     assert_eq!(s.keep_awake, vec!["slack.com", "mail.google.com"]);
@@ -565,7 +565,7 @@ fn blocker_cancels_matching_requests_except_on_allowed_sites() {
 
 #[test]
 fn blocker_compiles_lists_once_and_loads_the_cache() {
-    let dir = std::path::PathBuf::from(temp_dir("filters"));
+    let dir = PathBuf::from(temp_dir("filters"));
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join(blocker::LISTS[0].0), "||ads.example.net^\n").unwrap();
     let mut first = blocker::Blocker::new(true, []);
@@ -590,7 +590,7 @@ fn ad_settings_survive_a_restart() {
     assert!(!reopened.snapshot().block_ads);
     // Off means the engine is never loaded, even with lists on disk.
     fs::create_dir_all(reopened.filter_dir()).unwrap();
-    fs::write(std::path::Path::new(&reopened.filter_dir()).join(blocker::LISTS[0].0), "||ads.example.net^\n").unwrap();
+    fs::write(Path::new(&reopened.filter_dir()).join(blocker::LISTS[0].0), "||ads.example.net^\n").unwrap();
     assert!(!reopened.load_filters());
     reopened.set_block_ads(true);
     assert!(reopened.load_filters());
@@ -638,7 +638,7 @@ fn generic_hiding_rules_follow_the_names_a_page_reports() {
 
 #[test]
 fn scriptlets_and_user_rules_come_from_the_filter_directory() {
-    let dir = std::path::PathBuf::from(temp_dir("scriptlets"));
+    let dir = PathBuf::from(temp_dir("scriptlets"));
     fs::create_dir_all(&dir).unwrap();
     fs::write(
         dir.join(blocker::SCRIPTLETS.0),

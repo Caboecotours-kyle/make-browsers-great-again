@@ -24,6 +24,13 @@ for arg in "$@"; do
   esac
 done
 
+# Run scripts/check.sh before every commit, and leave formatting-only
+# commits out of git blame.
+if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  git -C "$ROOT" config core.hooksPath .githooks
+  git -C "$ROOT" config blame.ignoreRevsFile .git-blame-ignore-revs
+fi
+
 "$ROOT/scripts/fetch-cef.sh"
 
 NINJA="$(command -v ninja || true)"

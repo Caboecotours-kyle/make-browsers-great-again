@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 pub struct Login {
     pub id: u64,
     pub profile: Id,
-    /// "https://example.com" or "http://localhost:3000": scheme, host and
+    /// "<https://example.com>" or "http://localhost:3000": scheme, host and
     /// port of the page it was saved on.
     pub origin: String,
     pub username: String,
@@ -97,7 +97,7 @@ pub struct Merged {
     pub kept: u32,
 }
 
-/// "https://example.com" for a web page's URL; None for other schemes.
+/// "<https://example.com>" for a web page's URL; None for other schemes.
 pub fn origin_of(url: &str) -> Option<String> {
     let parsed = url::Url::parse(url).ok()?;
     matches!(parsed.scheme(), "https" | "http").then(|| parsed.origin().ascii_serialization())
@@ -121,12 +121,11 @@ impl Store {
     /// Unlocks with `key`, or tells that it isn't the key the passwords
     /// were sealed with. The first key ever given becomes the key.
     pub fn verify(&mut self, key: &Key) -> bool {
-        match &self.check {
-            Some(check) => key.open(check).is_some_and(|c| c.as_bytes() == CHECK),
-            None => {
-                self.check = key.seal(std::str::from_utf8(CHECK).unwrap_or_default());
-                self.check.is_some()
-            }
+        if let Some(check) = &self.check {
+            key.open(check).is_some_and(|c| c.as_bytes() == CHECK)
+        } else {
+            self.check = key.seal(std::str::from_utf8(CHECK).unwrap_or_default());
+            self.check.is_some()
         }
     }
 
@@ -254,28 +253,25 @@ impl Store {
                 .logins
                 .iter()
                 .position(|l| l.profile == profile && l.origin == origin && l.username == login.username);
-            match existing {
-                Some(i) => {
-                    let current = &self.logins[i];
-                    if key.open(&current.password).as_deref() == Some(login.password.as_str())
-                        || changed <= current.changed_ms
-                    {
-                        merged.kept += 1;
-                        continue;
-                    }
-                    let Some(sealed) = key.seal(&login.password) else { continue };
-                    let l = &mut self.logins[i];
-                    l.password = sealed;
-                    l.changed_ms = changed;
-                    l.used_ms = l.used_ms.max(login.used_ms);
-                    merged.updated += 1;
+            if let Some(i) = existing {
+                let current = &self.logins[i];
+                if key.open(&current.password).as_deref() == Some(login.password.as_str())
+                    || changed <= current.changed_ms
+                {
+                    merged.kept += 1;
+                    continue;
                 }
-                None => {
-                    let Some(sealed) = key.seal(&login.password) else { continue };
-                    let created = if login.created_ms > 0 { login.created_ms } else { now };
-                    self.insert(profile, origin, &login.username, sealed, created, login.used_ms, changed.max(created));
-                    merged.added += 1;
-                }
+                let Some(sealed) = key.seal(&login.password) else { continue };
+                let l = &mut self.logins[i];
+                l.password = sealed;
+                l.changed_ms = changed;
+                l.used_ms = l.used_ms.max(login.used_ms);
+                merged.updated += 1;
+            } else {
+                let Some(sealed) = key.seal(&login.password) else { continue };
+                let created = if login.created_ms > 0 { login.created_ms } else { now };
+                self.insert(profile, origin, &login.username, sealed, created, login.used_ms, changed.max(created));
+                merged.added += 1;
             }
         }
         for url in never {

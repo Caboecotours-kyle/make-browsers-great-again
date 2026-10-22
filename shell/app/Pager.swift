@@ -577,8 +577,8 @@ final class PageCardView: NSView {
 
     override var wantsUpdateLayer: Bool { true }
 
-    /// Card corners and edge, or none for full screen.
-    // Set on every layout pass, so only a real change redraws.
+    /// Card corners and edge, or none for full screen. Set on every layout
+    /// pass, so only a real change redraws.
     var isCard = true {
         didSet { if isCard != oldValue { needsDisplay = true; needsLayout = true } }
     }

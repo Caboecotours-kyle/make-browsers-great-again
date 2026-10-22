@@ -3,10 +3,12 @@ measurement windows, the local test-page server and a minimal DevTools
 client."""
 
 import base64
+import contextlib
 import functools
 import http.server
 import json
 import os
+import platform
 import re
 import socket
 import struct
@@ -22,6 +24,12 @@ MEDIA = os.path.join(ROOT, "build", "bench-media")
 WORK = "/tmp/mbga-bench"
 PAGE_PORT = 8765
 DEVTOOLS_PORT = 9555  # never 9333: that is the user's own Chrome
+
+
+def machine():
+    """The architecture and CPU, for telling result files apart."""
+    cpu = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True, check=False)
+    return f"{platform.machine()} {cpu.stdout.strip()}"
 
 
 def log(msg):
@@ -61,7 +69,7 @@ def quit_app(pid, timeout=60):
         f"var app = $.NSRunningApplication.runningApplicationWithProcessIdentifier({pid}); "
         f"app.isNil() ? false : app.terminate"
     )
-    subprocess.run(["osascript", "-l", "JavaScript", "-e", script], capture_output=True, timeout=30)
+    subprocess.run(["osascript", "-l", "JavaScript", "-e", script], capture_output=True, timeout=30, check=False)
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -81,7 +89,9 @@ def quit_app(pid, timeout=60):
 def wait_for_window(pid, timeout=30):
     start = time.time()
     while time.time() - start < timeout:
-        out = subprocess.run([os.path.join(TOOLS, "windows"), str(pid)], capture_output=True, text=True).stdout.strip()
+        out = subprocess.run(
+            [os.path.join(TOOLS, "windows"), str(pid)], capture_output=True, text=True, check=False
+        ).stdout.strip()
         if out and int(out) > 0:
             return time.time() - start
         time.sleep(0.05)
@@ -90,11 +100,13 @@ def wait_for_window(pid, timeout=30):
 
 def activate(pid):
     """Brings the browser to the front, as when a user switches to it."""
-    subprocess.run([os.path.join(TOOLS, "activate"), str(pid)])
+    subprocess.run([os.path.join(TOOLS, "activate"), str(pid)], check=False)
 
 
 def window_bounds(pid):
-    out = subprocess.run([os.path.join(TOOLS, "windows"), str(pid), "--bounds"], capture_output=True, text=True).stdout
+    out = subprocess.run(
+        [os.path.join(TOOLS, "windows"), str(pid), "--bounds"], capture_output=True, text=True, check=False
+    ).stdout
     return json.loads(out or "[]")
 
 
@@ -129,7 +141,7 @@ def gpu_times():
     """Accumulated GPU time per process in ns, as Activity Monitor's GPU
     column reads it from the graphics driver's user clients."""
     out = subprocess.run(
-        ["ioreg", "-l", "-w0", "-r", "-c", "AGXDeviceUserClient"], capture_output=True, text=True
+        ["ioreg", "-l", "-w0", "-r", "-c", "AGXDeviceUserClient"], capture_output=True, text=True, check=False
     ).stdout
     times = {}
     for block in out.split("+-o AGXDeviceUserClient")[1:]:
@@ -160,10 +172,8 @@ class EnergyImpact:
         for line in last:
             parts = line.split()
             if len(parts) >= 2 and parts[0].isdigit():
-                try:
+                with contextlib.suppress(ValueError):
                     impact[int(parts[0])] = float(parts[1])
-                except ValueError:
-                    pass
         return impact
 
 
@@ -297,7 +307,9 @@ def page_targets(port):
 
 
 def listening_pid(port):
-    out = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp"], capture_output=True, text=True).stdout
+    out = subprocess.run(
+        ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp"], capture_output=True, text=True, check=False
+    ).stdout
     pids = [int(line[1:]) for line in out.splitlines() if line.startswith("p")]
     return pids[0] if pids else None
 

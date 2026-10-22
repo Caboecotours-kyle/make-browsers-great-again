@@ -1,4 +1,4 @@
-//! The few primitives MBGA needs, from the system's CommonCrypto: reading
+//! The few primitives MBGA needs, from the system's `CommonCrypto`: reading
 //! other browsers' cookies and passwords, and sealing MBGA's own passwords.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -15,7 +15,9 @@ pub enum Cipher {
     TripleDes,
 }
 
+// The only unsafe code in the core: calls into CommonCrypto.
 #[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
 mod sys {
     use super::{Cipher, Hash};
     use std::ffi::c_void;
@@ -57,6 +59,8 @@ mod sys {
     pub fn pbkdf2(hash: Hash, password: &[u8], salt: &[u8], rounds: u32, out: &mut [u8]) -> bool {
         // kCCPRFHmacAlgSHA1 and kCCPRFHmacAlgSHA256.
         let prf = if hash == Hash::Sha1 { 1 } else { 3 };
+        // SAFETY: each pointer comes with its slice's length, and `out` is
+        // writable for `out.len()` bytes.
         let status = unsafe {
             CCKeyDerivationPBKDF(
                 PBKDF2,
@@ -78,9 +82,11 @@ mod sys {
         let alg = if cipher == Cipher::Aes { 0 } else { 2 };
         let mut out = vec![0u8; data.len() + 16];
         let mut moved = 0usize;
+        // SAFETY: each pointer comes with its slice's length; `out` has room
+        // for the input plus a block of padding, which is all CBC can add.
         let status = unsafe {
             CCCrypt(
-                if encrypt { 0 } else { 1 },
+                u32::from(!encrypt),
                 alg,
                 PKCS7,
                 key.as_ptr().cast(),
@@ -90,7 +96,7 @@ mod sys {
                 data.len(),
                 out.as_mut_ptr().cast(),
                 out.len(),
-                &mut moved,
+                &raw mut moved,
             )
         };
         if status != 0 {
@@ -104,23 +110,29 @@ mod sys {
         // kCCHmacAlgSHA1 and kCCHmacAlgSHA256.
         let (alg, len) = if hash == Hash::Sha1 { (0, 20) } else { (2, 32) };
         let mut mac = vec![0u8; len];
+        // SAFETY: key and data come with their lengths, and `mac` has room for
+        // the digest `alg` produces (20 bytes for SHA-1, 32 for SHA-256).
         unsafe { CCHmac(alg, key.as_ptr().cast(), key.len(), data.as_ptr().cast(), data.len(), mac.as_mut_ptr()) };
         mac
     }
 
     pub fn digest(hash: Hash, data: &[u8]) -> Vec<u8> {
         let mut md = vec![0u8; if hash == Hash::Sha1 { 20 } else { 32 }];
+        let len = u32::try_from(data.len()).expect("CommonCrypto digests at most 4 GB in one call");
+        // SAFETY: `md` is as long as the digest written, and `data`'s length is
+        // passed with it.
         unsafe {
             if hash == Hash::Sha1 {
-                CC_SHA1(data.as_ptr().cast(), data.len() as u32, md.as_mut_ptr());
+                CC_SHA1(data.as_ptr().cast(), len, md.as_mut_ptr());
             } else {
-                CC_SHA256(data.as_ptr().cast(), data.len() as u32, md.as_mut_ptr());
+                CC_SHA256(data.as_ptr().cast(), len, md.as_mut_ptr());
             }
         }
         md
     }
 
     pub fn random(out: &mut [u8]) -> bool {
+        // SAFETY: `out` is writable for `out.len()` bytes.
         unsafe { CCRandomGenerateBytes(out.as_mut_ptr().cast(), out.len()) == 0 }
     }
 }

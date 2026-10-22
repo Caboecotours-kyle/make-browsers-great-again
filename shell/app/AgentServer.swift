@@ -253,10 +253,10 @@ struct AgentPreferences: Codable, Equatable {
     /// Sites agents may not read, use or open, e.g. "bank.com".
     var blockedSites: [String] = []
 
-    static func load(from directory: URL) -> AgentPreferences {
+    static func load(from directory: URL) -> Self {
         guard let data = try? Data(contentsOf: directory.appendingPathComponent("agents.json")),
-              let preferences = try? JSONDecoder().decode(AgentPreferences.self, from: data)
-        else { return AgentPreferences() }
+              let preferences = try? JSONDecoder().decode(Self.self, from: data)
+        else { return Self() }
         return preferences
     }
 

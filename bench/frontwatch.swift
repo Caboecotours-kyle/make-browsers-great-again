@@ -5,7 +5,7 @@ import AppKit
 
 guard CommandLine.arguments.count == 3, let pid = pid_t(CommandLine.arguments[1]),
       let seconds = Double(CommandLine.arguments[2]) else {
-    FileHandle.standardError.write("usage: frontwatch <pid> <seconds>\n".data(using: .utf8)!)
+    FileHandle.standardError.write(Data("usage: frontwatch <pid> <seconds>\n".utf8))
     exit(2)
 }
 var samples = 0, front = 0

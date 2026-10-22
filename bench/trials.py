@@ -82,7 +82,7 @@ def main():
     parser.add_argument("--scenario", default="heavy")
     parser.add_argument("trials", nargs="*")
     args = parser.parse_args()
-    names = args.trials or (list(TRIALS) + ["defaults"])
+    names = args.trials or ([*list(TRIALS), "defaults"])
     build_tools()
     os.makedirs(WORK, exist_ok=True)
     results = []

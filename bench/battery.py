@@ -82,14 +82,14 @@ def run_once(browser, scenario):
         tabs = (
             {"pinned": background, "today": [front]}
             if scenario == "battery-pinned"
-            else {"today": background + [front]}
+            else {"today": [*background, front]}
         )
         MBGA.prepare(data, [{"space": "Bench", **tabs}])
         proc = MBGA.launch(data, devtools=True)
     else:
         browser.prepare(data)
         # Chromium shows the first URL given on the command line.
-        proc = browser.launch(data, [front] + background, devtools=True)
+        proc = browser.launch(data, [front, *background], devtools=True)
     result = {"first_window_s": wait_for_window(proc.pid)}
     time.sleep(2)
     if is_mbga and background:

@@ -30,7 +30,7 @@ def get(d, *path):
     return d
 
 
-def metric(group, title, unit, better, mbga_path, base_path=None, digits=0, note=""):
+def metric(group, title, unit, better, mbga_path, base_path=None, *, digits=0, note=""):  # noqa: PLR0913 (one named field each)
     return {
         "group": group,
         "title": title,

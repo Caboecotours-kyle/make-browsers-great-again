@@ -10,7 +10,7 @@ if args.first == "--to", args.count > 1 {
     args.removeFirst(2)
 }
 guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == target else {
-    FileHandle.standardError.write("\(target) is not frontmost\n".data(using: .utf8)!)
+    FileHandle.standardError.write(Data("\(target) is not frontmost\n".utf8))
     exit(2)
 }
 var flags: CGEventFlags = []

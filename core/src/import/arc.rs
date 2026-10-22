@@ -134,7 +134,7 @@ fn flatten_tabs(items: Vec<Item>) -> Vec<Item> {
         .into_iter()
         .flat_map(|item| match item {
             Item::Folder { children, .. } => flatten_tabs(children),
-            tab => vec![tab],
+            tab @ Item::Tab { .. } => vec![tab],
         })
         .collect()
 }
@@ -146,7 +146,9 @@ fn icon(info: &Value) -> Option<String> {
     icon["emoji_v2"]
         .as_str()
         .map(str::to_string)
-        .or_else(|| icon["emoji"].as_u64().and_then(|c| char::from_u32(c as u32)).map(String::from))
+        .or_else(|| {
+            icon["emoji"].as_u64().and_then(|c| u32::try_from(c).ok()).and_then(char::from_u32).map(String::from)
+        })
         .filter(|s| !s.is_empty())
 }
 
@@ -160,6 +162,7 @@ fn color(theme: &Value) -> Option<u32> {
                 map.get("green").and_then(Value::as_f64),
                 map.get("blue").and_then(Value::as_f64),
             ) {
+                #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "clamped to 0...255")]
                 let c = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
                 return Some(c(r) << 16 | c(g) << 8 | c(b));
             }

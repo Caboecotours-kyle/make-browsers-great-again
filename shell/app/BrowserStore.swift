@@ -26,14 +26,14 @@ enum SidebarLayout: String, CaseIterable {
         ProcessInfo.processInfo.environment[$0]?.isEmpty == false
     }
 
-    static var saved: SidebarLayout {
+    static var saved: Self {
         // MBGA_DEBUG_LAYOUT=full|compact|focus starts a test copy in that
         // layout, whatever the shared preferences say.
-        if let raw = ProcessInfo.processInfo.environment["MBGA_DEBUG_LAYOUT"], let layout = SidebarLayout(rawValue: raw) {
+        if let raw = ProcessInfo.processInfo.environment["MBGA_DEBUG_LAYOUT"], let layout = Self(rawValue: raw) {
             return layout
         }
         let defaults = UserDefaults.standard
-        if let raw = defaults.string(forKey: defaultsKey), let layout = SidebarLayout(rawValue: raw) { return layout }
+        if let raw = defaults.string(forKey: defaultsKey), let layout = Self(rawValue: raw) { return layout }
         // Before layouts, a hidden sidebar was Focus mode.
         return defaults.object(forKey: "sidebarVisible") as? Bool == false ? .focus : .full
     }
@@ -784,7 +784,9 @@ final class BrowserStore: NSObject {
 
     func goBack() { visibleView?.goBack() }
     func goForward() { visibleView?.goForward() }
-    func reloadOrStop() { nav.isLoading ? visibleView?.stopLoading() : visibleView?.reload() }
+    func reloadOrStop() {
+        if nav.isLoading { visibleView?.stopLoading() } else { visibleView?.reload() }
+    }
     func reload() { visibleView?.reload() }
     func zoomIn() { visibleView?.zoomIn() }
     func zoomOut() { visibleView?.zoomOut() }

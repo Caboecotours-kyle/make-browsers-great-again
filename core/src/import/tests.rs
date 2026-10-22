@@ -15,6 +15,7 @@ fn write(path: &Path, contents: impl AsRef<[u8]>) {
 /// A home folder with Arc, Chrome (two profiles), Helium, an unknown
 /// Chromium fork, Firefox and Safari, plus things that must not be
 /// detected: an Electron app and MBGA's own engine data.
+#[expect(clippy::too_many_lines, reason = "one fixture that lays out a whole home folder")]
 fn fixture_home(name: &str) -> PathBuf {
     let home = std::env::temp_dir().join(format!("mbga-import-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&home);
@@ -129,7 +130,7 @@ fn fixture_home(name: &str) -> PathBuf {
     );
     let places = firefox.join("Profiles/abc.default-release/places.sqlite");
     fs::create_dir_all(places.parent().unwrap()).unwrap();
-    let db = rusqlite::Connection::open(&places).unwrap();
+    let db = Connection::open(&places).unwrap();
     db.execute_batch(
         "CREATE TABLE moz_places (id INTEGER PRIMARY KEY, url TEXT, title TEXT);
          CREATE TABLE moz_bookmarks (id INTEGER PRIMARY KEY, type INTEGER, fk INTEGER, parent INTEGER,
@@ -343,10 +344,13 @@ fn importing_into_a_used_state_adds_alongside() {
     let _ = fs::remove_dir_all(home);
 }
 
+/// A cookie row: host, name, value, encrypted value, expiry and top-frame site.
+type CookieRow<'a> = (&'a str, &'a str, &'a str, &'a [u8], i64, &'a str);
+
 /// Chromium's cookie table as of version 24, with the columns read.
-fn chromium_cookies(path: &Path, version: u32, rows: &[(&str, &str, &str, &[u8], i64, &str)]) {
+fn chromium_cookies(path: &Path, version: u32, rows: &[CookieRow]) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    let db = rusqlite::Connection::open(path).unwrap();
+    let db = Connection::open(path).unwrap();
     db.execute_batch(&format!(
         "CREATE TABLE meta (key LONGVARCHAR NOT NULL UNIQUE PRIMARY KEY, value LONGVARCHAR);
          INSERT INTO meta VALUES ('version', '{version}');
@@ -358,7 +362,7 @@ fn chromium_cookies(path: &Path, version: u32, rows: &[(&str, &str, &str, &[u8],
     for (host, name, value, encrypted, expires, top_frame) in rows {
         db.execute(
             "INSERT INTO cookies VALUES (1, ?1, ?2, ?3, ?4, ?5, '/', ?6, 1, 1, 2, 1, ?7, 1, 0)",
-            rusqlite::params![host, top_frame, name, value, encrypted, expires, (*expires != 0) as i64],
+            rusqlite::params![host, top_frame, name, value, encrypted, expires, i64::from(*expires != 0)],
         )
         .unwrap();
     }
@@ -404,10 +408,9 @@ fn firefox_cookies_are_read_in_the_clear() {
     let home = fixture_home("ff-cookies");
     let sources = detect(&home, &exclude(&home));
     let firefox = sources.iter().find(|s| s.kind == Kind::Firefox).unwrap();
-    let db = rusqlite::Connection::open(
-        home.join("Library/Application Support/Firefox/Profiles/abc.default-release/cookies.sqlite"),
-    )
-    .unwrap();
+    let db =
+        Connection::open(home.join("Library/Application Support/Firefox/Profiles/abc.default-release/cookies.sqlite"))
+            .unwrap();
     db.execute_batch(
         "CREATE TABLE moz_cookies (id INTEGER PRIMARY KEY, originAttributes TEXT NOT NULL DEFAULT '', name TEXT,
              value TEXT, host TEXT, path TEXT, expiry INTEGER, lastAccessed INTEGER, creationTime INTEGER,
@@ -431,7 +434,7 @@ fn firefox_cookies_are_read_in_the_clear() {
 
 fn chromium_logins(path: &Path, rows: &[(&str, &str, &[u8], bool)]) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    let db = rusqlite::Connection::open(path).unwrap();
+    let db = Connection::open(path).unwrap();
     db.execute_batch(
         "CREATE TABLE logins (origin_url TEXT, action_url TEXT, username_element TEXT, username_value TEXT,
              password_element TEXT, password_value BLOB, signon_realm TEXT, date_created INTEGER,
@@ -442,7 +445,7 @@ fn chromium_logins(path: &Path, rows: &[(&str, &str, &[u8], bool)]) {
         db.execute(
             "INSERT INTO logins VALUES (?1, '', 'user', ?2, 'pass', ?3, ?1, 13300000000000000, ?4, 0,
                  13350000000000000, 13340000000000000)",
-            rusqlite::params![origin, username, password, *never as i64],
+            rusqlite::params![origin, username, password, i64::from(*never)],
         )
         .unwrap();
     }
@@ -500,7 +503,7 @@ fn firefox_passwords_decrypt_with_key4() {
     let global_salt = b"global salt bytes";
     let key = [0x42u8; 24];
     let pbe = |plain: &[u8], salt: &[u8]| passwords::test_support::pbes2(plain, global_salt, salt, &[9u8; 14]);
-    let db = rusqlite::Connection::open(profile.join("key4.db")).unwrap();
+    let db = Connection::open(profile.join("key4.db")).unwrap();
     db.execute_batch(
         "CREATE TABLE metaData (id TEXT PRIMARY KEY, item1, item2);
                       CREATE TABLE nssPrivate (id INTEGER PRIMARY KEY, a11, a102);",
@@ -541,7 +544,7 @@ fn firefox_passwords_decrypt_with_key4() {
     );
 
     // A Primary Password seals the check differently.
-    let db = rusqlite::Connection::open(profile.join("key4.db")).unwrap();
+    let db = Connection::open(profile.join("key4.db")).unwrap();
     db.execute(
         "UPDATE metaData SET item2 = ?1",
         rusqlite::params![passwords::test_support::pbes2(b"password-check", b"other salt", b"check salt", &[9u8; 14])],

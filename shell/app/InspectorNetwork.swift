@@ -115,7 +115,7 @@ final class NetRequest {
     /// The script line or document that made it, short.
     var initiatorLabel: String {
         guard let initiator else { return "" }
-        if let frame = initiator.obj("stack")?.list("callFrames").first(where: { ($0.str("url") ?? "") != "" }) {
+        if let frame = initiator.obj("stack")?.list("callFrames").first(where: { !($0.str("url") ?? "").isEmpty }) {
             return "\(Self.short(frame.str("url") ?? "")):\((frame.int("lineNumber") ?? 0) + 1)"
         }
         if let url = initiator.str("url"), !url.isEmpty {
@@ -186,7 +186,7 @@ final class NetworkModel: InspectorModel {
         }
     }
     var throttle: NetworkPreset {
-        get { session?.developerState?().network ?? .none }
+        get { session?.developerState?().network ?? .unthrottled }
         set {
             session?.updateDeveloperState? { $0.network = newValue }
             changed.send()
@@ -473,7 +473,7 @@ private enum NetKind: Int, CaseIterable {
         }
     }
 
-    static func of(_ request: NetRequest) -> NetKind {
+    static func of(_ request: NetRequest) -> Self {
         if request.mime == "application/wasm" { return .wasm }
         switch request.type {
         case "Fetch", "XHR": return .fetch
@@ -681,7 +681,7 @@ final class NetworkPanel: InspectorPanelView, NSTableViewDataSource, NSTableView
         record.isOn = model.recording
         preserve.isOn = model.preservesLog
         noCache.isOn = model.cacheDisabled
-        throttleButton.isOn = model.throttle != .none
+        throttleButton.isOn = model.throttle != .unthrottled
         throttleButton.toolTip = "Throttling: \(model.throttle.title)"
         blockedButton.isOn = !model.blocked.isEmpty
         blockedButton.isHidden = model.blocked.isEmpty

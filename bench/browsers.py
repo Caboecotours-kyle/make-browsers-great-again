@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import time
+from typing import ClassVar
 
 from common import DEVTOOLS_PORT, ROOT, TOOLS, wait_exit
 
@@ -20,10 +21,19 @@ class Chromium:
 
     # The window gives web pages the same viewport as MBGA's default window
     # (1280x820 with the sidebar), measured with window.innerWidth/Height.
-    FLAGS = ["--no-first-run", "--no-default-browser-check", "--use-mock-keychain", "--window-position=224,99"]
+    FLAGS: ClassVar[list[str]] = [
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--use-mock-keychain",
+        "--window-position=224,99",
+    ]
     WINDOW = "--window-size=1004,891"
     # Hides the "Google API keys are missing" bar of Chromium builds.
-    ENV = {"GOOGLE_API_KEY": "no", "GOOGLE_DEFAULT_CLIENT_ID": "no", "GOOGLE_DEFAULT_CLIENT_SECRET": "no"}
+    ENV: ClassVar[dict[str, str]] = {
+        "GOOGLE_API_KEY": "no",
+        "GOOGLE_DEFAULT_CLIENT_ID": "no",
+        "GOOGLE_DEFAULT_CLIENT_SECRET": "no",
+    }
 
     def __init__(self, key, app):
         self.key = key
@@ -39,6 +49,7 @@ class Chromium:
             ["defaults", "read", os.path.join(self.app, "Contents", "Info.plist"), "CFBundleShortVersionString"],
             capture_output=True,
             text=True,
+            check=False,
         ).stdout.strip()
 
     def prepare(self, data, profile_names=("Personal",)):
@@ -79,6 +90,7 @@ class Chromium:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=30,
+            check=False,
         )
 
     def quit(self, proc):
@@ -189,9 +201,9 @@ class Mbga:
 
     def press(self, code, *mods):
         for _ in range(3):
-            subprocess.run(["open", "-a", self.app])
+            subprocess.run(["open", "-a", self.app], check=False)
             time.sleep(0.3)
-            if subprocess.run([os.path.join(TOOLS, "key"), str(code), *mods]).returncode == 0:
+            if subprocess.run([os.path.join(TOOLS, "key"), str(code), *mods], check=False).returncode == 0:
                 return
         raise RuntimeError("could not bring MBGA to the front")
 
@@ -214,7 +226,10 @@ class Mbga:
         """Profiles that fail to open fall back to shared in-memory storage,
         which would make any measurement meaningless."""
         log_path = os.path.join(data, "engine", "engine.log")
-        errors = open(log_path).read().count("Cannot create profile") if os.path.exists(log_path) else 0
+        errors = 0
+        if os.path.exists(log_path):
+            with open(log_path) as f:
+                errors = f.read().count("Cannot create profile")
         if errors:
             raise RuntimeError(f"{errors} profiles failed to open; see {log_path}")
 

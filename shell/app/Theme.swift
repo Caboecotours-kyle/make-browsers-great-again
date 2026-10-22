@@ -45,15 +45,15 @@ struct RGB: Equatable {
         return c(r) << 16 | c(g) << 8 | c(b)
     }
 
-    func mixed(with other: RGB, _ t: Double) -> RGB {
-        RGB(r: r + (other.r - r) * t, g: g + (other.g - g) * t, b: b + (other.b - b) * t)
+    func mixed(with other: Self, _ t: Double) -> Self {
+        Self(r: r + (other.r - r) * t, g: g + (other.g - g) * t, b: b + (other.b - b) * t)
     }
 
     var nsColor: NSColor { NSColor(srgbRed: r, green: g, blue: b, alpha: 1) }
     var cgColor: CGColor { CGColor(srgbRed: r, green: g, blue: b, alpha: 1) }
 
-    static let white = RGB(0xFFFFFF)
-    static let black = RGB(0x000000)
+    static let white = Self(0xFFFFFF)
+    static let black = Self(0x000000)
 }
 
 extension NSAppearance {
@@ -147,8 +147,8 @@ enum TintStyle: String, CaseIterable {
     /// The window takes the visible page's theme color instead of the space's.
     static let matchPageKey = "matchPageColor"
 
-    static var saved: TintStyle {
-        UserDefaults.standard.string(forKey: defaultsKey).flatMap(TintStyle.init) ?? .calm
+    static var saved: Self {
+        UserDefaults.standard.string(forKey: defaultsKey).flatMap(Self.init) ?? .calm
     }
 
     var title: String {

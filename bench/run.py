@@ -24,7 +24,6 @@ earlier results file instead, for a scenario that run missed.
 import argparse
 import json
 import os
-import platform
 import shutil
 import subprocess
 import time
@@ -34,7 +33,7 @@ import heavy
 import speed
 import trend
 from browsers import BROWSERS, MBGA
-from common import DEVTOOLS_PORT, PAGE_PORT, ROOT, WORK, build_tools, listening_pid, log
+from common import DEVTOOLS_PORT, PAGE_PORT, ROOT, WORK, build_tools, listening_pid, log, machine
 
 GROUPS = {
     "heavy": ["heavy", "heavy-sleep"],
@@ -51,11 +50,11 @@ MBGA_ONLY = {"heavy-sleep", "battery-pinned"}
 
 
 def git(*args):
-    return subprocess.run(["git", "-C", ROOT, *args], capture_output=True, text=True).stdout.strip()
+    return subprocess.run(["git", "-C", ROOT, *args], capture_output=True, text=True, check=False).stdout.strip()
 
 
 def preflight(browsers):
-    running = subprocess.run(["pgrep", "-f", MBGA.binary], capture_output=True, text=True).stdout
+    running = subprocess.run(["pgrep", "-f", MBGA.binary], capture_output=True, text=True, check=False).stdout
     if running.strip():
         raise SystemExit("MBGA is already running; quit it first")
     for port in (PAGE_PORT, DEVTOOLS_PORT):
@@ -109,7 +108,7 @@ def main():
         "subject": git("log", "-1", "--format=%s"),
         "dirty": dirty,
         "label": args.label or git("log", "-1", "--format=%s"),
-        "machine": f"{platform.machine()} {subprocess.run(['sysctl', '-n', 'machdep.cpu.brand_string'], capture_output=True, text=True).stdout.strip()}",
+        "machine": machine(),
         "engine_switches": os.environ.get("MBGA_ENGINE_SWITCHES", ""),
         "engine_omit": os.environ.get("MBGA_ENGINE_OMIT", ""),
         "versions": {b.key: b.version() for b in browsers},

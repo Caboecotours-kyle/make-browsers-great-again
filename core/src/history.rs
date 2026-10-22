@@ -43,10 +43,11 @@ impl History {
         }
         self.visits.push(Visit { url: url.to_string(), title: String::new(), count: 1, last_ms: now });
         if self.visits.len() > MAX_ENTRIES {
-            let worst = (0..self.visits.len())
+            if let Some(worst) = (0..self.visits.len())
                 .min_by(|&a, &b| score(&self.visits[a], now).total_cmp(&score(&self.visits[b], now)))
-                .unwrap();
-            self.visits.swap_remove(worst);
+            {
+                self.visits.swap_remove(worst);
+            }
         }
     }
 
@@ -90,12 +91,13 @@ impl History {
 /// Frecency: the visit count matters logarithmically and fades over the
 /// weeks since the last visit, so a page visited daily last month still
 /// beats one seen once today.
+#[expect(clippy::cast_precision_loss, reason = "an age in milliseconds is far below 2^52")]
 fn score(v: &Visit, now: u64) -> f64 {
     let days = now.saturating_sub(v.last_ms) as f64 / DAY_MS;
-    (1.0 + v.count as f64).ln() * 10.0 / (1.0 + days / 14.0)
+    (1.0 + f64::from(v.count)).ln() * 10.0 / (1.0 + days / 14.0)
 }
 
-/// "https://www.example.com/a" -> "example.com/a"
+/// "<https://www.example.com/a>" -> "example.com/a"
 fn strip_scheme(url: &str) -> &str {
     let rest = url.split_once("://").map_or(url, |(_, r)| r);
     rest.strip_prefix("www.").unwrap_or(rest)

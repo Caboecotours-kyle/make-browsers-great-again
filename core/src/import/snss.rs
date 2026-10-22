@@ -3,7 +3,7 @@
 //!
 //! Layout: "SNSS", an i32 version, then records of a u16 size followed by a
 //! one-byte command id and `size - 1` bytes of payload. Fixed-size payloads
-//! are little-endian structs; tab navigations are base::Pickle objects.
+//! are little-endian structs; tab navigations are `base::Pickle` objects.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -18,7 +18,7 @@ const SET_PINNED_STATE: u8 = 12;
 const TAB_CLOSED: u8 = 16;
 const WINDOW_CLOSED: u8 = 17;
 
-/// Window types other than this (popups, apps, DevTools) are skipped.
+/// Window types other than this (popups, apps, `DevTools`) are skipped.
 const WINDOW_TYPE_NORMAL: i32 = 0;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,7 +41,7 @@ fn i32_at(b: &[u8], at: usize) -> Option<i32> {
     Some(i32::from_le_bytes(b.get(at..at + 4)?.try_into().ok()?))
 }
 
-/// Reads a base::Pickle navigation: payload size, tab id, navigation index,
+/// Reads a `base::Pickle` navigation: payload size, tab id, navigation index,
 /// URL (length-prefixed bytes) and title (length-prefixed UTF-16), each
 /// field padded to four bytes.
 fn parse_navigation(p: &[u8]) -> Option<(i32, i32, String, String)> {

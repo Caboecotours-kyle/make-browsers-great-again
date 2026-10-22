@@ -1,4 +1,4 @@
-//! Firefox and its forks (Zen, LibreWolf, Waterfox): profiles from
+//! Firefox and its forks (Zen, `LibreWolf`, Waterfox): profiles from
 //! "profiles.ini" and bookmarks from each profile's "places.sqlite".
 
 use super::{ImportedProfile, ImportedSpace, Item};
