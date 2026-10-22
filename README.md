@@ -34,9 +34,8 @@ curl -fL https://github.com/Ffinnis/make-browsers-great-again/releases/latest/do
 ```
 
 Or download `MBGA.dmg` from the [latest release](https://github.com/Ffinnis/make-browsers-great-again/releases/latest),
-open it and drag MBGA to Applications. MBGA isn't notarized, so a copy downloaded in
-a browser needs System Settings ▸ Privacy & Security ▸ Open Anyway the first
-time. After that, MBGA keeps itself up to date.
+open it and drag MBGA to Applications. Releases are signed with a Developer
+ID and notarized by Apple, and once installed MBGA keeps itself up to date.
 
 ## What it does
 
@@ -206,6 +205,11 @@ store the private half as "MBGA update signing key" in your keychain and put
 the public half in `MBGA_UPDATE_PUBLIC_KEY`. To try an update without
 publishing one, point a build at a local feed:
 `MBGA_UPDATE_FEED=file:///path/to/update.json`.
+
+A release's app is signed with your Apple Development identity and the
+hardened runtime, then Xcode signs it with the team's cloud-managed
+Developer ID and has Apple notarize it, so there's no certificate to keep
+(`MBGA_SIGN_IDENTITY` and `MBGA_TEAM` choose another team).
 
 Development builds are ad-hoc signed and use Chromium's mock keychain, which
 avoids a keychain prompt on every rebuild. Configure with

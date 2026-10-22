@@ -6,7 +6,15 @@
 # The archive is signed with the release key, kept in your login keychain as
 # "MBGA update signing key" (or given in MBGA_UPDATE_KEY). Copies only accept
 # updates signed with it: back it up, and never publish it.
+#
+# The app is signed as opendoc is: with your Apple Development identity and
+# the hardened runtime, then by Xcode with the team's Developer ID (managed
+# in the cloud, so no certificate to keep) and notarized by Apple. Set
+# MBGA_SIGN_IDENTITY and MBGA_TEAM to use another team.
 set -euo pipefail
+
+export MBGA_SIGN_IDENTITY="${MBGA_SIGN_IDENTITY:-Apple Development: Roman Potapov (LKU8Y4CMYF)}"
+TEAM="${MBGA_TEAM:-9RMCLTA387}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -37,10 +45,52 @@ if [[ "$(MBGA_UPDATE_KEY="$KEY" swift scripts/update-signing.swift public-key)" 
 fi
 
 scripts/build.sh --release
-APP="$ROOT/build/release/out/MBGA.app"
 OUT="$ROOT/build/release/assets"
 rm -rf "$OUT"
 mkdir -p "$OUT"
+
+# Xcode signs and notarizes archives, so the app goes into one.
+echo "Sending ${TAG} to Apple to be notarized…"
+ARCHIVE="$ROOT/build/release/MBGA.xcarchive"
+rm -rf "$ARCHIVE"
+mkdir -p "$ARCHIVE/Products/Applications"
+ditto "$ROOT/build/release/out/MBGA.app" "$ARCHIVE/Products/Applications/MBGA.app"
+python3 - "$ARCHIVE" "$OUT" "$VERSION" "$MBGA_SIGN_IDENTITY" "$TEAM" <<'PY'
+import datetime, plistlib, sys
+archive, out, version, identity, team = sys.argv[1:]
+plistlib.dump({
+    "ApplicationProperties": {
+        "ApplicationPath": "Applications/MBGA.app", "Architectures": ["arm64"],
+        "CFBundleIdentifier": "dev.mbga.browser", "CFBundleShortVersionString": version,
+        "CFBundleVersion": version, "SigningIdentity": identity, "Team": team,
+    },
+    "ArchiveVersion": 2, "CreationDate": datetime.datetime.now(datetime.timezone.utc),
+    "Name": "MBGA", "SchemeName": "MBGA",
+}, open(f"{archive}/Info.plist", "wb"))
+plistlib.dump({"method": "developer-id", "teamID": team, "signingStyle": "automatic", "destination": "upload"},
+              open(f"{out}/ExportOptions.plist", "wb"))
+PY
+xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist "$OUT/ExportOptions.plist" \
+  -allowProvisioningUpdates > "$OUT/upload.log" 2>&1 || { tail -20 "$OUT/upload.log" >&2; exit 1; }
+# Apple usually takes a few minutes.
+for _ in $(seq 120); do
+  if xcodebuild -exportNotarizedApp -archivePath "$ARCHIVE" -exportPath "$OUT/notarized" > "$OUT/notarized.log" 2>&1; then
+    break
+  fi
+  if ! grep -q "not ready for distribution" "$OUT/notarized.log"; then
+    tail -20 "$OUT/notarized.log" >&2
+    exit 1
+  fi
+  sleep 30
+done
+APP="$OUT/notarized/MBGA.app"
+if [[ ! -d "$APP" ]]; then
+  echo "Apple hasn't notarized ${TAG} after an hour. Run the script again later." >&2
+  exit 1
+fi
+codesign --verify --deep --strict "$APP"
+xcrun stapler validate -q "$APP"
+spctl --assess --type execute "$APP"
 
 echo "Packing ${TAG}…"
 # The zip is what copies update from; the disk image is for installing:
@@ -81,7 +131,7 @@ PREVIOUS="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)"
   echo "curl -fL https://github.com/$REPO/releases/latest/download/MBGA.zip -o /tmp/MBGA.zip && ditto -x -k /tmp/MBGA.zip /Applications && open /Applications/MBGA.app"
   echo '```'
   echo
-  echo "Or download MBGA.dmg below, open it and drag MBGA to Applications. MBGA isn't notarized, so the first time macOS asks: open it from System Settings ▸ Privacy & Security ▸ Open Anyway."
+  echo "Or download MBGA.dmg below, open it and drag MBGA to Applications."
   echo
   echo "Once installed, MBGA updates itself."
 } > "$OUT/notes.md"

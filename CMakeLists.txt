@@ -20,6 +20,19 @@ option(MBGA_MOCK_KEYCHAIN "Use a mock keychain (avoids prompts on ad-hoc signed 
 # source don't, so a new release never replaces the copy you're working on.
 option(MBGA_UPDATES "Update from MBGA's releases on GitHub" OFF)
 set(MBGA_UPDATE_PUBLIC_KEY "HQrQqNM/GyMsslsnQmag+Y9mTGB2YHt1WsyouwlPpjw=")
+# Builds are signed ad hoc. Releases are signed with a development identity
+# and the hardened runtime; Xcode then signs them with the Developer ID and
+# has Apple notarize them (scripts/release.sh).
+set(MBGA_SIGN_IDENTITY "-" CACHE STRING "Code signing identity (- signs ad hoc)")
+if(MBGA_SIGN_IDENTITY STREQUAL "-")
+  set(MBGA_SIGN codesign --force --sign -)
+  set(MBGA_SIGN_APP ${MBGA_SIGN})
+  set(MBGA_SIGN_HELPER ${MBGA_SIGN})
+else()
+  set(MBGA_SIGN codesign --force --options runtime --timestamp=none --sign "${MBGA_SIGN_IDENTITY}")
+  set(MBGA_SIGN_APP ${MBGA_SIGN} --entitlements "${CMAKE_SOURCE_DIR}/shell/resources/app.entitlements")
+  set(MBGA_SIGN_HELPER ${MBGA_SIGN} --entitlements "${CMAKE_SOURCE_DIR}/shell/resources/helper.entitlements")
+endif()
 if(MBGA_UPDATES)
   set(MBGA_UPDATE_FEED "https://github.com/Ffinnis/make-browsers-great-again/releases/latest/download/update.json")
 else()
@@ -160,7 +173,8 @@ add_custom_command(
           ln -sfh "Versions/A/Chromium Embedded Framework" "Chromium Embedded Framework" &&
           ln -sfh Versions/A/Libraries Libraries &&
           ln -sfh Versions/A/Resources Resources
-  COMMAND codesign --force --sign - "${_cef}"
+  COMMAND find "${_cef}/Versions/A/Libraries" -name "*.dylib" -exec ${MBGA_SIGN} {} +
+  COMMAND ${MBGA_SIGN} "${_cef}"
   DEPENDS "${CEF_FRAMEWORK}/Chromium Embedded Framework"
   COMMENT "Copying Chromium Embedded Framework"
   VERBATIM)
@@ -202,6 +216,7 @@ add_custom_command(TARGET mbga POST_BUILD
 # sit in Contents/MacOS then.
 add_custom_command(TARGET mbga POST_BUILD
   COMMAND rm -f "$<TARGET_FILE:mbga>.d"
-  COMMAND codesign --force --sign - "${_app}"
-  COMMENT "Ad-hoc signing ${MBGA_PRODUCT_NAME}.app"
+  COMMAND ${MBGA_SIGN} "${_app}/Contents/Resources/bin/mbga"
+  COMMAND ${MBGA_SIGN_APP} "${_app}"
+  COMMENT "Signing ${MBGA_PRODUCT_NAME}.app"
   VERBATIM)
