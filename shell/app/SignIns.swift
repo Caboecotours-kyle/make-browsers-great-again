@@ -26,11 +26,9 @@ enum SignIns {
                       store: BrowserStore) async -> Outcome {
         guard available(source) else { return Outcome(error: "\(source.name)'s sign-ins can't be read.") }
         var password: Data?
-        if let service = source.keychainService {
-            switch await Task.detached(operation: { keychainPassword(service: service, browser: source.name) }).value {
-            case .success(let data): password = data
-            case .failure(let error): return Outcome(error: error.message)
-            }
+        switch await browserKey(source) {
+        case .success(let key): password = key
+        case .failure(let error): return Outcome(error: error.message)
         }
         let core = store.core
         let sourceID = source.id
@@ -86,6 +84,26 @@ enum SignIns {
 
     struct KeychainError: Error {
         let message: String
+    }
+
+    /// Keys read in the last two minutes, so bringing a browser's sign-ins
+    /// and then its passwords asks only once.
+    private static var browserKeys: [String: Data] = [:]
+
+    /// The password in the keychain item a Chromium-based browser encrypts
+    /// its cookies and passwords with; nil for browsers that have none.
+    static func browserKey(_ source: ImportSourceInfo) async -> Result<Data?, KeychainError> {
+        guard let service = source.keychainService else { return .success(nil) }
+        if let key = browserKeys[service] { return .success(key) }
+        let name = source.name
+        let result = await Task.detached(operation: { keychainPassword(service: service, browser: name) }).value
+        guard case .success(let key) = result else { return result.map { $0 } }
+        browserKeys[service] = key
+        Task {
+            try? await Task.sleep(for: .seconds(120))
+            browserKeys[service] = nil
+        }
+        return .success(key)
     }
 
     /// The password in the browser's keychain item. Reading another app's

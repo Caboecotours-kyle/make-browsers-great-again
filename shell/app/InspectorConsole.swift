@@ -122,6 +122,9 @@ final class ConsoleModel: InspectorModel {
     private func consoleCalled(_ params: JSON) {
         let type = params.str("type") ?? "log"
         let args = params.list("args")
+        // MBGA's own page scripts report through the console; their reports
+        // (a password sent from a sign-in form among them) aren't the page's.
+        if type == "debug", args.first?.str("value")?.hasPrefix("__mbga_") == true { return }
         let frame = params.obj("stackTrace")?.list("callFrames").first
         let level: ConsoleMessage.Level = switch type {
         case "error", "assert": .error

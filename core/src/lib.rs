@@ -4,9 +4,11 @@
 uniffi::setup_scaffolding!();
 
 pub mod blocker;
+pub mod crypto;
 pub mod history;
 pub mod import;
 pub mod model;
+pub mod passwords;
 
 use model::{Container, Id, Node, Pressure, State, Tab};
 use std::fs;
@@ -162,6 +164,8 @@ pub struct ImportProfileInfo {
     pub pinned: u32,
     pub favorites: u32,
     pub today: u32,
+    /// Saved passwords; Safari's can't be counted.
+    pub passwords: u32,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
@@ -239,6 +243,63 @@ pub struct CookieRead {
     pub error: Option<String>,
 }
 
+/// A saved password, without the password.
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct SavedLogin {
+    pub id: u64,
+    pub profile_id: u64,
+    /// "https://example.com": where it was saved.
+    pub origin: String,
+    /// "example.com", as shown to people.
+    pub site: String,
+    pub username: String,
+    pub created_ms: u64,
+    pub used_ms: u64,
+    pub changed_ms: u64,
+}
+
+/// What to ask once a sign-in form was sent.
+#[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PasswordOffer {
+    /// Saved already, never saved on the site, or the passwords are locked.
+    Nothing,
+    Save,
+    /// The saved login with that username has another password now.
+    Update { login_id: u64 },
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct PasswordImportOutcome {
+    pub added: u32,
+    /// Saved logins whose password the import changed.
+    pub updated: u32,
+    /// Saved already, or older than the one MBGA has.
+    pub kept: u32,
+    /// Passwords that couldn't be decrypted.
+    pub unreadable: u32,
+    /// Why nothing could be imported.
+    pub error: Option<String>,
+}
+
+impl PasswordImportOutcome {
+    fn failed(error: impl Into<String>) -> PasswordImportOutcome {
+        PasswordImportOutcome { added: 0, updated: 0, kept: 0, unreadable: 0, error: Some(error.into()) }
+    }
+}
+
+fn saved_login(l: &passwords::Login) -> SavedLogin {
+    SavedLogin {
+        id: l.id,
+        profile_id: l.profile,
+        origin: l.origin.clone(),
+        site: model::site_of(&l.origin),
+        username: l.username.clone(),
+        created_ms: l.created_ms,
+        used_ms: l.used_ms,
+        changed_ms: l.changed_ms,
+    }
+}
+
 // --------------------------------------------------------------------- core
 
 struct Inner {
@@ -250,6 +311,10 @@ struct Inner {
     data_dir: PathBuf,
     /// Browsers found by the last `detect_browsers`, ready to import.
     detected: Vec<import::Source>,
+    passwords: passwords::Store,
+    passwords_dirty: bool,
+    /// None until the shell unlocks the passwords.
+    password_key: Option<passwords::Key>,
 }
 
 #[derive(uniffi::Object)]
@@ -268,9 +333,17 @@ fn now_ms() -> u64 {
 
 const STATE_FILE: &str = "state.json";
 const HISTORY_FILE: &str = "history.json";
+const PASSWORDS_FILE: &str = "passwords.json";
 
 fn load_history(dir: &Path) -> history::History {
     fs::read(dir.join(HISTORY_FILE))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+fn load_passwords(dir: &Path) -> passwords::Store {
+    fs::read(dir.join(PASSWORDS_FILE))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_default()
@@ -282,7 +355,13 @@ fn write_atomic(dir: &Path, name: &str, value: &impl serde::Serialize) -> bool {
         return false;
     };
     let tmp = dir.join(format!("{name}.tmp"));
-    fs::write(&tmp, json).is_ok() && fs::rename(&tmp, dir.join(name)).is_ok()
+    fs::write(&tmp, json).is_ok() && private(&tmp, name) && fs::rename(&tmp, dir.join(name)).is_ok()
+}
+
+/// Only the person may read the passwords file, sealed as they are.
+fn private(path: &Path, name: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    name != PASSWORDS_FILE || fs::set_permissions(path, fs::Permissions::from_mode(0o600)).is_ok()
 }
 
 fn load_state(dir: &Path) -> State {
@@ -408,6 +487,8 @@ impl BrowserCore {
         let data_dir = fs::canonicalize(&data_dir).unwrap_or(data_dir);
         let mut state = load_state(&data_dir);
         let history = load_history(&data_dir);
+        let mut passwords = load_passwords(&data_dir);
+        passwords.keep_profiles(&state.profiles.iter().map(|p| p.id).collect::<Vec<_>>());
         let blocker = blocker::Blocker::new(state.block_ads, state.ads_allowed.iter().cloned());
         // The engine is not running yet, so deleted profiles' storage is free.
         for id in std::mem::take(&mut state.doomed_profiles) {
@@ -422,6 +503,9 @@ impl BrowserCore {
                 revision: 1,
                 data_dir,
                 detected: Vec::new(),
+                passwords,
+                passwords_dirty: false,
+                password_key: None,
             }),
             blocker: RwLock::new(blocker),
         })
@@ -526,7 +610,12 @@ impl BrowserCore {
     /// Returns the closed favorites, or None if it is the last profile or a
     /// space still uses it.
     pub fn delete_profile(&self, id: u64) -> Option<Vec<u64>> {
-        self.mutate(|s, _| s.delete_profile(id))
+        let closed = self.mutate(|s, _| s.delete_profile(id))?;
+        let mut inner = self.lock();
+        let profiles: Vec<Id> = inner.state.profiles.iter().map(|p| p.id).collect();
+        inner.passwords.keep_profiles(&profiles);
+        inner.passwords_dirty = true;
+        Some(closed)
     }
 
     // ---------------------------------------------------------------- spaces
@@ -982,6 +1071,7 @@ impl BrowserCore {
                             pinned: c.pinned,
                             favorites: c.favorites,
                             today: c.today,
+                            passwords: import::passwords::count(s, &p.id),
                         }
                     })
                     .collect(),
@@ -1053,11 +1143,138 @@ impl BrowserCore {
         import_counts(counts, links)
     }
 
+    // ------------------------------------------------------------ passwords
+
+    /// Unlocks saved passwords with the 32-byte secret the shell keeps in the
+    /// keychain (the first secret ever given becomes the key). False if the
+    /// passwords were sealed with another.
+    pub fn unlock_passwords(&self, secret: Vec<u8>) -> bool {
+        let Some(key) = passwords::Key::new(&secret) else { return false };
+        let mut inner = self.lock();
+        let first = inner.passwords.check.is_none();
+        if !inner.passwords.verify(&key) {
+            return false;
+        }
+        inner.passwords_dirty |= first;
+        inner.password_key = Some(key);
+        true
+    }
+
+    pub fn passwords_unlocked(&self) -> bool {
+        self.lock().password_key.is_some()
+    }
+
+    /// Every login saved in a profile, by site, then username.
+    pub fn saved_logins(&self, profile_id: u64) -> Vec<SavedLogin> {
+        let inner = self.lock();
+        let mut logins: Vec<SavedLogin> =
+            inner.passwords.logins.iter().filter(|l| l.profile == profile_id).map(saved_login).collect();
+        logins.sort_by(|a, b| a.site.cmp(&b.site).then_with(|| a.username.cmp(&b.username)));
+        logins
+    }
+
+    /// Logins of a profile to offer on the page at `url`, best first.
+    pub fn logins_for_page(&self, profile_id: u64, url: String) -> Vec<SavedLogin> {
+        self.lock().passwords.matching(profile_id, &url).into_iter().map(saved_login).collect()
+    }
+
+    /// A saved password, or None while the passwords are locked.
+    pub fn login_password(&self, id: u64) -> Option<String> {
+        let inner = self.lock();
+        let key = inner.password_key.as_ref()?;
+        inner.passwords.logins.iter().find(|l| l.id == id).and_then(|l| key.open(&l.password))
+    }
+
+    /// Whether to offer saving a password sent from a page.
+    pub fn password_offer(&self, profile_id: u64, url: String, username: String, password: String) -> PasswordOffer {
+        let inner = self.lock();
+        let Some(key) = inner.password_key.as_ref() else { return PasswordOffer::Nothing };
+        match inner.passwords.offer(key, profile_id, &url, &username, &password) {
+            passwords::Offer::Nothing => PasswordOffer::Nothing,
+            passwords::Offer::Save => PasswordOffer::Save,
+            passwords::Offer::Update(login_id) => PasswordOffer::Update { login_id },
+        }
+    }
+
+    /// Saves a login for the page at `url`, replacing the password of the one
+    /// with that username. None while locked.
+    pub fn save_login(&self, profile_id: u64, url: String, username: String, password: String) -> Option<u64> {
+        let mut inner = self.lock();
+        let key = inner.password_key.clone()?;
+        let id = inner.passwords.save(&key, profile_id, &url, &username, &password, now_ms())?;
+        inner.passwords_dirty = true;
+        Some(id)
+    }
+
+    pub fn mark_login_used(&self, id: u64) {
+        let mut inner = self.lock();
+        inner.passwords.mark_used(id, now_ms());
+        inner.passwords_dirty = true;
+    }
+
+    pub fn delete_login(&self, id: u64) {
+        let mut inner = self.lock();
+        if inner.passwords.delete(id) {
+            inner.passwords_dirty = true;
+        }
+    }
+
+    /// Never offers to save passwords on the site of `url` again.
+    pub fn never_save_passwords(&self, profile_id: u64, url: String) {
+        let mut inner = self.lock();
+        inner.passwords.never_save(profile_id, &url);
+        inner.passwords_dirty = true;
+    }
+
+    /// Origins a profile never saves passwords on.
+    pub fn never_saved_sites(&self, profile_id: u64) -> Vec<String> {
+        let inner = self.lock();
+        inner.passwords.never.iter().filter(|(p, _)| *p == profile_id).map(|(_, o)| o.clone()).collect()
+    }
+
+    pub fn allow_saving_passwords(&self, profile_id: u64, origin: String) {
+        let mut inner = self.lock();
+        inner.passwords.never.retain(|(p, o)| !(*p == profile_id && *o == origin));
+        inner.passwords_dirty = true;
+    }
+
+    /// Imports the passwords of a profile found by `detect_browsers` into
+    /// MBGA's profile `into`. Chromium-based browsers need the password from
+    /// their keychain item. Call it off the main thread, once unlocked.
+    pub fn import_browser_passwords(&self, source_id: String, profile_id: String, password: Option<Vec<u8>>, into: u64) -> PasswordImportOutcome {
+        let source = self.lock().detected.iter().find(|s| s.id == source_id).cloned();
+        let Some(source) = source else { return PasswordImportOutcome::failed("That browser is no longer there.") };
+        match import::passwords::read(&source, &profile_id, password.as_deref()) {
+            Ok(read) => self.merge_logins(read, into),
+            Err(error) => PasswordImportOutcome::failed(error),
+        }
+    }
+
+    /// Imports passwords exported to a CSV file (by the Passwords app, other
+    /// browsers or password managers) into MBGA's profile `into`.
+    pub fn import_password_file(&self, path: String, into: u64) -> PasswordImportOutcome {
+        let text = match fs::read(&path) {
+            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+            Err(e) => return PasswordImportOutcome::failed(format!("Can't read the file: {e}")),
+        };
+        match import::passwords::read_csv(&text) {
+            Ok(read) => self.merge_logins(read, into),
+            Err(error) => PasswordImportOutcome::failed(error),
+        }
+    }
+
     /// Writes state and history to disk if they changed. Atomic: write +
     /// rename.
     pub fn persist(&self) -> bool {
         let mut inner = self.lock();
         let mut ok = true;
+        if inner.passwords_dirty {
+            if write_atomic(&inner.data_dir, PASSWORDS_FILE, &inner.passwords) {
+                inner.passwords_dirty = false;
+            } else {
+                ok = false;
+            }
+        }
         if inner.history_dirty {
             if write_atomic(&inner.data_dir, HISTORY_FILE, &inner.history) {
                 inner.history_dirty = false;
@@ -1097,6 +1314,20 @@ impl BrowserCore {
         drop(blocker);
         drop(old);
         true
+    }
+
+    fn merge_logins(&self, read: import::passwords::Read, into: u64) -> PasswordImportOutcome {
+        let mut inner = self.lock();
+        let Some(key) = inner.password_key.clone() else { return PasswordImportOutcome::failed("Passwords are locked.") };
+        let merged = inner.passwords.merge(&key, into, &read.logins, &read.never, now_ms());
+        inner.passwords_dirty = true;
+        PasswordImportOutcome {
+            added: merged.added,
+            updated: merged.updated,
+            kept: merged.kept,
+            unreadable: read.unreadable,
+            error: None,
+        }
     }
 
     fn space_of(&self, tab_id: u64) -> Option<u64> {

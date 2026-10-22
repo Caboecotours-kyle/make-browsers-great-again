@@ -198,6 +198,8 @@ final class BrowserStore: NSObject {
     private var inspectorSessions: [UInt64: InspectorSession] = [:]
     /// Opens Settings, at a pane if given.
     var openSettings: ((SettingsPane?) -> Void)?
+    /// Fills saved passwords into sign-in forms and offers to save new ones.
+    private(set) lazy var passwords = PasswordFiller(store: self)
     /// Agents' preferences, kept in the data folder.
     lazy var agentPreferences = AgentPreferences.load(from: dataDirectory)
     /// Requests since agents started following each tab, oldest first.
@@ -288,6 +290,8 @@ final class BrowserStore: NSObject {
 
     var visibleTabID: UInt64? { activeSpace.activeTab }
 
+    func isLoading(_ tab: UInt64) -> Bool { navStates[tab]?.isLoading ?? false }
+
     var visibleTab: TabInfo? { visibleTabID.flatMap { core.tab(id: $0) } }
 
     /// Tabs of the active space in sidebar order: favorites, pinned, today.
@@ -359,6 +363,7 @@ final class BrowserStore: NSObject {
                 }
             }
             lastVisibleTab = visible
+            passwords.hide()
             changed(.developer)
             changed(.agent)
             syncInspector()
@@ -395,6 +400,7 @@ final class BrowserStore: NSObject {
         consoleLogs[id] = nil
         networkLogs[id] = nil
         inspectorSessions.removeValue(forKey: id)?.stop()
+        passwords.forget(id)
         devStates[id]?.picking = false
         if pausedMediaTab == id { pausedMediaTab = nil }
         view.isHidden = true
@@ -1439,6 +1445,7 @@ extension BrowserStore: MBWebViewDelegate {
         MainActor.assumeIsolated {
             guard isCurrent(view) else { return }
             core.updateTab(id: view.tabID, url: url, title: nil)
+            passwords.pageChanged(view, url: url)
             setNeedsRefresh()
         }
     }
@@ -1566,6 +1573,7 @@ extension BrowserStore: MBWebViewDelegate {
                 $0.status = Int(status)
                 $0.duration = duration
             }
+            passwords.pageLoaded(view)
         }
     }
 
@@ -1627,6 +1635,13 @@ extension BrowserStore: MBWebViewDelegate {
             guard isCurrent(view), view.tabID == visibleTabID else { return }
             webContainer.placeCurrent()
             changed(.developer)
+        }
+    }
+
+    nonisolated func webView(_ view: MBWebView, didReceiveFormMessage message: String, url: String) {
+        MainActor.assumeIsolated {
+            guard isCurrent(view) else { return }
+            passwords.receive(message, url: url, from: view)
         }
     }
 

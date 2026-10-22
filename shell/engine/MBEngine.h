@@ -83,6 +83,12 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
 /// "Inspect" from the page's menu while -picksForInspector is on, at a
 /// point in CSS pixels.
 - (void)webView:(MBWebView*)view inspectsElementAt:(NSPoint)point;
+/// A report of the form script (see +setFormScript:) from the page at
+/// |url|. Only the page's own script can send one: frames of other sites
+/// don't know its token.
+- (void)webView:(MBWebView*)view
+    didReceiveFormMessage:(NSString*)message
+                      url:(NSString*)url;
 @end
 
 /// A cookie to set, e.g. one imported from another browser. Times are
@@ -142,6 +148,16 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
                pageScript:(MBPageScript)script
                 pageReply:(MBPageReply)reply
               earlyScript:(MBEarlyScript)early;
+
+/// JavaScript run in every web page as it starts loading, e.g. to watch its
+/// sign-in forms. "__MBGA_TOKEN__" in it becomes a secret of that page,
+/// which reports carry: console.debug("__mbga_form:" + token + ":" + text)
+/// reaches the delegate as text. Call before the first web view is created.
++ (void)setFormScript:(NSString*)script;
+
+/// Whether cookies (and anything else the engine would keep in the
+/// keychain) use a fixed mock key, as development builds do.
+@property(class, nonatomic, readonly) BOOL usesMockKeychain;
 
 @end
 
@@ -226,6 +242,8 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
 @property(nonatomic) BOOL picksForInspector;
 /// Gives keyboard focus to the page.
 - (void)focusContent;
+/// Runs |script| in the page's main frame.
+- (void)runScript:(NSString*)script;
 /// Asks the page whether it is playing audible media. The answer arrives via
 /// -webView:didChangeBusy: when it changes.
 - (void)probeMedia;

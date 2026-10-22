@@ -80,6 +80,15 @@ events back. Nothing in the UI layer keeps browser state of its own.
   LibreWolf, Waterfox) and Safari it takes bookmarks; Safari needs Full Disk
   Access. Every source profile becomes an MBGA profile with its own space, and
   bookmarks land in folders under its pinned tabs. Nothing loads until opened.
+- **Passwords**: saved passwords come along from Chrome-family browsers, Arc
+  and Firefox (macOS asks before MBGA reads a Chromium browser's keychain key;
+  a Firefox Primary Password needs an export instead). Safari's, and any
+  password manager's, come from the CSV file they export (Settings ▸
+  Passwords ▸ Import a File…). MBGA offers them under a site's username or
+  password field, fills the one you pick, and offers to save new ones once a
+  sign-in goes through. They stay per profile, sealed with a key in your
+  keychain; showing or copying one in Settings asks for Touch ID or your
+  Mac's password.
 
 ## Memory
 
@@ -149,14 +158,14 @@ The app is written to `build/cmake/out/MBGA.app`. Browser data lives in
 Development builds are ad-hoc signed and use Chromium's mock keychain, which
 avoids a keychain prompt on every rebuild. Configure with
 `-DMBGA_MOCK_KEYCHAIN=OFF` for a release that encrypts cookies with the real
-keychain.
+keychain. With the mock keychain, the key sealing saved passwords sits in
+`passwords.key` in the data folder rather than in the keychain.
 
 ## Not yet built
 
 - Chrome extensions: CEF's embeddable browser style does not support them.
-- Importing history, passwords and cookies (MBGA has no password store yet;
-  cookies would need each browser's keychain key), and open tabs from Firefox
-  and Safari.
+- Importing history, and open tabs from Firefox and Safari.
+- Passwords in cross-site frames, generated passwords and passkeys.
 - Further Arc features: split view, Peek, Little Arc, Boosts, link routing to
   spaces, the archive/library view, and multi-color gradient themes.
 - Scriptlets newer than uBlock Origin 1.48 (the last release in the format

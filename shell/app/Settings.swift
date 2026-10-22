@@ -1,12 +1,13 @@
 import AppKit
 
 enum SettingsPane: Int, CaseIterable {
-    case general, privacy, developer, agents
+    case general, privacy, passwords, developer, agents
 
     var title: String {
         switch self {
         case .general: "General"
         case .privacy: "Privacy"
+        case .passwords: "Passwords"
         case .developer: "Developer"
         case .agents: "Agents"
         }
@@ -16,6 +17,7 @@ enum SettingsPane: Int, CaseIterable {
         switch self {
         case .general: "gearshape"
         case .privacy: "hand.raised"
+        case .passwords: "key"
         case .developer: "hammer"
         case .agents: "sparkles"
         }
@@ -129,6 +131,7 @@ private final class SettingsPaneController: NSViewController {
         switch pane {
         case .general: rows = generalRows()
         case .privacy: rows = privacyRows()
+        case .passwords: rows = passwordRows()
         case .developer: rows = developerRows()
         case .agents: rows = agentRows()
         }
@@ -292,6 +295,153 @@ private final class SettingsPaneController: NSViewController {
             [label("Into profile:"), into],
             [NSGridCell.emptyContentView, action],
             [NSGridCell.emptyContentView, caption("Brings the browser's cookies, so sites it's signed in to know you here too. Sign-ins you already have in MBGA stay. macOS asks before MBGA can read the browser's key in your keychain; reload open pages afterwards.")],
+        ]
+    }
+
+    /// Saved passwords of one profile, and bringing more from other
+    /// browsers or an exported file.
+    private func passwordRows() -> [[NSView]] {
+        let core = store.core
+        let profile = NSPopUpButton(frame: .zero, pullsDown: false)
+        let list = PasswordListView(width: 340)
+        let status = NSTextField(labelWithString: "")
+        status.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        status.textColor = .secondaryLabelColor
+        status.lineBreakMode = .byTruncatingTail
+        status.preferredMaxLayoutWidth = 340
+        status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let say = { (text: String) in
+            status.stringValue = text
+            status.toolTip = text
+        }
+        let profileID = { [store] in profile.selectedItem.map { UInt64($0.tag) } ?? store.activeSpace.profileId }
+        let reload = { list.logins = core.savedLogins(profileId: profileID()) }
+        let fillProfiles = { [store] in
+            let current = profile.selectedItem?.tag ?? Int(store.activeSpace.profileId)
+            profile.removeAllItems()
+            for info in store.snapshot.profiles {
+                profile.addItem(withTitle: info.name)
+                profile.lastItem?.tag = Int(info.id)
+            }
+            profile.selectItem(withTag: current)
+            reload()
+        }
+        refreshers.append(fillProfiles)
+        profile.onAction(reload)
+
+        let copy = NSButton.push("Copy Password") {}
+        let show = NSButton.push("Show Password") {}
+        let delete = NSButton.push("Delete") {}
+        list.onSelect = {
+            for button in [copy, show, delete] { button.isEnabled = list.selected != nil }
+        }
+        list.onSelect?()
+        // The password itself, once the Mac's owner says so.
+        let reveal = { [weak self] (login: SavedLogin, copying: Bool) in
+            _ = Task {
+                let reason = "\(copying ? "copy" : "show") the password for \(login.site)"
+                guard await PasswordKey.confirmOwner(reason) else { return }
+                guard await PasswordKey.unlock(core), let password = core.loginPassword(id: login.id) else {
+                    return say("Couldn't unlock your passwords.")
+                }
+                if copying {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(password, forType: .string)
+                    // Clipboard managers leave concealed items out of their history.
+                    NSPasteboard.general.setString("", forType: .init("org.nspasteboard.ConcealedType"))
+                    return say("Copied the password for \(login.username.isEmpty ? login.site : login.username).")
+                }
+                let alert = NSAlert()
+                alert.messageText = login.site
+                alert.informativeText = login.username.isEmpty ? "No username" : login.username
+                let field = NSTextField(labelWithString: password)
+                field.font = .monospacedSystemFont(ofSize: 15, weight: .regular)
+                field.isSelectable = true
+                alert.accessoryView = field
+                alert.addButton(withTitle: "Done")
+                guard let window = self?.view.window else { return }
+                await alert.beginSheetModal(for: window)
+            }
+        }
+        copy.onAction { if let login = list.selected { reveal(login, true) } }
+        show.onAction { if let login = list.selected { reveal(login, false) } }
+        delete.onAction { [weak self] in
+            guard let login = list.selected, let window = self?.view.window else { return }
+            let alert = NSAlert()
+            alert.messageText = "Delete the password for \(login.username.isEmpty ? login.site : login.username)?"
+            alert.informativeText = "MBGA won't fill it in on \(login.site) any more."
+            alert.addButton(withTitle: "Delete").hasDestructiveAction = true
+            alert.addButton(withTitle: "Cancel")
+            alert.beginSheetModal(for: window) { response in
+                guard response == .alertFirstButtonReturn else { return }
+                core.deleteLogin(id: login.id)
+                _ = core.persist()
+                reload()
+            }
+        }
+        let actions = NSStackView(views: [copy, show, delete])
+        actions.spacing = 8
+
+        let offer = checkbox("Offer to save passwords") { on in
+            UserDefaults.standard.set(on, forKey: PasswordSettings.offersToSaveKey)
+        }
+        refreshers.append { offer.state = PasswordSettings.offersToSave ? .on : .off }
+
+        let from = NSPopUpButton(frame: .zero, pullsDown: false)
+        from.addItem(withTitle: "Looking for browsers…")
+        from.isEnabled = false
+        var choices: [(ImportSourceInfo, ImportProfileInfo)] = []
+        let bring = NSButton.push("Import Passwords") {}
+        bring.isEnabled = false
+        bring.onAction { [store, weak bring] in
+            guard let (source, browserProfile) = choices[safe: from.indexOfSelectedItem] else { return }
+            bring?.isEnabled = false
+            say("Importing…")
+            Task {
+                let outcome = await PasswordImport.bring(from: source, profileID: browserProfile.id, into: profileID(), store: store)
+                _ = core.persist()
+                say(PasswordImport.describe(outcome, from: source.name))
+                reload()
+                bring?.isEnabled = true
+            }
+        }
+        let file = NSButton.push("Import a File…") { [store, weak self] in
+            Task {
+                guard let outcome = await PasswordImport.bringFile(into: profileID(), store: store, window: self?.view.window)
+                else { return }
+                say(PasswordImport.describe(outcome, from: "the file"))
+                reload()
+            }
+        }
+        let home = ProcessInfo.processInfo.environment["MBGA_IMPORT_HOME"] ?? NSHomeDirectory()
+        Task { [weak self] in
+            let sources = await Task.detached { core.detectBrowsers(home: home) }.value
+            guard self != nil else { return }
+            choices = sources.filter(PasswordImport.available).flatMap { s in
+                s.profiles.filter { $0.passwords > 0 }.map { (s, $0) }
+            }
+            from.removeAllItems()
+            for (source, browserProfile) in choices {
+                let count = browserProfile.passwords
+                from.addItem(withTitle: "\(SignIns.title(browserProfile, of: source)) (\(count.formatted()) password\(count == 1 ? "" : "s"))")
+            }
+            from.isEnabled = !choices.isEmpty
+            bring.isEnabled = !choices.isEmpty
+            if choices.isEmpty { from.addItem(withTitle: "No browsers with saved passwords") }
+        }
+        let importing = NSStackView(views: [bring, file])
+        importing.spacing = 8
+
+        return [
+            [label("Profile:"), profile],
+            [label("Passwords:"), list],
+            [NSGridCell.emptyContentView, actions],
+            [NSGridCell.emptyContentView, caption("MBGA offers these on their sites' sign-in pages and fills in the one you pick. Showing or copying a password asks for your Mac's password or Touch ID first.")],
+            [label("Saving:"), offer],
+            [label("Import from:"), from],
+            [NSGridCell.emptyContentView, importing],
+            [NSGridCell.emptyContentView, status],
+            [NSGridCell.emptyContentView, caption("Passwords go into the profile above. macOS asks before MBGA can read a Chromium browser's key in your keychain. For Safari, choose File ▸ Export All Passwords in the Passwords app and import that file; other browsers and password managers export such files too.")],
         ]
     }
 

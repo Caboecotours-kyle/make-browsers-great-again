@@ -8,6 +8,7 @@
 //! of the cookie's domain. Firefox keeps values in the clear.
 
 use super::{firefox, Kind, Source};
+use crate::crypto::{self, Cipher, Hash};
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 
@@ -81,7 +82,7 @@ pub fn read(source: &Source, profile_id: &str, password: Option<&[u8]>, now_ms: 
     Ok(cookies.into_iter().filter(|c| c.expires == 0 || c.expires > now).collect())
 }
 
-fn read_chromium(db: &Connection, key: &[u8; 16]) -> rusqlite::Result<Vec<Cookie>> {
+fn read_chromium(db: &Connection, key: &[u8]) -> rusqlite::Result<Vec<Cookie>> {
     let version: i64 = db
         .query_row("SELECT value FROM meta WHERE key = 'version'", [], |r| r.get::<_, String>(0))
         .map(|v| v.parse().unwrap_or(0))
@@ -173,15 +174,14 @@ fn sane(mut cookie: Cookie) -> Cookie {
     cookie
 }
 
-fn columns(db: &Connection, table: &str) -> rusqlite::Result<Vec<String>> {
+pub(super) fn columns(db: &Connection, table: &str) -> rusqlite::Result<Vec<String>> {
     let mut stmt = db.prepare(&format!("PRAGMA table_info({table})"))?;
     let names = stmt.query_map([], |r| r.get::<_, String>(1))?.filter_map(Result::ok).collect();
     Ok(names)
 }
 
-fn decrypt(key: &[u8; 16], encrypted: &[u8], hashed_domain: bool) -> Option<String> {
-    let data = encrypted.strip_prefix(b"v10")?;
-    let mut plain = crypto::aes_cbc(false, key, data)?;
+fn decrypt(key: &[u8], encrypted: &[u8], hashed_domain: bool) -> Option<String> {
+    let mut plain = decrypt_value(key, encrypted)?;
     if hashed_domain {
         if plain.len() < 32 {
             return None;
@@ -191,99 +191,31 @@ fn decrypt(key: &[u8; 16], encrypted: &[u8], hashed_domain: bool) -> Option<Stri
     String::from_utf8(plain).ok()
 }
 
-fn derive_key(password: &[u8]) -> Option<[u8; 16]> {
-    crypto::pbkdf2_sha1(password, b"saltysalt", 1003)
+/// The key Chromium-based browsers encrypt cookies and passwords with.
+pub(super) fn derive_key(password: &[u8]) -> Option<Vec<u8>> {
+    crypto::pbkdf2(Hash::Sha1, password, b"saltysalt", 1003, 16)
+}
+
+/// Chromium's IV: 16 spaces.
+const IV: [u8; 16] = [b' '; 16];
+
+/// A "v10" value: AES-128-CBC under `key`.
+pub(super) fn decrypt_value(key: &[u8], encrypted: &[u8]) -> Option<Vec<u8>> {
+    let data = encrypted.strip_prefix(b"v10")?;
+    crypto::cbc(false, Cipher::Aes, key, &IV, data)
+}
+
+#[cfg(test)]
+pub(super) fn encrypt_value_for_test(password: &[u8], plain: &[u8]) -> Vec<u8> {
+    let key = derive_key(password).unwrap();
+    let mut out = b"v10".to_vec();
+    out.extend(crypto::cbc(true, Cipher::Aes, &key, &IV, plain).unwrap());
+    out
 }
 
 #[cfg(test)]
 pub(super) fn encrypt_for_test(password: &[u8], domain: &str, value: &str) -> Vec<u8> {
-    let key = derive_key(password).unwrap();
-    let mut plain = crypto::sha256(domain.as_bytes()).to_vec();
+    let mut plain = crypto::digest(Hash::Sha256, domain.as_bytes());
     plain.extend_from_slice(value.as_bytes());
-    let mut out = b"v10".to_vec();
-    out.extend(crypto::aes_cbc(true, &key, &plain).unwrap());
-    out
-}
-
-/// AES and PBKDF2 from the system's CommonCrypto.
-#[cfg(target_os = "macos")]
-mod crypto {
-    use std::ffi::c_void;
-
-    const PBKDF2: u32 = 2;
-    const HMAC_SHA1: u32 = 1;
-    const AES128: u32 = 0;
-    const PKCS7: u32 = 1;
-
-    extern "C" {
-        fn CCKeyDerivationPBKDF(
-            algorithm: u32,
-            password: *const u8,
-            password_len: usize,
-            salt: *const u8,
-            salt_len: usize,
-            prf: u32,
-            rounds: u32,
-            derived: *mut u8,
-            derived_len: usize,
-        ) -> i32;
-        fn CCCrypt(
-            op: u32,
-            alg: u32,
-            options: u32,
-            key: *const c_void,
-            key_len: usize,
-            iv: *const c_void,
-            data_in: *const c_void,
-            data_in_len: usize,
-            data_out: *mut c_void,
-            data_out_available: usize,
-            data_out_moved: *mut usize,
-        ) -> i32;
-        #[cfg(test)]
-        fn CC_SHA256(data: *const c_void, len: u32, md: *mut u8) -> *mut u8;
-    }
-
-    #[cfg(test)]
-    pub fn sha256(data: &[u8]) -> [u8; 32] {
-        let mut digest = [0u8; 32];
-        unsafe { CC_SHA256(data.as_ptr().cast(), data.len() as u32, digest.as_mut_ptr()) };
-        digest
-    }
-
-    pub fn pbkdf2_sha1(password: &[u8], salt: &[u8], rounds: u32) -> Option<[u8; 16]> {
-        let mut key = [0u8; 16];
-        let status = unsafe {
-            CCKeyDerivationPBKDF(PBKDF2, password.as_ptr(), password.len(), salt.as_ptr(), salt.len(),
-                                 HMAC_SHA1, rounds, key.as_mut_ptr(), key.len())
-        };
-        (status == 0).then_some(key)
-    }
-
-    /// AES-128-CBC with PKCS#7 padding and Chromium's IV of 16 spaces.
-    pub fn aes_cbc(encrypt: bool, key: &[u8; 16], data: &[u8]) -> Option<Vec<u8>> {
-        let iv = [b' '; 16];
-        let mut out = vec![0u8; data.len() + 16];
-        let mut moved = 0usize;
-        let status = unsafe {
-            CCCrypt(if encrypt { 0 } else { 1 }, AES128, PKCS7, key.as_ptr().cast(), key.len(), iv.as_ptr().cast(),
-                    data.as_ptr().cast(), data.len(), out.as_mut_ptr().cast(), out.len(), &mut moved)
-        };
-        if status != 0 {
-            return None;
-        }
-        out.truncate(moved);
-        Some(out)
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-mod crypto {
-    pub fn pbkdf2_sha1(_: &[u8], _: &[u8], _: u32) -> Option<[u8; 16]> {
-        None
-    }
-
-    pub fn aes_cbc(_: bool, _: &[u8; 16], _: &[u8]) -> Option<Vec<u8>> {
-        None
-    }
+    encrypt_value_for_test(password, &plain)
 }

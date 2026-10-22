@@ -8,12 +8,14 @@
 //!
 //! Tabs and bookmarks are copied into MBGA's state; cookies, read
 //! separately by `cookies`, go into the engine so imported profiles stay
-//! signed in. History and passwords stay in the other browser.
+//! signed in, and passwords, read by `passwords`, into MBGA's password
+//! store. History stays in the other browser.
 
 mod arc;
 mod chromium;
 pub mod cookies;
 mod firefox;
+pub mod passwords;
 mod safari;
 pub mod snss;
 
@@ -233,10 +235,13 @@ pub fn detect(home: &Path, exclude: &Path) -> Vec<Source> {
         }
     }
 
-    // A browser with nothing but sign-ins is still worth bringing.
+    // A browser with nothing but sign-ins or passwords is still worth
+    // bringing.
     sources.retain(|s| {
         s.error.is_some()
-            || s.profiles.iter().any(|p| count(p).total() > 0 || cookies::database(s, &p.id).is_some())
+            || s.profiles.iter().any(|p| {
+                count(p).total() > 0 || cookies::database(s, &p.id).is_some() || passwords::count(s, &p.id) > 0
+            })
     });
     sources
 }

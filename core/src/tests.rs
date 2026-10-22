@@ -616,3 +616,89 @@ fn a_space_with_tabs_but_none_selected_gets_its_most_recent_tab() {
     e.spaces[0].active_tab = None;
     assert_eq!(e.select_default_tab(sp, 2), None);
 }
+
+#[test]
+fn passwords_stay_sealed_until_unlocked_with_the_right_key() {
+    let dir = temp_dir("passwords");
+    let core = BrowserCore::new(dir.clone());
+    let profile = core.snapshot().profiles[0].id;
+    assert_eq!(core.save_login(profile, "https://github.com/login".into(), "octocat".into(), "hunter2".into()), None);
+    assert!(core.unlock_passwords(vec![7; 32]));
+    let id = core.save_login(profile, "https://github.com/login".into(), "octocat".into(), "hunter2".into()).unwrap();
+    assert!(core.persist());
+    let raw = fs::read_to_string(Path::new(&dir).join("passwords.json")).unwrap();
+    assert!(raw.contains("octocat") && !raw.contains("hunter2"));
+
+    let core = BrowserCore::new(dir.clone());
+    assert_eq!(core.saved_logins(profile)[0].site, "github.com");
+    assert_eq!(core.login_password(id), None);
+    assert!(!core.unlock_passwords(vec![8; 32]));
+    assert!(core.unlock_passwords(vec![7; 32]));
+    assert_eq!(core.login_password(id).as_deref(), Some("hunter2"));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn logins_are_offered_on_their_site_and_saving_is_asked_once() {
+    let dir = temp_dir("password-offers");
+    let core = BrowserCore::new(dir.clone());
+    let profile = core.snapshot().profiles[0].id;
+    let other = core.create_profile("Work".into());
+    core.unlock_passwords(vec![1; 32]);
+    let page = || "https://accounts.example.co.uk/signin?next=/".to_string();
+    assert_eq!(core.password_offer(profile, page(), "me".into(), "pw".into()), PasswordOffer::Save);
+    let id = core.save_login(profile, page(), "me".into(), "pw".into()).unwrap();
+    assert_eq!(core.password_offer(profile, page(), "me".into(), "pw".into()), PasswordOffer::Nothing);
+    assert_eq!(core.password_offer(profile, page(), "me".into(), "new".into()), PasswordOffer::Update { login_id: id });
+    assert_eq!(core.password_offer(profile, page(), "you".into(), "pw2".into()), PasswordOffer::Save);
+
+    // Other hosts of the same site get it, after the page's own; other
+    // sites, insecure pages and other profiles don't.
+    core.save_login(profile, "https://www.example.co.uk/".into(), "www".into(), "x".into());
+    let names = |url: &str, p: u64| core.logins_for_page(p, url.into()).into_iter().map(|l| l.username).collect::<Vec<_>>();
+    assert_eq!(names("https://accounts.example.co.uk/", profile), ["me", "www"]);
+    assert_eq!(names("https://shop.example.co.uk/", profile).len(), 2);
+    assert!(names("https://other.co.uk/", profile).is_empty());
+    assert!(names("http://accounts.example.co.uk/", profile).is_empty());
+    assert!(names("https://accounts.example.co.uk/", other).is_empty());
+
+    core.never_save_passwords(profile, "https://ads.example/x".into());
+    assert_eq!(core.password_offer(profile, "https://ads.example/".into(), "a".into(), "b".into()), PasswordOffer::Nothing);
+    assert_eq!(core.never_saved_sites(profile), ["https://ads.example"]);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn imported_passwords_merge_by_site_and_username() {
+    use import::passwords::ImportedLogin;
+    let dir = temp_dir("password-merge");
+    let core = BrowserCore::new(dir.clone());
+    let profile = core.snapshot().profiles[0].id;
+    core.unlock_passwords(vec![3; 32]);
+    let kept = core.save_login(profile, "https://a.example/".into(), "me".into(), "mine".into()).unwrap();
+    let login = |url: &str, user: &str, pw: &str, changed: u64| ImportedLogin {
+        url: url.into(),
+        username: user.into(),
+        password: pw.into(),
+        created_ms: 1,
+        used_ms: 0,
+        changed_ms: changed,
+    };
+    let read = import::passwords::Read {
+        logins: vec![
+            login("https://a.example/login", "me", "older", 5),
+            login("https://b.example/", "you", "b", 5),
+            login("https://b.example/", "you", "b-newer", 9),
+            login("ftp://c.example/", "x", "y", 5),
+        ],
+        never: vec!["https://ads.example/".into()],
+        unreadable: 2,
+    };
+    let outcome = core.merge_logins(read, profile);
+    assert_eq!((outcome.added, outcome.updated, outcome.kept, outcome.unreadable), (1, 1, 1, 2));
+    assert_eq!(core.login_password(kept).as_deref(), Some("mine"));
+    let b = core.logins_for_page(profile, "https://b.example/".into());
+    assert_eq!(core.login_password(b[0].id).as_deref(), Some("b-newer"));
+    assert_eq!(core.never_saved_sites(profile), ["https://ads.example"]);
+    let _ = fs::remove_dir_all(dir);
+}

@@ -592,11 +592,14 @@ name = "mbga_core"
 version = "0.1.0"
 dependencies = [
  "adblock",
+ "base64 0.22.1",
  "plist",
+ "psl",
  "rusqlite",
  "serde",
  "serde_json",
  "uniffi",
+ "url",
 ]
 
 [[package]]

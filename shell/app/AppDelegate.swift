@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NotificationCenter.default.addObserver(self, selector: #selector(updateDevelopMenu),
                                                name: UserDefaults.didChangeNotification, object: nil)
         AdBlocking.install(core: core)
+        MBEngine.setFormScript(FormScript.source)
         AdBlocking.updateLists(core: core, loaded: AdBlocking.loadCached(core: core))
         let window = makeWindow()
         self.window = window
@@ -114,6 +115,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 }
                 let outcome = await SignIns.bring(from: source, profileID: profile.id, into: store.activeSpace.profileId, store: store)
                 NSLog("sign-ins: %@ (added %d, kept %d)", SignIns.describe(outcome, from: source.name), outcome.added, outcome.kept)
+            }
+        }
+        // MBGA_DEBUG_PASSWORDS=1 does the same with the first browser's
+        // saved passwords.
+        if ProcessInfo.processInfo.environment["MBGA_DEBUG_PASSWORDS"] != nil {
+            let home = ProcessInfo.processInfo.environment["MBGA_IMPORT_HOME"] ?? NSHomeDirectory()
+            Task { [store, core] in
+                let sources = await Task.detached { core.detectBrowsers(home: home) }.value
+                guard let source = sources.first(where: PasswordImport.available),
+                      let profile = source.profiles.first(where: { $0.passwords > 0 }) else {
+                    NSLog("passwords: no browser found")
+                    return
+                }
+                let outcome = await PasswordImport.bring(from: source, profileID: profile.id,
+                                                         into: store.activeSpace.profileId, store: store)
+                _ = core.persist()
+                NSLog("passwords: %@", PasswordImport.describe(outcome, from: source.name))
             }
         }
         if core.needsOnboarding() {

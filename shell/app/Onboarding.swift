@@ -7,8 +7,9 @@ struct ImportRequest {
 }
 
 /// Finds other browsers on this Mac and imports their spaces, tabs and
-/// bookmarks, and their sign-ins (cookies). Shown once at first launch, and from File ▸ Import. First
-/// launch ends with a choice of layout and color.
+/// bookmarks, their sign-ins (cookies) and saved passwords. Shown once at
+/// first launch, and from File ▸ Import. First launch ends with a choice of
+/// layout and color.
 @MainActor
 final class ImportSheet: NSObject {
     let request: ImportRequest
@@ -30,6 +31,8 @@ final class ImportSheet: NSObject {
     private var selected: Set<String> = []
     /// Bring the chosen profiles' cookies too.
     private var signIns = true
+    /// And their saved passwords.
+    private var passwords = true
     private weak var importButton: NSButton?
     private var imported = false
     private var closed = false
@@ -132,11 +135,12 @@ final class ImportSheet: NSObject {
             store.showDefaultTab()
             imported = true
             var notes: [String] = []
-            if signIns {
+            if signIns || passwords {
                 phase = .signingIn
                 render()
-                notes = await bringSignIns(summary, sources: sources)
             }
+            if signIns { notes += await bringSignIns(summary, sources: sources) }
+            if passwords { notes += await bringPasswords(summary, sources: sources) }
             phase = .done(summary, notes)
             render()
         }
@@ -153,6 +157,21 @@ final class ImportSheet: NSObject {
             let name = source.profiles.count == 1 ? source.name : SignIns.title(profile, of: source)
             notes.append(SignIns.describe(outcome, from: name, named: true))
         }
+        return notes
+    }
+
+    /// Each imported profile's saved passwords into the MBGA profile it
+    /// became, a line per browser profile that had any.
+    private func bringPasswords(_ summary: ImportSummary, sources: [ImportSourceInfo]) async -> [String] {
+        var notes: [String] = []
+        for link in summary.profiles {
+            guard let source = sources.first(where: { $0.id == link.sourceId }), PasswordImport.available(source),
+                  let profile = source.profiles.first(where: { $0.id == link.profileId }), profile.passwords > 0 else { continue }
+            let outcome = await PasswordImport.bring(from: source, profileID: link.profileId, into: link.into, store: store)
+            let name = source.profiles.count == 1 ? source.name : SignIns.title(profile, of: source)
+            notes.append(PasswordImport.describe(outcome, from: name, named: true))
+        }
+        _ = store.core.persist()
         return notes
     }
 
@@ -183,7 +202,7 @@ final class ImportSheet: NSObject {
             subtitle.stringValue = "Pick a layout and how much color your spaces bring. You can change both later from the View menu."
         } else {
             title.stringValue = request.firstLaunch ? "Welcome to MBGA" : "Import from Another Browser"
-            subtitle.stringValue = "Bring your spaces, pinned tabs, open tabs, bookmarks and sign-ins from the browsers on this Mac."
+            subtitle.stringValue = "Bring your spaces, pinned tabs, open tabs, bookmarks, sign-ins and passwords from the browsers on this Mac."
         }
         for view in body.arrangedSubviews { view.removeFromSuperview() }
         for view in buttons.arrangedSubviews { view.removeFromSuperview() }
@@ -209,7 +228,16 @@ final class ImportSheet: NSObject {
                     body.setCustomSpacing(12, after: body.arrangedSubviews.last!)
                     body.addArrangedSubview(keep)
                 }
-                let note = Label.wrapping("Your other browsers stay as they are. Staying signed in brings their cookies; macOS asks once per browser before MBGA can read them. Passwords and history aren't imported.",
+                if sources.contains(where: PasswordImport.available) {
+                    let bring = NSButton(checkboxWithTitle: "Bring saved passwords", target: nil, action: nil)
+                    bring.state = passwords ? .on : .off
+                    bring.onAction { [weak self, weak bring] in self?.passwords = bring?.state == .on }
+                    if !sources.contains(where: SignIns.available) {
+                        body.setCustomSpacing(12, after: body.arrangedSubviews.last!)
+                    }
+                    body.addArrangedSubview(bring)
+                }
+                let note = Label.wrapping("Your other browsers stay as they are. Staying signed in brings their cookies; macOS asks once per browser before MBGA can read them and their passwords. Safari's passwords come from a file the Passwords app exports (Settings ▸ Passwords). History isn't imported.",
                                           size: 11)
                 note.preferredMaxLayoutWidth = 492
                 body.addArrangedSubview(note)
@@ -221,7 +249,8 @@ final class ImportSheet: NSObject {
             body.addArrangedSubview(status("Importing…"))
             addButtons(cancel: (request.firstLaunch ? "Skip" : "Cancel", finish))
         case .signingIn:
-            body.addArrangedSubview(status("Bringing your sign-ins…"))
+            let what = signIns && passwords ? "sign-ins and passwords" : signIns ? "sign-ins" : "passwords"
+            body.addArrangedSubview(status("Bringing your \(what)…"))
             addButtons(cancel: nil)
         case .done(let summary, let notes):
             body.addArrangedSubview(doneView(summary, notes: notes))
@@ -490,6 +519,7 @@ private final class SourceRow: NSView {
             if p.pinned > 0 { parts.append(plural(p.pinned, "bookmark")) }
             if p.today > 0 { parts.append(plural(p.today, "open tab")) }
         }
+        if p.passwords > 0 { parts.append(plural(p.passwords, "password")) }
         return parts.joined(separator: " · ")
     }
 }

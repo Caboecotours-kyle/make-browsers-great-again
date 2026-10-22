@@ -420,3 +420,124 @@ fn firefox_cookies_are_read_in_the_clear() {
     assert!(cookies::keychain_service(firefox).is_none());
     let _ = fs::remove_dir_all(home);
 }
+
+fn chromium_logins(path: &Path, rows: &[(&str, &str, &[u8], bool)]) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let db = rusqlite::Connection::open(path).unwrap();
+    db.execute_batch(
+        "CREATE TABLE logins (origin_url TEXT, action_url TEXT, username_element TEXT, username_value TEXT,
+             password_element TEXT, password_value BLOB, signon_realm TEXT, date_created INTEGER,
+             blacklisted_by_user INTEGER, scheme INTEGER, date_last_used INTEGER, date_password_modified INTEGER);",
+    )
+    .unwrap();
+    for (origin, username, password, never) in rows {
+        db.execute(
+            "INSERT INTO logins VALUES (?1, '', 'user', ?2, 'pass', ?3, ?1, 13300000000000000, ?4, 0,
+                 13350000000000000, 13340000000000000)",
+            rusqlite::params![origin, username, password, *never as i64],
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn chromium_passwords_decrypt_with_the_keychain_password() {
+    let home = fixture_home("passwords");
+    let sources = detect(&home, &exclude(&home));
+    let chrome = &sources[1];
+    let profile = home.join("Library/Application Support/Google/Chrome/Default");
+    let secret = cookies::encrypt_value_for_test(b"peanuts", b"hunter2");
+    let foreign = cookies::encrypt_value_for_test(b"other", b"nope");
+    chromium_logins(
+        &profile.join("Login Data"),
+        &[
+            ("https://github.com/login", "octocat", &secret, false),
+            ("android://abc@com.example/", "app", &secret, false),
+            ("https://ads.example/", "", b"", true),
+            ("https://x.com/", "elon", &foreign, false),
+        ],
+    );
+    let account = cookies::encrypt_value_for_test(b"peanuts", b"s3cret");
+    chromium_logins(&profile.join("Login Data For Account"), &[("https://mail.google.com/", "me@gmail.com", &account, false)]);
+
+    assert_eq!(passwords::count(chrome, "Default"), 3);
+    let read = passwords::read(chrome, "Default", Some(b"peanuts")).unwrap();
+    let got: Vec<(&str, &str, &str)> =
+        read.logins.iter().map(|l| (l.url.as_str(), l.username.as_str(), l.password.as_str())).collect();
+    assert_eq!(got, [("https://github.com/login", "octocat", "hunter2"), ("https://mail.google.com/", "me@gmail.com", "s3cret")]);
+    assert_eq!(read.never, ["https://ads.example/"]);
+    assert_eq!(read.unreadable, 1);
+    // Microseconds since 1601 become milliseconds since 1970.
+    assert_eq!((read.logins[0].created_ms, read.logins[0].used_ms, read.logins[0].changed_ms),
+               (1_655_526_400_000, 1_705_526_400_000, 1_695_526_400_000));
+    assert!(passwords::read(chrome, "Default", None).is_err());
+    assert!(passwords::read(chrome, "Default", Some(b"wrong")).is_err());
+    let _ = fs::remove_dir_all(home);
+}
+
+#[test]
+fn firefox_passwords_decrypt_with_key4() {
+    let home = fixture_home("ff-passwords");
+    let sources = detect(&home, &exclude(&home));
+    let firefox = sources.iter().find(|s| s.kind == Kind::Firefox).unwrap();
+    let profile = home.join("Library/Application Support/Firefox/Profiles/abc.default-release");
+    let global_salt = b"global salt bytes";
+    let key = [0x42u8; 24];
+    let pbe = |plain: &[u8], salt: &[u8]| passwords::test_support::pbes2(plain, global_salt, salt, &[9u8; 14]);
+    let db = rusqlite::Connection::open(profile.join("key4.db")).unwrap();
+    db.execute_batch("CREATE TABLE metaData (id TEXT PRIMARY KEY, item1, item2);
+                      CREATE TABLE nssPrivate (id INTEGER PRIMARY KEY, a11, a102);").unwrap();
+    db.execute("INSERT INTO metaData VALUES ('password', ?1, ?2)",
+               rusqlite::params![global_salt.to_vec(), pbe(b"password-check", b"check salt")]).unwrap();
+    let mut key_id = vec![0xf8u8; 1];
+    key_id.extend([0u8; 14]);
+    key_id.push(1);
+    db.execute("INSERT INTO nssPrivate VALUES (1, ?1, ?2)", rusqlite::params![pbe(&key, b"key salt"), key_id]).unwrap();
+    drop(db);
+    let field = |s: &str| passwords::test_support::login_field(&key, s);
+    let logins = json!({"logins": [
+        {"hostname": "https://mozilla.org", "httpRealm": null, "encryptedUsername": field("fox"),
+         "encryptedPassword": field("firefox!"), "timeCreated": 1, "timeLastUsed": 2, "timePasswordChanged": 3},
+        {"hostname": "https://intranet.example", "httpRealm": "Staff only", "encryptedUsername": field("a"),
+         "encryptedPassword": field("b")},
+    ]});
+    write(&profile.join("logins.json"), logins.to_string());
+
+    let id = &firefox.profiles[0].id;
+    assert_eq!(passwords::count(firefox, id), 1);
+    let read = passwords::read(firefox, id, None).unwrap();
+    assert_eq!(read.logins, [passwords::ImportedLogin {
+        url: "https://mozilla.org".into(),
+        username: "fox".into(),
+        password: "firefox!".into(),
+        created_ms: 1,
+        used_ms: 2,
+        changed_ms: 3,
+    }]);
+
+    // A Primary Password seals the check differently.
+    let db = rusqlite::Connection::open(profile.join("key4.db")).unwrap();
+    db.execute("UPDATE metaData SET item2 = ?1", rusqlite::params![
+        passwords::test_support::pbes2(b"password-check", b"other salt", b"check salt", &[9u8; 14])]).unwrap();
+    drop(db);
+    assert_eq!(passwords::read(firefox, id, None).unwrap_err(), passwords::FIREFOX_PRIMARY_PASSWORD);
+    let _ = fs::remove_dir_all(home);
+}
+
+#[test]
+fn password_files_are_read_by_their_column_names() {
+    let safari = "Title,URL,Username,Password,Notes,OTPAuth\r\n\
+                  GitHub,https://github.com/,octocat,\"pa,ss\"\"word\",,\r\n\
+                  Note only,,,,\"multi\nline\",\r\n\
+                  Bank,bank.example,me,1234,,\r\n";
+    let read = passwords::read_csv(safari).unwrap();
+    let got: Vec<(&str, &str, &str)> =
+        read.logins.iter().map(|l| (l.url.as_str(), l.username.as_str(), l.password.as_str())).collect();
+    assert_eq!(got, [("https://github.com/", "octocat", "pa,ss\"word"), ("https://bank.example", "me", "1234")]);
+
+    let bitwarden = "\u{feff}folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp\n\
+                     ,,login,Site,,,0,https://site.example/login,user@site, secret ,\n";
+    let read = passwords::read_csv(bitwarden).unwrap();
+    assert_eq!((read.logins[0].username.as_str(), read.logins[0].password.as_str()), ("user@site", " secret "));
+    assert!(passwords::read_csv("name,notes\nx,y\n").is_err());
+}

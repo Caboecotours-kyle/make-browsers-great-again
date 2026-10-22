@@ -77,12 +77,17 @@ MBRequestFilter g_request_filter = nil;
 MBPageScript g_page_script = nil;
 MBEarlyScript g_early_script = nil;
 MBPageReply g_page_reply = nil;
+// Run in every web page as it starts loading; see +setFormScript:.
+std::string g_form_script;
 // While a tab is dragged out of the sidebar, pages refuse drops so the drag
 // can end over a page (and pop the tab out) instead of navigating it.
 bool g_reject_drops = false;
 
 // Page scripts report the class and id names they see with this prefix.
 constexpr char kCosmeticPrefix[] = "__mbga_cosmetic:";
+// The form script's reports: this prefix, the page's token and a colon.
+constexpr char kFormPrefix[] = "__mbga_form:";
+constexpr char kFormTokenPlaceholder[] = "__MBGA_TOKEN__";
 
 // The request type names filter lists use, or nullptr for top-level pages,
 // which are never blocked.
@@ -877,6 +882,17 @@ class WebClient : public BaseClient,
       [view_ engineSetThemeColor:@(text.c_str() + strlen(kThemePrefix))];
       return true;
     }
+    if (text.rfind(kFormPrefix, 0) == 0) {
+      // Frames of other sites can log too, but don't know the token.
+      std::string signed_prefix = kFormPrefix + form_token_ + ":";
+      if (!form_token_.empty() && text.rfind(signed_prefix, 0) == 0) {
+        MBWebView* view = view_;
+        [view.delegate webView:view
+            didReceiveFormMessage:@(text.c_str() + signed_prefix.size())
+                              url:ToNS(browser->GetMainFrame()->GetURL())];
+      }
+      return true;
+    }
     if (text.rfind(kMediaProbePrefix, 0) != 0) {
       CountConsoleMessage(level);
       NSInteger severity = level >= LOGSEVERITY_ERROR     ? 3
@@ -949,6 +965,16 @@ class WebClient : public BaseClient,
     NSString* script = g_page_script && web ? g_page_script(@(url.c_str())) : nil;
     if (script.length > 0) {
       frame->ExecuteJavaScript(script.UTF8String, "", 0);
+    }
+    form_token_.clear();
+    if (web && !g_form_script.empty()) {
+      form_token_ = NSUUID.UUID.UUIDString.UTF8String;
+      std::string form = g_form_script;
+      for (size_t at = form.find(kFormTokenPlaceholder); at != std::string::npos;
+           at = form.find(kFormTokenPlaceholder, at)) {
+        form.replace(at, strlen(kFormTokenPlaceholder), form_token_);
+      }
+      frame->ExecuteJavaScript(form, "", 0);
     }
   }
 
@@ -1592,6 +1618,8 @@ class WebClient : public BaseClient,
   NSUInteger console_errors_ = 0;
   NSUInteger console_warnings_ = 0;
   bool console_report_pending_ = false;
+  // The secret the current page's form script signs its reports with.
+  std::string form_token_;
   CFAbsoluteTime navigation_started_ = 0;
   int load_error_ = 0;
   std::map<int, Reply> replies_;
@@ -1901,6 +1929,18 @@ class CookieKeys : public CefCookieVisitor {
   g_page_script = script;
   g_page_reply = reply;
   g_early_script = early;
+}
+
++ (void)setFormScript:(NSString*)script {
+  g_form_script = script.UTF8String;
+}
+
++ (BOOL)usesMockKeychain {
+#if defined(MBGA_MOCK_KEYCHAIN)
+  return YES;
+#else
+  return NO;
+#endif
 }
 
 + (BOOL)startWithArgc:(int)argc
@@ -2438,6 +2478,12 @@ class CookieKeys : public CefCookieVisitor {
 - (void)focusContent {
   if (_browser) {
     _browser->GetHost()->SetFocus(true);
+  }
+}
+
+- (void)runScript:(NSString*)script {
+  if (_browser) {
+    _browser->GetMainFrame()->ExecuteJavaScript(script.UTF8String, "", 0);
   }
 }
 
