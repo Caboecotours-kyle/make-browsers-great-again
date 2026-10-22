@@ -3234,13 +3234,11 @@ static BOOL PipWindowShown() {
   return NO;
 }
 
-// An unresolved source may own a manual window. Keep it awake while that
-// window is present and no observed owner can account for it. The existing
-// media probe refreshes this before the core's sleep/freeze decision.
+// An unresolved source may own a manual window, even while the previous
+// owner's leave report is delayed. Keep it awake while a native window is
+// present. The media probe refreshes this before the sleep/freeze decision.
 - (void)refreshPictureInPicture {
-  MBWebView* owner = g_pip_owner;
-  BOOL busy =
-      _pipScanNonce && !(owner && owner->_pictureInPicture) && PipWindowShown();
+  BOOL busy = _pipScanNonce && PipWindowShown();
   BOOL wasBusy =
       _mediaPlaying || _capturing || _pictureInPicture || _pipUncertainBusy;
   _pipUncertainBusy = busy;
@@ -3252,7 +3250,7 @@ static BOOL PipWindowShown() {
 
 - (void)enterPictureInPicture:(void (^)(void))done {
   [self settlePictureInPicture];
-  if (!_browser || _closing || _frozen || g_pip_owner) {
+  if (!_browser || _closing || _frozen) {
     done();
     return;
   }
@@ -3294,13 +3292,18 @@ static BOOL PipWindowShown() {
     [self exitPictureInPicture];
     return;
   }
-  _pipScanNonce = nil;
   if (revision != g_pip_revision) {
+    // The cached owner changed during this observation. It does not tell
+    // us whether this source owns the native window now. Cancel entry but
+    // retain its uncertain identity until the window closes or a new look.
     if ([nonce isEqualToString:_pipNonce]) {
-      [self endPictureInPicture];
+      _pipNonce = nil;
+      [self refreshPictureInPicture];
+      [self settlePictureInPicture];
     }
     return;
   }
+  _pipScanNonce = nil;
   const PipFrame* best = nullptr;
   double area = 0;
   for (const PipFrame& frame : *frames) {
