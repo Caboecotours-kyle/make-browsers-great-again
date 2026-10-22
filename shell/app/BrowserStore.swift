@@ -418,14 +418,13 @@ final class BrowserStore: NSObject {
         }
         let switchedSpace = shownSpace != nil && shownSpace != snapshot.activeSpace
         shownSpace = snapshot.activeSpace
+        // Before the page left is hidden, which some pages pause their video on.
+        if lastVisibleTab != visible { handOffMedia(from: lastVisibleTab, to: visible) }
         webContainer.show(visible.flatMap { views[$0] }, crossfade: switchedSpace)
         nav = visible.flatMap { navStates[$0] } ?? NavState()
         publishBlockedCount()
-        // A tab left playing should show the mini player right away rather
-        // than at the next idle check.
         if lastVisibleTab != visible {
             if let previous = lastVisibleTab {
-                views[previous]?.probeMedia()
                 // Picking an element ends with the page out of sight.
                 if devStates[previous]?.picking == true {
                     devStates[previous]?.picking = false

@@ -33,8 +33,9 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
            canGoBack:(BOOL)canGoBack
         canGoForward:(BOOL)canGoForward;
 - (void)webView:(MBWebView*)view didReceiveFavicon:(NSData*)png;
-/// Media elements playing with sound (answer to -probeMedia) or camera,
-/// microphone or screen capture in use.
+/// Media elements playing with sound (answer to -probeMedia), camera,
+/// microphone or screen capture in use, or a video in a picture-in-picture
+/// window.
 - (void)webView:(MBWebView*)view didChangeBusy:(BOOL)busy;
 - (void)webView:(MBWebView*)view
     requestsNewTabWithURL:(NSString*)url
@@ -345,6 +346,13 @@ typedef void (^MBExtensionBridge)(NSString* profilePath,
 - (void)probeMedia;
 /// Pauses the media the page is playing, or resumes what was paused.
 - (void)setMediaPaused:(BOOL)paused;
+/// Moves the video the page is playing, muted or not, into Chromium's
+/// picture-in-picture window, unless another tab has the window: for a tab
+/// being switched away from. -webView:didChangeBusy: reports it open.
+- (void)enterPictureInPicture;
+/// Puts the video -enterPictureInPicture moved out back into the page, or
+/// stops the request on its way: for a tab being shown again.
+- (void)exitPictureInPicture;
 /// Suspends the page (no JavaScript, timers or rendering) while keeping all
 /// of its state, or resumes it.
 - (void)setFrozen:(BOOL)frozen;

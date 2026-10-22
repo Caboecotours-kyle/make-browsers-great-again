@@ -49,6 +49,7 @@
 - (void)engineSetMediaPlaying:(BOOL)playing;
 - (void)engineSetThemeColor:(NSString*)color;
 - (void)engineSetCapturing:(BOOL)capturing;
+- (void)engineLeftPictureInPicture:(int)turn;
 - (void)engineSetBlockedCount:(NSUInteger)count;
 - (void)engineSetConsoleErrors:(NSUInteger)errors warnings:(NSUInteger)warnings;
 - (void)engineDidFinishLoad:(int)status duration:(NSTimeInterval)duration;
@@ -159,6 +160,43 @@ constexpr char kPauseMediaScript[] =
 constexpr char kResumeMediaScript[] =
     "(function(){document.querySelectorAll('[data-mbga-paused]').forEach("
     "function(m){delete m.dataset.mbgaPaused;m.play();});})();";
+
+// Picture in picture as a tab is switched away from. Each script is a
+// function of the view's turn, which the page reports back when its video
+// leaves the window, so that reports of earlier turns are ignored. The first
+// asks, without a user gesture, whether a video is playing (muted counts,
+// audio-only doesn't), answering "video", or "open" if the page already has
+// one in a window. Only then does the second run, with a gesture, moving the
+// largest playing video into the window ("open" or nothing). Showing the tab
+// again clears the mark, which undoes a request still under way.
+constexpr char kPipPrefix[] = "__mbga_pip:";
+constexpr char kPipCheckScript[] =
+    "(function(t){try{var d=document,e=d.pictureInPictureElement;if(e){"
+    "e.addEventListener('leavepictureinpicture',function(){"
+    "delete e.dataset.mbgaPip;console.debug('__mbga_pip:'+t);},{once:true});"
+    "return 'open';}if(!d.pictureInPictureEnabled)return '';var c='';"
+    "d.querySelectorAll('video').forEach(function(v){if(!v.paused&&!v.ended&&"
+    "v.readyState>1&&v.videoWidth>0&&!v.disablePictureInPicture)c='video';});"
+    "return c;}catch(x){return '';}})";
+constexpr char kPipEnterScript[] =
+    "(function(t){try{var d=document,b=null,a=0;"
+    "d.querySelectorAll('video').forEach(function(v){"
+    "var s=v.videoWidth*v.videoHeight;if(!v.paused&&!v.ended&&v.readyState>1&&"
+    "!v.disablePictureInPicture&&s>a){b=v;a=s;}});"
+    "if(!b||d.pictureInPictureElement)return '';b.dataset.mbgaPip='1';"
+    "return b.requestPictureInPicture().then(function(){"
+    "if(!b.dataset.mbgaPip){d.exitPictureInPicture().catch(function(){});"
+    "return '';}b.addEventListener('leavepictureinpicture',function(){"
+    "delete b.dataset.mbgaPip;console.debug('__mbga_pip:'+t);},{once:true});"
+    "return 'open';},function(){delete b.dataset.mbgaPip;return '';});"
+    "}catch(x){return '';}})";
+// Puts back a video the tab's own request moved out, leaving one the page
+// opened itself.
+constexpr char kPipExitScript[] =
+    "(function(){try{var d=document,e=d.pictureInPictureElement,"
+    "o=e&&e.dataset.mbgaPip;d.querySelectorAll('video[data-mbga-pip]')"
+    ".forEach(function(v){delete v.dataset.mbgaPip;});"
+    "if(o)d.exitPictureInPicture().catch(function(){});}catch(x){}})()";
 
 enum MenuCommand {
   kOpenLinkInNewTab = MENU_ID_USER_FIRST,
@@ -1178,6 +1216,11 @@ class WebClient : public BaseClient,
       }
       return true;
     }
+    if (text.rfind(kPipPrefix, 0) == 0) {
+      [view_
+          engineLeftPictureInPicture:atoi(text.c_str() + strlen(kPipPrefix))];
+      return true;
+    }
     if (text.rfind(kMediaProbePrefix, 0) != 0) {
       CountConsoleMessage(level);
       NSInteger severity = level >= LOGSEVERITY_ERROR     ? 3
@@ -1238,6 +1281,8 @@ class WebClient : public BaseClient,
     }
     blocked_ = 0;
     [view_ engineSetBlockedCount:0];
+    // A new document closes the old one's picture-in-picture window.
+    [view_ engineLeftPictureInPicture:0];
     console_errors_ = 0;
     console_warnings_ = 0;
     ReportConsole();
@@ -1881,6 +1926,7 @@ class WebClient : public BaseClient,
                                  int error_code,
                                  const CefString& error_string) override {
     MBWebView* view = view_;
+    [view engineLeftPictureInPicture:0];
     [view.delegate webViewRendererDidTerminate:view];
   }
 
@@ -2590,6 +2636,11 @@ class CookieKeys : public CefCookieVisitor {
   NSString* _pendingURL;
   BOOL _mediaPlaying;
   BOOL _capturing;
+  // A video of the page in a picture-in-picture window, which keeps the tab
+  // busy like playing sound does; asked: one may be, or is being, opened.
+  BOOL _pictureInPicture;
+  BOOL _pictureInPictureAsked;
+  int _pictureInPictureTurn;
   BOOL _frozen;
   NSMutableArray<MBPermissionPrompt*>* _prompts;
   // Developer toolbar emulations.
@@ -3082,6 +3133,80 @@ class CookieKeys : public CefCookieVisitor {
   }
 }
 
+- (void)enterPictureInPicture {
+  if (!_browser || _closing || _frozen || [self otherPictureInPicture]) {
+    return;
+  }
+  _pictureInPictureAsked = YES;
+  [self evaluatePictureInPicture:kPipCheckScript
+                            turn:++_pictureInPictureTurn
+                         gesture:NO];
+}
+
+- (void)exitPictureInPicture {
+  if (!_pictureInPictureAsked) {
+    return;
+  }
+  // Answers to earlier requests no longer count.
+  _pictureInPictureTurn++;
+  _pictureInPictureAsked = NO;
+  [self engineSetPictureInPicture:NO];
+  if (_browser) {
+    // Sent the way the requests were, so it runs after any still queued.
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetString("expression", kPipExitScript);
+    _client->Call(_browser, "Runtime.evaluate", params);
+  }
+}
+
+// Chromium has one picture-in-picture window; another tab's isn't taken.
+- (BOOL)otherPictureInPicture {
+  for (MBWebView* view in g_views) {
+    if (view != self && view->_pictureInPicture) {
+      return YES;
+    }
+  }
+  return NO;
+}
+
+// Runs a picture-in-picture script for |turn|. The gesture is what lets a
+// page open the window, so it's only given once a video is playing.
+- (void)evaluatePictureInPicture:(const char*)script
+                            turn:(int)turn
+                         gesture:(BOOL)gesture {
+  CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+  params->SetString("expression",
+                    std::string(script) + "(" + std::to_string(turn) + ")");
+  params->SetBool("userGesture", gesture);
+  params->SetBool("awaitPromise", true);
+  params->SetBool("returnByValue", true);
+  __weak MBWebView* weakSelf = self;
+  _client->Call(
+      _browser, "Runtime.evaluate", params,
+      [weakSelf, turn, gesture](CefRefPtr<CefDictionaryValue> reply) {
+        CefRefPtr<CefDictionaryValue> result =
+            reply ? reply->GetDictionary("result") : nullptr;
+        std::string answer =
+            result ? result->GetString("value").ToString() : "";
+        [weakSelf pictureInPictureAnswered:answer turn:turn gesture:gesture];
+      });
+}
+
+- (void)pictureInPictureAnswered:(const std::string&)answer
+                            turn:(int)turn
+                         gesture:(BOOL)gesture {
+  if (turn != _pictureInPictureTurn) {
+    return;
+  }
+  if (answer == "video" && !gesture && _browser &&
+      ![self otherPictureInPicture]) {
+    [self evaluatePictureInPicture:kPipEnterScript turn:turn gesture:YES];
+    return;
+  }
+  _pictureInPictureAsked = answer == "open";
+  [self engineSetPictureInPicture:answer == "open"];
+}
+
 - (void)setFrozen:(BOOL)frozen {
   if (!_browser || _frozen == frozen) {
     return;
@@ -3105,6 +3230,10 @@ class CookieKeys : public CefCookieVisitor {
     [prompt answer:NO];
   }
   _prompts = nil;
+  // Closing takes the window with it, and mustn't hold up other tabs'.
+  _pictureInPicture = NO;
+  _pictureInPictureAsked = NO;
+  _pictureInPictureTurn++;
   if (_frozen) {
     // A frozen page never acknowledges the close, which would leave the
     // browser half-closed (and quitting waiting for it) forever.
@@ -3228,11 +3357,30 @@ class CookieKeys : public CefCookieVisitor {
 }
 
 - (void)engineSetMediaPlaying:(BOOL)playing {
-  BOOL wasBusy = _mediaPlaying || _capturing;
+  BOOL wasBusy = _mediaPlaying || _capturing || _pictureInPicture;
   _mediaPlaying = playing;
-  if (wasBusy != (_mediaPlaying || _capturing)) {
+  if (wasBusy != (_mediaPlaying || _capturing || _pictureInPicture)) {
     [self.delegate webView:self didChangeBusy:!wasBusy];
   }
+}
+
+- (void)engineSetPictureInPicture:(BOOL)open {
+  BOOL wasBusy = _mediaPlaying || _capturing || _pictureInPicture;
+  _pictureInPicture = open;
+  if (wasBusy != (_mediaPlaying || _capturing || _pictureInPicture)) {
+    [self.delegate webView:self didChangeBusy:!wasBusy];
+  }
+}
+
+// The page's video left its window in |turn|, or in any (0): the page
+// navigated or crashed.
+- (void)engineLeftPictureInPicture:(int)turn {
+  if (!_pictureInPictureAsked || (turn != 0 && turn != _pictureInPictureTurn)) {
+    return;
+  }
+  _pictureInPictureTurn++;
+  _pictureInPictureAsked = NO;
+  [self engineSetPictureInPicture:NO];
 }
 
 - (void)engineSetThemeColor:(NSString*)color {
@@ -3257,9 +3405,9 @@ class CookieKeys : public CefCookieVisitor {
 }
 
 - (void)engineSetCapturing:(BOOL)capturing {
-  BOOL wasBusy = _mediaPlaying || _capturing;
+  BOOL wasBusy = _mediaPlaying || _capturing || _pictureInPicture;
   _capturing = capturing;
-  if (wasBusy != (_mediaPlaying || _capturing)) {
+  if (wasBusy != (_mediaPlaying || _capturing || _pictureInPicture)) {
     [self.delegate webView:self didChangeBusy:!wasBusy];
   }
 }
