@@ -50,6 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if ProcessInfo.processInfo.environment["MBGA_DEBUG_LITTLE_WINDOW"]?.isEmpty == false, let tab = store.visibleTabID {
             store.openInLittleWindow(tab)
         }
+        // MBGA_DEBUG_EXTENSIONS=<url> opens the extensions window at launch,
+        // on that page if it's a URL.
+        if let page = ProcessInfo.processInfo.environment["MBGA_DEBUG_EXTENSIONS"] {
+            store.showExtensions(url: page.contains(":") ? page : "")
+        }
         // MBGA_DEBUG_LAYOUTS=<seconds> switches between Full and Focus that
         // often (every 3 s if not a number), for captures of the transition.
         if let every = ProcessInfo.processInfo.environment["MBGA_DEBUG_LAYOUTS"], !every.isEmpty {
@@ -278,7 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     // MARK: - Menu actions
 
     @objc func openSettings(_ sender: Any?) { showSettings(nil) }
-    @objc func reloadIgnoringCache(_ sender: Any?) { store.hardReload() }
+    @objc func reloadIgnoringCache(_ sender: Any?) { if !MBEngine.performChromeCommand(.reloadIgnoringCache) { store.hardReload() } }
     @objc func toggleDeveloperToolbar(_ sender: Any?) { store.toggleDeveloperToolbar() }
     @objc func pickElement(_ sender: Any?) { store.togglePicking() }
     @objc func setColorScheme(_ sender: NSMenuItem) {
@@ -300,9 +305,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let app = sender.representedObject as? URL { store.openVisible(in: app) }
     }
 
-    @objc func newTab(_ sender: Any?) { store.commandBar = .newTab }
-    @objc func openLocation(_ sender: Any?) { store.commandBar = .editCurrent }
+    // In the extensions window (Chrome's own), tab commands are Chrome's.
+    @objc func newTab(_ sender: Any?) { if !MBEngine.performChromeCommand(.newTab) { store.commandBar = .newTab } }
+    @objc func openLocation(_ sender: Any?) { if !MBEngine.performChromeCommand(.focusLocation) { store.commandBar = .editCurrent } }
     @objc func closeTab(_ sender: Any?) {
+        if MBEngine.performChromeCommand(.closeTab) { return }
         if let key = NSApp.keyWindow, let browser = windows.first(where: { $0.window === key }) {
             browser.store.closeVisibleTab()
         } else {
@@ -322,15 +329,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func newFolder(_ sender: Any?) { store.newFolder() }
     @objc func clearToday(_ sender: Any?) { store.clearToday(store.activeSpace.id) }
     @objc func toggleSidebar(_ sender: Any?) { store.toggleSidebar() }
-    @objc func reload(_ sender: Any?) { store.reload() }
-    @objc func zoomIn(_ sender: Any?) { store.zoomIn() }
-    @objc func zoomOut(_ sender: Any?) { store.zoomOut() }
-    @objc func resetZoom(_ sender: Any?) { store.resetZoom() }
+    @objc func reload(_ sender: Any?) { if !MBEngine.performChromeCommand(.reload) { store.reload() } }
+    @objc func zoomIn(_ sender: Any?) { if !MBEngine.performChromeCommand(.zoomIn) { store.zoomIn() } }
+    @objc func zoomOut(_ sender: Any?) { if !MBEngine.performChromeCommand(.zoomOut) { store.zoomOut() } }
+    @objc func resetZoom(_ sender: Any?) { if !MBEngine.performChromeCommand(.actualSize) { store.resetZoom() } }
     @objc func developerTools(_ sender: Any?) { store.showDevTools() }
     @objc func javaScriptConsole(_ sender: Any?) { store.openDevTools() }
     @objc func chromeDevTools(_ sender: Any?) { store.openChromeDevTools() }
-    @objc func goBack(_ sender: Any?) { store.goBack() }
-    @objc func goForward(_ sender: Any?) { store.goForward() }
+    @objc func goBack(_ sender: Any?) { if !MBEngine.performChromeCommand(.back) { store.goBack() } }
+    @objc func goForward(_ sender: Any?) { if !MBEngine.performChromeCommand(.forward) { store.goForward() } }
     @objc func copyURL(_ sender: Any?) { store.copyVisibleURL() }
     @objc func togglePin(_ sender: Any?) { store.togglePinVisibleTab() }
     @objc func nextTab(_ sender: Any?) { store.selectAdjacentTab(1) }
@@ -338,9 +345,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func nextSpace(_ sender: Any?) { store.activateAdjacentSpace(1) }
     @objc func previousSpace(_ sender: Any?) { store.activateAdjacentSpace(-1) }
     @objc func selectTab(_ sender: NSMenuItem) { store.selectTab(at: sender.tag) }
-    @objc func reopenClosedTab(_ sender: Any?) { store.undoClose() }
+    @objc func reopenClosedTab(_ sender: Any?) { if !MBEngine.performChromeCommand(.reopenTab) { store.undoClose() } }
     @objc func toggleBlockAds(_ sender: Any?) { store.setBlockAds(!store.blockAds) }
     @objc func editFilters(_ sender: Any?) { NSWorkspace.shared.open(URL(fileURLWithPath: core.userFiltersPath())) }
+    @objc func showExtensions(_ sender: Any?) { store.showExtensions() }
     /// Edit ▸ Undo reaches the app only when no page or text field took it;
     /// then it undoes the last closed tab, cleared list or deleted folder.
     @objc func undo(_ sender: Any?) { store.undoClose() }
@@ -428,6 +436,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             m.addItem(.separator())
             m.item("Block Ads and Trackers", #selector(toggleBlockAds(_:)), "", [], target: self)
             m.item("Edit My Filters…", #selector(editFilters(_:)), "", [], target: self)
+            m.item("Extensions…", #selector(showExtensions(_:)), "", [], target: self)
             let isolation = m.item("Strict Site Isolation", #selector(toggleStrictSiteIsolation(_:)), "", [], target: self)
             isolation.state = store.strictSiteIsolation ? .on : .off
             m.addItem(.separator())

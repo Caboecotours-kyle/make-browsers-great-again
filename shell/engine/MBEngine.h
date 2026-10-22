@@ -58,6 +58,12 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
 - (void)webView:(MBWebView*)view
     didFinishLoadWithStatus:(int)status
                    duration:(NSTimeInterval)duration;
+/// The page went to Chrome's extension settings or the Chrome Web Store,
+/// which only the extensions window can show; the tab stayed on |page|
+/// (empty or about:blank for a new tab).
+- (void)webView:(MBWebView*)view
+    opensExtensionsPage:(NSString*)url
+               fromPage:(NSString*)page;
 /// Picking an element ended: one was picked (and DevTools opened on it) or
 /// the person pressed Escape.
 - (void)webViewDidStopPicking:(MBWebView*)view;
@@ -110,6 +116,22 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
 @property(nonatomic) int priority;
 @end
 
+/// Menu commands the extensions window (Chrome's own UI) can run, as
+/// Chrome's command ids.
+typedef NS_ENUM(NSInteger, MBChromeCommand) {
+  MBChromeCommandBack = 33000,
+  MBChromeCommandForward = 33001,
+  MBChromeCommandReload = 33002,
+  MBChromeCommandReloadIgnoringCache = 33007,
+  MBChromeCommandNewTab = 34014,
+  MBChromeCommandCloseTab = 34015,
+  MBChromeCommandReopenTab = 34028,
+  MBChromeCommandZoomIn = 38001,
+  MBChromeCommandActualSize = 38002,
+  MBChromeCommandZoomOut = 38003,
+  MBChromeCommandFocusLocation = 39001,
+};
+
 @interface MBEngine : NSObject
 
 /// Loads the framework and initializes the engine. Call once, after creating
@@ -142,6 +164,21 @@ typedef BOOL (^MBEarlyScript)(NSString* page);
            completion:(void (^)(NSInteger added, NSInteger kept,
                                 NSInteger refused))completion
     NS_SWIFT_NAME(importCookies(_:intoProfilePath:completion:));
+
+/// Opens Chrome's extensions page for the profile at |profilePath| in a
+/// window of Chrome's own, or brings it forward; a non-empty |url| (a Chrome
+/// Web Store page, say) is shown instead. Tabs can't show chrome:// pages
+/// or install extensions; what this window installs runs in all of the
+/// profile's tabs.
++ (void)showExtensionsForProfilePath:(NSString*)profilePath url:(NSString*)url;
+
+/// Whether |url| is a page only that window can show.
++ (BOOL)isExtensionsPage:(NSString*)url;
+
+/// Runs |command| in the key window if it is the extensions window, whose
+/// shortcuts come from the app's menu like Chrome's own. NO otherwise.
++ (BOOL)performChromeCommand:(MBChromeCommand)command
+    NS_SWIFT_NAME(performChromeCommand(_:));
 
 /// Turns on ad blocking. Call before the first web view is created.
 + (void)setRequestFilter:(MBRequestFilter)filter

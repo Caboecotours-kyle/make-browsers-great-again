@@ -264,6 +264,19 @@ NSString* DescribePrompt(uint32_t permissions) {
   return @"use additional permissions";
 }
 
+// Pages only the extensions window can show: Chrome's extension settings
+// and the Chrome Web Store, whose install button needs Chrome's own UI.
+bool IsExtensionsPage(const std::string& url) {
+  for (const char* prefix :
+       {"chrome://extensions", "https://chromewebstore.google.com/",
+        "https://chrome.google.com/webstore"}) {
+    if (url.rfind(prefix, 0) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Shortcuts the browser keeps even when a page would like to handle them.
 bool IsReservedShortcut(NSEvent* event) {
   NSEventModifierFlags flags =
@@ -572,6 +585,67 @@ class AuxiliaryClient : public BaseClient, public CefLifeSpanHandler {
 
  private:
   IMPLEMENT_REFCOUNTING(AuxiliaryClient);
+};
+
+// Chrome's own window for managing a profile's extensions. Tabs are
+// Alloy style (the only style CEF embeds in a view of ours), which can't
+// show chrome:// pages or install from the Chrome Web Store; a Chrome-style
+// window can, and what it installs runs in every tab of the profile.
+class ExtensionsClient : public BaseClient, public CefLifeSpanHandler {
+ public:
+  static CefRefPtr<ExtensionsClient> Get() {
+    static CefRefPtr<ExtensionsClient> instance(new ExtensionsClient);
+    return instance;
+  }
+
+  // Shows |url| in the profile's window, opening one if it has none.
+  static void Show(const std::string& path, const std::string& url) {
+    // The window's tabs (the Web Store, an extension's options) are
+    // browsers of their own; any of them will do.
+    for (const CefRefPtr<CefBrowser>& browser : g_auxiliary) {
+      if (Path(browser) != path ||
+          browser->GetHost()->GetRuntimeStyle() != CEF_RUNTIME_STYLE_CHROME) {
+        continue;
+      }
+      if (!url.empty()) {
+        browser->GetMainFrame()->LoadURL(url);
+      }
+      NSView* view = (__bridge NSView*)browser->GetHost()->GetWindowHandle();
+      [view.window makeKeyAndOrderFront:nil];
+      return;
+    }
+    CefWindowInfo info;
+    info.runtime_style = CEF_RUNTIME_STYLE_CHROME;
+    CefBrowserSettings settings;
+    CefBrowserHost::CreateBrowser(info, Get(),
+                                  url.empty() ? "chrome://extensions/" : url,
+                                  settings, nullptr, ContextForPath(path));
+  }
+
+  // No shortcuts for the main window: ⌘W and ⌘T are this window's own.
+  CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override {
+    return nullptr;
+  }
+  CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
+
+  void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
+    g_browser_count++;
+    g_auxiliary.push_back(browser);
+  }
+
+  void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
+    std::erase_if(g_auxiliary, [&](const CefRefPtr<CefBrowser>& b) {
+      return b->IsSame(browser);
+    });
+    BrowserGone();
+  }
+
+ private:
+  static std::string Path(CefRefPtr<CefBrowser> browser) {
+    return browser->GetHost()->GetRequestContext()->GetCachePath().ToString();
+  }
+
+  IMPLEMENT_REFCOUNTING(ExtensionsClient);
 };
 
 // A number from DevTools JSON, which writes whole numbers as integers.
@@ -1025,6 +1099,15 @@ class WebClient : public BaseClient,
                       bool user_gesture,
                       bool is_redirect) override {
     if (OpenExternally(browser, request->GetURL())) {
+      return true;
+    }
+    if (frame->IsMain() && IsExtensionsPage(request->GetURL().ToString())) {
+      MBWebView* view = view_;
+      NSString* url = ToNS(request->GetURL());
+      NSString* page = ToNS(frame->GetURL());
+      dispatch_async(dispatch_get_main_queue(), ^{
+        [view.delegate webView:view opensExtensionsPage:url fromPage:page];
+      });
       return true;
     }
     if (frame->IsMain()) {
@@ -1813,6 +1896,39 @@ class CookieKeys : public CefCookieVisitor {
 // --------------------------------------------------------------------- MBEngine
 
 @implementation MBEngine
+
++ (void)showExtensionsForProfilePath:(NSString*)profilePath
+                                 url:(NSString*)url {
+  ExtensionsClient::Show(profilePath.UTF8String, url.UTF8String);
+}
+
++ (BOOL)isExtensionsPage:(NSString*)url {
+  return IsExtensionsPage(url.UTF8String);
+}
+
++ (BOOL)performChromeCommand:(MBChromeCommand)command {
+  NSWindow* key = NSApp.keyWindow;
+  if (!key) {
+    return NO;
+  }
+  for (const CefRefPtr<CefBrowser>& browser : g_auxiliary) {
+    NSView* view = (__bridge NSView*)browser->GetHost()->GetWindowHandle();
+    if (view.window != key ||
+        browser->GetHost()->GetRuntimeStyle() != CEF_RUNTIME_STYLE_CHROME) {
+      continue;
+    }
+    // Chrome's menu items send commandDispatch: with the command as tag.
+    SEL dispatch = NSSelectorFromString(@"commandDispatch:");
+    if (![key respondsToSelector:dispatch]) {
+      return NO;
+    }
+    NSMenuItem* item = [[NSMenuItem alloc] init];
+    item.tag = command;
+    [NSApp sendAction:dispatch to:key from:item];
+    return YES;
+  }
+  return NO;
+}
 
 + (void)setRejectsDrops:(BOOL)reject {
   g_reject_drops = reject;

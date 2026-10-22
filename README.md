@@ -68,6 +68,15 @@ events back. Nothing in the UI layer keeps browser state of its own.
   field shows how much was blocked. Add your own rules with MBGA ▸ Edit My
   Filters…, turn blocking off per site from the tab's menu, or entirely from
   the MBGA menu.
+- **Extensions**: MBGA ▸ Extensions… (or Settings ▸ Privacy, or the command
+  bar) opens Chrome's own window for the space's profile, where
+  chrome://extensions and Chrome Web Store installs work; typing those
+  addresses or following a Web Store link opens it too. What's installed
+  there runs in every tab of the profile (content scripts, network rules,
+  background workers), with no restart. Tabs have no extension toolbar:
+  an extension's popup opens only from that window, for its own tabs. Manifest V2
+  extensions (classic uBlock Origin) no longer load in Chromium; uBlock
+  Origin Lite does.
 - **Media**: a tab playing sound shows an equaliser, and out of sight a mini
   player at the bottom of the sidebar. Right-click a tab to keep its site awake (never
   slept or frozen) or to put it to sleep now.

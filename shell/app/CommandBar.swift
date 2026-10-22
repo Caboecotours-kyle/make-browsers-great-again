@@ -673,6 +673,10 @@ struct CommandAction {
                           keywords: ["adblock", "rules", "custom", "block"]) {
                 NSWorkspace.shared.open(URL(fileURLWithPath: store.core.userFiltersPath()))
             },
+            CommandAction(id: "extensions", title: "Extensions…", symbol: "puzzlepiece.extension",
+                          keywords: ["chrome", "web store", "add-ons", "ublock", "install"]) {
+                store.showExtensions()
+            },
             CommandAction(id: "reload-filters", title: "Reload Filters", symbol: "arrow.triangle.2.circlepath",
                           keywords: ["adblock", "rules", "lists"]) {
                 Task {

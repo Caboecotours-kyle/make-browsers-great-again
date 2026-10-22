@@ -218,11 +218,14 @@ private final class SettingsPaneController: NSViewController {
         let filters = NSButton.push("Edit My Filters…") { [store] in
             NSWorkspace.shared.open(URL(fileURLWithPath: store.core.userFiltersPath()))
         }
+        let extensions = NSButton.push("Manage Extensions…") { [store] in store.showExtensions() }
         let isolation = checkbox("Strict site isolation") { [store] on in store.setStrictSiteIsolation(on) }
         refreshers.append { [store] in isolation.state = store.strictSiteIsolation ? .on : .off }
         return [
             [label("Ad blocking:"), blockAds],
             [NSGridCell.emptyContentView, filters],
+            [label("Extensions:"), extensions],
+            [NSGridCell.emptyContentView, caption("Add extensions from the Chrome Web Store and manage them in Chrome's own window. Each profile has its own; they run in all of its spaces.")],
             [label("Processes:"), isolation],
             [NSGridCell.emptyContentView, caption("Every site gets its own process, as in desktop Chrome: the strongest protection against one site reading another's data, for about 30% more memory. Takes effect at next launch.")],
         ] + signInRows()

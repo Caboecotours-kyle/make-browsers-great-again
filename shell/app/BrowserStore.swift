@@ -531,6 +531,10 @@ final class BrowserStore: NSObject {
     private func open(_ url: String, mode: CommandBarMode) {
         commandBar = nil
         guard !url.isEmpty else { return }
+        if MBEngine.isExtensionsPage(url) {
+            showExtensions(url: url)
+            return
+        }
         if mode == .editCurrent, let id = visibleTabID {
             core.updateTab(id: id, url: url, title: nil)
             views[id]?.loadURL(url)
@@ -543,6 +547,10 @@ final class BrowserStore: NSObject {
 
     func openFromSystem(_ url: String) {
         commandBar = nil
+        if MBEngine.isExtensionsPage(url) {
+            showExtensions(url: url)
+            return
+        }
         _ = core.openTab(spaceId: activeSpace.id, url: url, activate: true)
         refresh()
     }
@@ -1091,6 +1099,14 @@ final class BrowserStore: NSObject {
         core.setAdsAllowed(url: tab.url, allowed: allowed)
         refresh()
         views[tab.id]?.reload()
+    }
+
+    // MARK: - Extensions
+
+    /// Opens the extensions of the active space's profile, or |url| (a
+    /// Chrome Web Store page) in the same window.
+    func showExtensions(url: String = "") {
+        MBEngine.showExtensions(forProfilePath: core.profileDir(profileId: activeSpace.profileId), url: url)
     }
 
     // MARK: - Process model
@@ -1742,6 +1758,21 @@ extension BrowserStore: MBWebViewDelegate {
                 window.toggleFullScreen(nil)
             }
             updateTrafficLights()
+        }
+    }
+
+    nonisolated func webView(_ view: MBWebView, opensExtensionsPage url: String, fromPage page: String) {
+        MainActor.assumeIsolated {
+            guard isCurrent(view), let profile = core.profileOfTab(tabId: view.tabID) else { return }
+            MBEngine.showExtensions(forProfilePath: core.profileDir(profileId: profile), url: url)
+            // A tab opened just for the page has nothing else to show; one
+            // that had a page keeps it.
+            if page.isEmpty || page == "about:blank" {
+                close(view.tabID)
+            } else {
+                core.updateTab(id: view.tabID, url: page, title: nil)
+                setNeedsRefresh()
+            }
         }
     }
 
