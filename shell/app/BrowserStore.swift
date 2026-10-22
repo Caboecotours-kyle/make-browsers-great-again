@@ -418,9 +418,7 @@ final class BrowserStore: NSObject {
         }
         let switchedSpace = shownSpace != nil && shownSpace != snapshot.activeSpace
         shownSpace = snapshot.activeSpace
-        // Before the page left is hidden, which some pages pause their video on.
-        if lastVisibleTab != visible { handOffMedia(from: lastVisibleTab, to: visible) }
-        webContainer.show(visible.flatMap { views[$0] }, crossfade: switchedSpace)
+        showPage(visible, leaving: lastVisibleTab, crossfade: switchedSpace)
         nav = visible.flatMap { navStates[$0] } ?? NavState()
         publishBlockedCount()
         if lastVisibleTab != visible {

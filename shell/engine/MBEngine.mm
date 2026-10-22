@@ -14,6 +14,7 @@
 #include <cstring>
 #include <functional>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -49,7 +50,8 @@
 - (void)engineSetMediaPlaying:(BOOL)playing;
 - (void)engineSetThemeColor:(NSString*)color;
 - (void)engineSetCapturing:(BOOL)capturing;
-- (void)engineLeftPictureInPicture:(int)turn;
+- (void)engineLeftPictureInPicture:(NSString*)nonce;
+- (void)engineDocumentChanged:(BOOL)main;
 - (void)engineSetBlockedCount:(NSUInteger)count;
 - (void)engineSetConsoleErrors:(NSUInteger)errors warnings:(NSUInteger)warnings;
 - (void)engineDidFinishLoad:(int)status duration:(NSTimeInterval)duration;
@@ -161,42 +163,69 @@ constexpr char kResumeMediaScript[] =
     "(function(){document.querySelectorAll('[data-mbga-paused]').forEach("
     "function(m){delete m.dataset.mbgaPaused;m.play();});})();";
 
-// Picture in picture as a tab is switched away from. Each script is a
-// function of the view's turn, which the page reports back when its video
-// leaves the window, so that reports of earlier turns are ignored. The first
-// asks, without a user gesture, whether a video is playing (muted counts,
-// audio-only doesn't), answering "video", or "open" if the page already has
-// one in a window. Only then does the second run, with a gesture, moving the
-// largest playing video into the window ("open" or nothing). Showing the tab
-// again clears the mark, which undoes a request still under way.
+// Picture in picture as a tab is switched away from. The scripts run in a
+// world of the engine's own in each frame, where the page can't replace the
+// DOM methods they call or see what they keep, and each is a function of a
+// nonce the page never sees, which it logs when its video leaves the window
+// (a real event, and none left in the window), so that only that report
+// counts. The scan answers "open" if the frame already has a video in a
+// window, or the size of the largest playing video it could move there
+// (muted counts, audio-only doesn't), which it keeps.
+constexpr char kPipWorld[] = "mbga-pip";
 constexpr char kPipPrefix[] = "__mbga_pip:";
-constexpr char kPipCheckScript[] =
-    "(function(t){try{var d=document,e=d.pictureInPictureElement;if(e){"
-    "e.addEventListener('leavepictureinpicture',function(){"
-    "delete e.dataset.mbgaPip;console.debug('__mbga_pip:'+t);},{once:true});"
-    "return 'open';}if(!d.pictureInPictureEnabled)return '';var c='';"
-    "d.querySelectorAll('video').forEach(function(v){if(!v.paused&&!v.ended&&"
-    "v.readyState>1&&v.videoWidth>0&&!v.disablePictureInPicture)c='video';});"
-    "return c;}catch(x){return '';}})";
-constexpr char kPipEnterScript[] =
-    "(function(t){try{var d=document,b=null,a=0;"
+#define MB_PIP_WATCH                                       \
+  "function w(n,v){var d=document,f=function(e){"          \
+  "if(!e.isTrusted||d.pictureInPictureElement)return;"     \
+  "d.removeEventListener('leavepictureinpicture',f,true);" \
+  "v.removeEventListener('leavepictureinpicture',f);"      \
+  "console.debug('__mbga_pip:'+n);};"                      \
+  "d.addEventListener('leavepictureinpicture',f,true);"    \
+  "v.addEventListener('leavepictureinpicture',f);}"
+constexpr char kPipScanScript[] =
+    "(function(n){" MB_PIP_WATCH
+    "try{var d=document,g=globalThis,e=d.pictureInPictureElement,b=null,"
+    "a=0;g.mbgaPipVideo=null;if(e){w(n,e);return 'open';}"
+    // Only a frame of the top page's origin can take back a gesture
+    // nothing used, below.
+    "try{if(top.document!==d&&top.location.origin!==location.origin)"
+    "return '';}catch(x){return '';}"
+    "if(!d.pictureInPictureEnabled)return '';"
     "d.querySelectorAll('video').forEach(function(v){"
-    "var s=v.videoWidth*v.videoHeight;if(!v.paused&&!v.ended&&v.readyState>1&&"
-    "!v.disablePictureInPicture&&s>a){b=v;a=s;}});"
-    "if(!b||d.pictureInPictureElement)return '';b.dataset.mbgaPip='1';"
-    "return b.requestPictureInPicture().then(function(){"
-    "if(!b.dataset.mbgaPip){d.exitPictureInPicture().catch(function(){});"
-    "return '';}b.addEventListener('leavepictureinpicture',function(){"
-    "delete b.dataset.mbgaPip;console.debug('__mbga_pip:'+t);},{once:true});"
-    "return 'open';},function(){delete b.dataset.mbgaPip;return '';});"
-    "}catch(x){return '';}})";
-// Puts back a video the tab's own request moved out, leaving one the page
-// opened itself.
+    "var s=v.videoWidth*v.videoHeight;if(!v.paused&&!v.ended&&"
+    "v.readyState>1&&!v.disablePictureInPicture&&s>a){b=v;a=s;}});"
+    "g.mbgaPipVideo=b;return b?String(a):'';}catch(x){return '';}})";
+// Run with a gesture: moves the video the scan kept into the window ("open"
+// or nothing). It checks synchronously what Chromium checks before it uses
+// the gesture up, so the request does; otherwise a picker that shows nothing
+// uses it up instead, before any of the page's code can run with it.
+constexpr char kPipEnterScript[] =
+    "(function(n){" MB_PIP_WATCH
+    "var d=document,g=globalThis,v=g.mbgaPipVideo;g.mbgaPipVideo=null;"
+    "try{if(v&&v.isConnected&&v.ownerDocument===d&&d.pictureInPictureEnabled&&"
+    "!d.pictureInPictureElement&&!v.paused&&!v.ended&&v.readyState>0&&"
+    "v.videoWidth>0&&"
+    "!v.disablePictureInPicture){var p=v.requestPictureInPicture();"
+    "g.mbgaPipOwned=v;return p.then(function(){if(g.mbgaPipOwned!==v){"
+    "d.exitPictureInPicture().catch(function(){});return '';}"
+    "w(n,v);return 'open';},function(){"
+    "if(g.mbgaPipOwned===v)g.mbgaPipOwned=null;return '';});}}catch(x){}"
+    "try{d.createElement('input').showPicker();}catch(x){}return '';})";
+// Puts back the video the request moved out, or undoes one under way.
 constexpr char kPipExitScript[] =
-    "(function(){try{var d=document,e=d.pictureInPictureElement,"
-    "o=e&&e.dataset.mbgaPip;d.querySelectorAll('video[data-mbga-pip]')"
-    ".forEach(function(v){delete v.dataset.mbgaPip;});"
-    "if(o)d.exitPictureInPicture().catch(function(){});}catch(x){}})()";
+    "(function(){try{var d=document,g=globalThis,v=g.mbgaPipOwned;"
+    "g.mbgaPipOwned=null;g.mbgaPipVideo=null;if(v&&d.pictureInPictureElement"
+    "===v)d.exitPictureInPicture().catch(function(){});}catch(x){}})()";
+constexpr char kPipOpenScript[] = "document.pictureInPictureElement?'open':''";
+// Frames looked at for a video, at most.
+constexpr size_t kPipFrames = 16;
+
+// A frame's picture-in-picture world, and what its scan answered.
+struct PipFrame {
+  NSString* session;  // nil: the page's own DevTools session
+  int context = 0;
+  std::string answer;
+};
+using PipFrames = std::shared_ptr<std::vector<PipFrame>>;
 
 enum MenuCommand {
   kOpenLinkInNewTab = MENU_ID_USER_FIRST,
@@ -1217,8 +1246,7 @@ class WebClient : public BaseClient,
       return true;
     }
     if (text.rfind(kPipPrefix, 0) == 0) {
-      [view_
-          engineLeftPictureInPicture:atoi(text.c_str() + strlen(kPipPrefix))];
+      [view_ engineLeftPictureInPicture:@(text.c_str() + strlen(kPipPrefix))];
       return true;
     }
     if (text.rfind(kMediaProbePrefix, 0) != 0) {
@@ -1276,13 +1304,12 @@ class WebClient : public BaseClient,
   void OnLoadStart(CefRefPtr<CefBrowser> browser,
                    CefRefPtr<CefFrame> frame,
                    TransitionType transition_type) override {
+    [view_ engineDocumentChanged:frame->IsMain()];
     if (!frame->IsMain()) {
       return;
     }
     blocked_ = 0;
     [view_ engineSetBlockedCount:0];
-    // A new document closes the old one's picture-in-picture window.
-    [view_ engineLeftPictureInPicture:0];
     console_errors_ = 0;
     console_warnings_ = 0;
     ReportConsole();
@@ -1609,15 +1636,24 @@ class WebClient : public BaseClient,
     }
   }
 
-  void FollowFrames(CefRefPtr<CefBrowser> browser) {
+  // |then| runs once the frames there already are have been reported.
+  void FollowFrames(CefRefPtr<CefBrowser> browser,
+                    std::function<void()> then = nullptr) {
     if (following_frames_) {
+      if (then) {
+        then();
+      }
       return;
     }
     following_frames_ = true;
     CallRaw(browser, "Target.setAutoAttach",
             "{\"autoAttach\":true,\"waitForDebuggerOnStart\":false,\"flatten\":"
             "true}",
-            [](bool, const std::string&) {});
+            [then](bool, const std::string&) {
+              if (then) {
+                then();
+              }
+            });
   }
 
   // Sends a command to a frame's session as a raw message.
@@ -1926,7 +1962,7 @@ class WebClient : public BaseClient,
                                  int error_code,
                                  const CefString& error_string) override {
     MBWebView* view = view_;
-    [view engineLeftPictureInPicture:0];
+    [view engineDocumentChanged:YES];
     [view.delegate webViewRendererDidTerminate:view];
   }
 
@@ -2637,10 +2673,16 @@ class CookieKeys : public CefCookieVisitor {
   BOOL _mediaPlaying;
   BOOL _capturing;
   // A video of the page in a picture-in-picture window, which keeps the tab
-  // busy like playing sound does; asked: one may be, or is being, opened.
+  // busy like playing sound does; byPage: the page opened it itself. The
+  // nonce is the request's, or the scan's that found the window; the
+  // session and context are the world of the frame the video is in. Done
+  // is called once a switch away from the page is settled.
   BOOL _pictureInPicture;
-  BOOL _pictureInPictureAsked;
-  int _pictureInPictureTurn;
+  BOOL _pipByPage;
+  NSString* _pipNonce;
+  NSString* _pipSession;
+  int _pipContext;
+  void (^_pipDone)(void);
   BOOL _frozen;
   NSMutableArray<MBPermissionPrompt*>* _prompts;
   // Developer toolbar emulations.
@@ -3133,79 +3175,385 @@ class CookieKeys : public CefCookieVisitor {
   }
 }
 
-- (void)enterPictureInPicture {
-  if (!_browser || _closing || _frozen || [self otherPictureInPicture]) {
+// Chromium has one picture-in-picture window, which a new request takes
+// from whoever has it: the view that has it, or is asking for it.
+static __weak MBWebView* g_pip_owner = nil;
+
+- (void)enterPictureInPicture:(void (^)(void))done {
+  [self settlePictureInPicture];
+  if (!_browser || _closing || _frozen || g_pip_owner) {
+    done();
     return;
   }
-  _pictureInPictureAsked = YES;
-  [self evaluatePictureInPicture:kPipCheckScript
-                            turn:++_pictureInPictureTurn
-                         gesture:NO];
+  _pipDone = done;
+  NSString* nonce = _pipNonce = NSUUID.UUID.UUIDString;
+  __weak MBWebView* weakSelf = self;
+  // However long the page takes, it's hidden within a couple of seconds.
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
+                 dispatch_get_main_queue(), ^{
+                   MBWebView* view = weakSelf;
+                   if (view && view->_pipDone == done) {
+                     [view settlePictureInPicture];
+                   }
+                 });
+  [self scanPictureInPicture:nonce
+                        then:^(PipFrames frames) {
+                          [weakSelf pictureInPictureScanned:frames nonce:nonce];
+                        }];
+}
+
+- (void)pictureInPictureScanned:(PipFrames)frames nonce:(NSString*)nonce {
+  if (![nonce isEqualToString:_pipNonce]) {
+    return;
+  }
+  const PipFrame* best = nullptr;
+  double area = 0;
+  for (const PipFrame& frame : *frames) {
+    if (frame.answer == "open") {
+      // The page has one in the window already, of its own.
+      [self ownPictureInPicture:frame byPage:YES];
+      [self settlePictureInPicture];
+      return;
+    }
+    double size = atof(frame.answer.c_str());
+    if (frame.session == nil && size > area) {
+      best = &frame;
+      area = size;
+    }
+  }
+  if (!best || g_pip_owner) {
+    [self endPictureInPicture];
+    return;
+  }
+  // Taken before anything else can ask, then checked against the pages on
+  // screen, which may have a window no tab switch has seen.
+  g_pip_owner = self;
+  _pipContext = best->context;
+  int context = best->context;
+  __weak MBWebView* weakSelf = self;
+  [self findOtherPicturesInPicture:^{
+    MBWebView* view = weakSelf;
+    if (!view || ![nonce isEqualToString:view->_pipNonce]) {
+      return;
+    }
+    if (g_pip_owner != view || !view->_browser) {
+      [view endPictureInPicture];
+      return;
+    }
+    [view evaluatePictureInPicture:kPipEnterScript
+                         arguments:"(\"" + std::string(nonce.UTF8String) + "\")"
+                           session:nil
+                           context:context
+                           gesture:YES
+                              then:^(NSString* answer) {
+                                [weakSelf pictureInPictureEntered:answer
+                                                            nonce:nonce];
+                              }];
+  }];
+}
+
+- (void)pictureInPictureEntered:(NSString*)answer nonce:(NSString*)nonce {
+  if (![nonce isEqualToString:_pipNonce] || g_pip_owner != self) {
+    return;
+  }
+  if ([answer isEqualToString:@"open"]) {
+    _pipByPage = NO;
+    [self engineSetPictureInPicture:YES];
+    [self settlePictureInPicture];
+  } else {
+    [self endPictureInPicture];
+  }
+}
+
+// Pages on screen, other than ones being switched away from, that have a
+// window open take it over.
+- (void)findOtherPicturesInPicture:(dispatch_block_t)then {
+  NSMutableArray<MBWebView*>* shown = [NSMutableArray array];
+  for (MBWebView* view in g_views) {
+    if (view != self && view->_browser && !view->_closing && !view->_frozen &&
+        !view->_pipDone && view.window && !view.isHiddenOrHasHiddenAncestor) {
+      [shown addObject:view];
+    }
+  }
+  __block NSUInteger waiting = shown.count;
+  if (waiting == 0) {
+    then();
+    return;
+  }
+  for (MBWebView* view in shown) {
+    NSString* nonce = view->_pipNonce = NSUUID.UUID.UUIDString;
+    __weak MBWebView* weakView = view;
+    [view scanPictureInPicture:nonce
+                          then:^(PipFrames frames) {
+                            MBWebView* other = weakView;
+                            if (other &&
+                                [nonce isEqualToString:other->_pipNonce]) {
+                              for (const PipFrame& frame : *frames) {
+                                if (frame.answer == "open") {
+                                  [other ownPictureInPicture:frame byPage:YES];
+                                  break;
+                                }
+                              }
+                            }
+                            if (--waiting == 0) {
+                              then();
+                            }
+                          }];
+  }
+}
+
+// Records that the window shows a video of |frame|, ending another view's
+// claim, which can't be true as well.
+- (void)ownPictureInPicture:(const PipFrame&)frame byPage:(BOOL)byPage {
+  MBWebView* previous = g_pip_owner;
+  if (previous && previous != self) {
+    [previous endPictureInPicture];
+  }
+  g_pip_owner = self;
+  _pipByPage = byPage;
+  _pipSession = frame.session;
+  _pipContext = frame.context;
+  [self engineSetPictureInPicture:YES];
 }
 
 - (void)exitPictureInPicture {
-  if (!_pictureInPictureAsked) {
+  // The page's own window stays, and stays the page's.
+  if (g_pip_owner == self && _pictureInPicture && _pipByPage) {
     return;
   }
-  // Answers to earlier requests no longer count.
-  _pictureInPictureTurn++;
-  _pictureInPictureAsked = NO;
-  [self engineSetPictureInPicture:NO];
-  if (_browser) {
-    // Sent the way the requests were, so it runs after any still queued.
-    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
-    params->SetString("expression", kPipExitScript);
-    _client->Call(_browser, "Runtime.evaluate", params);
+  NSString* session = _pipSession;
+  int context = g_pip_owner == self ? _pipContext : 0;
+  if (!_pipNonce && !context) {
+    return;
+  }
+  [self endPictureInPicture];
+  if (context && _browser) {
+    // Sent the way the request was, so it runs after it.
+    [self evaluatePictureInPicture:kPipExitScript
+                         arguments:""
+                           session:session
+                           context:context
+                           gesture:NO
+                              then:nil];
   }
 }
 
-// Chromium has one picture-in-picture window; another tab's isn't taken.
-- (BOOL)otherPictureInPicture {
-  for (MBWebView* view in g_views) {
-    if (view != self && view->_pictureInPicture) {
-      return YES;
+// Forgets the window and any request: it closed, or this view no longer
+// asks for it.
+- (void)endPictureInPicture {
+  _pipNonce = nil;
+  if (g_pip_owner == self) {
+    g_pip_owner = nil;
+  }
+  _pipByPage = NO;
+  _pipSession = nil;
+  _pipContext = 0;
+  [self engineSetPictureInPicture:NO];
+  [self settlePictureInPicture];
+}
+
+// Lets the page be hidden: the switch away from it is settled.
+- (void)settlePictureInPicture {
+  void (^done)(void) = _pipDone;
+  _pipDone = nil;
+  if (done) {
+    done();
+  }
+}
+
+// Runs the scan, with |nonce|, in the picture-in-picture world of each of
+// the page's frames, up to kPipFrames. Frames of other sites run in
+// processes of their own, reached through sessions of their own.
+- (void)scanPictureInPicture:(NSString*)nonce
+                        then:(void (^)(PipFrames frames))then {
+  PipFrames frames = std::make_shared<std::vector<PipFrame>>();
+  __weak MBWebView* weakSelf = self;
+  [self
+      pipCall:@"Page.getFrameTree"
+       params:@{}
+      session:nil
+         then:^(NSDictionary* tree) {
+           MBWebView* view = weakSelf;
+           if (!view) {
+             return;
+           }
+           NSArray* children = tree[@"frameTree"][@"childFrames"];
+           if (![children isKindOfClass:NSArray.class] || children.count == 0) {
+             [view scanFrames:tree
+                        nonce:nonce
+                      session:nil
+                         into:frames
+                         then:^{
+                           then(frames);
+                         }];
+             return;
+           }
+           [view followFrames:^{
+             MBWebView* again = weakSelf;
+             if (!again) {
+               return;
+             }
+             NSArray* sessions = again->_frameSessions.allValues ?: @[];
+             __block NSUInteger waiting = sessions.count + 1;
+             dispatch_block_t one = ^{
+               if (--waiting == 0) {
+                 then(frames);
+               }
+             };
+             [again scanFrames:tree
+                         nonce:nonce
+                       session:nil
+                          into:frames
+                          then:one];
+             for (NSString* session in sessions) {
+               [again pipCall:@"Page.getFrameTree"
+                   params:@{}
+                   session:session
+                   then:^(NSDictionary* inner) {
+                     [weakSelf scanFrames:inner
+                                    nonce:nonce
+                                  session:session
+                                     into:frames
+                                     then:one];
+                   }];
+             }
+           }];
+         }];
+}
+
+- (void)followFrames:(dispatch_block_t)then {
+  if (_followsFrames) {
+    then();
+    return;
+  }
+  _followsFrames = YES;
+  _client->FollowFrames(_browser, [then] { then(); });
+}
+
+// Scans the frames of |tree|, from one session, while fewer than
+// kPipFrames have been.
+- (void)scanFrames:(NSDictionary*)tree
+             nonce:(NSString*)nonce
+           session:(NSString*)session
+              into:(PipFrames)frames
+              then:(dispatch_block_t)then {
+  NSMutableArray<NSString*>* ids = [NSMutableArray array];
+  NSMutableArray* queue = [NSMutableArray array];
+  if ([tree[@"frameTree"] isKindOfClass:NSDictionary.class]) {
+    [queue addObject:tree[@"frameTree"]];
+  }
+  while (queue.count > 0 && ids.count + frames->size() < kPipFrames) {
+    NSDictionary* node = queue.firstObject;
+    [queue removeObjectAtIndex:0];
+    NSString* identifier = node[@"frame"][@"id"];
+    if ([identifier isKindOfClass:NSString.class]) {
+      [ids addObject:identifier];
+    }
+    NSArray* children = node[@"childFrames"];
+    for (id child in [children isKindOfClass:NSArray.class] ? children : @[]) {
+      if ([child isKindOfClass:NSDictionary.class]) {
+        [queue addObject:child];
+      }
     }
   }
-  return NO;
-}
-
-// Runs a picture-in-picture script for |turn|. The gesture is what lets a
-// page open the window, so it's only given once a video is playing.
-- (void)evaluatePictureInPicture:(const char*)script
-                            turn:(int)turn
-                         gesture:(BOOL)gesture {
-  CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
-  params->SetString("expression",
-                    std::string(script) + "(" + std::to_string(turn) + ")");
-  params->SetBool("userGesture", gesture);
-  params->SetBool("awaitPromise", true);
-  params->SetBool("returnByValue", true);
+  __block NSUInteger waiting = ids.count;
+  if (waiting == 0) {
+    then();
+    return;
+  }
+  // Reserved now, so later sessions see the budget used.
+  size_t first = frames->size();
+  frames->resize(first + ids.count);
   __weak MBWebView* weakSelf = self;
-  _client->Call(_browser, "Runtime.evaluate", params,
-                [weakSelf, turn, gesture](CefRefPtr<CefDictionaryValue> reply) {
-                  CefRefPtr<CefDictionaryValue> result =
-                      reply ? reply->GetDictionary("result") : nullptr;
-                  std::string answer =
-                      result ? result->GetString("value").ToString() : "";
-                  [weakSelf pictureInPictureAnswered:answer
-                                                turn:turn
-                                             gesture:gesture];
-                });
+  [ids enumerateObjectsUsingBlock:^(NSString* identifier, NSUInteger i,
+                                    BOOL* stop) {
+    dispatch_block_t one = ^{
+      if (--waiting == 0) {
+        then();
+      }
+    };
+    [self pipCall:@"Page.createIsolatedWorld"
+        params:@{
+          @"frameId" : identifier,
+          @"worldName" : @(kPipWorld),
+          @"grantUniveralAccess" : @NO
+        }
+        session:session
+        then:^(NSDictionary* world) {
+          MBWebView* view = weakSelf;
+          int context = [world[@"executionContextId"] intValue];
+          if (!view || context == 0) {
+            one();
+            return;
+          }
+          [view evaluatePictureInPicture:kPipScanScript
+                               arguments:"(\"" + std::string(nonce.UTF8String) +
+                                         "\")"
+                                 session:session
+                                 context:context
+                                 gesture:NO
+                                    then:^(NSString* answer) {
+                                      PipFrame& frame = (*frames)[first + i];
+                                      frame.session = session;
+                                      frame.context = context;
+                                      frame.answer = answer.UTF8String;
+                                      one();
+                                    }];
+        }];
+  }];
 }
 
-- (void)pictureInPictureAnswered:(const std::string&)answer
-                            turn:(int)turn
-                         gesture:(BOOL)gesture {
-  if (turn != _pictureInPictureTurn) {
-    return;
-  }
-  if (answer == "video" && !gesture && _browser &&
-      ![self otherPictureInPicture]) {
-    [self evaluatePictureInPicture:kPipEnterScript turn:turn gesture:YES];
-    return;
-  }
-  _pictureInPictureAsked = answer == "open";
-  [self engineSetPictureInPicture:answer == "open"];
+// Runs |script| with |arguments| appended in a frame's world, |then|
+// getting the string it returns or resolves to, or "" if it failed.
+- (void)evaluatePictureInPicture:(const char*)script
+                       arguments:(const std::string&)arguments
+                         session:(NSString*)session
+                         context:(int)context
+                         gesture:(BOOL)gesture
+                            then:(void (^)(NSString* answer))then {
+  [self pipCall:@"Runtime.evaluate"
+         params:@{
+           @"expression" : @((std::string(script) + arguments).c_str()),
+           @"contextId" : @(context),
+           @"userGesture" : @(gesture),
+           @"awaitPromise" : @YES,
+           @"returnByValue" : @YES
+         }
+        session:session
+           then:^(NSDictionary* reply) {
+             id value = reply[@"result"][@"value"];
+             if (then) {
+               then([value isKindOfClass:NSString.class] ? value : @"");
+             }
+           }];
+}
+
+// A DevTools command to the page's session or a frame's; |then| gets the
+// result, or nil if it failed.
+- (void)pipCall:(NSString*)method
+         params:(NSDictionary*)params
+        session:(NSString*)session
+           then:(void (^)(NSDictionary* _Nullable result))then {
+  NSData* json = [NSJSONSerialization dataWithJSONObject:params
+                                                 options:0
+                                                   error:nil];
+  [self
+      sendDevToolsCommand:method
+                   params:[[NSString alloc] initWithData:json
+                                                encoding:NSUTF8StringEncoding]
+                  session:session
+               completion:^(NSString* result, NSString* error) {
+                 id object =
+                     result
+                         ? [NSJSONSerialization
+                               JSONObjectWithData:
+                                   [result
+                                       dataUsingEncoding:NSUTF8StringEncoding]
+                                          options:0
+                                            error:nil]
+                         : nil;
+                 then([object isKindOfClass:NSDictionary.class] ? object : nil);
+               }];
 }
 
 - (void)setFrozen:(BOOL)frozen {
@@ -3233,8 +3581,7 @@ class CookieKeys : public CefCookieVisitor {
   _prompts = nil;
   // Closing takes the window with it, and mustn't hold up other tabs'.
   _pictureInPicture = NO;
-  _pictureInPictureAsked = NO;
-  _pictureInPictureTurn++;
+  [self endPictureInPicture];
   if (_frozen) {
     // A frozen page never acknowledges the close, which would leave the
     // browser half-closed (and quitting waiting for it) forever.
@@ -3373,15 +3720,41 @@ class CookieKeys : public CefCookieVisitor {
   }
 }
 
-// The page's video left its window in |turn|, or in any (0): the page
-// navigated or crashed.
-- (void)engineLeftPictureInPicture:(int)turn {
-  if (!_pictureInPictureAsked || (turn != 0 && turn != _pictureInPictureTurn)) {
+// The video left the window: a report of the scan or request with |nonce|.
+- (void)engineLeftPictureInPicture:(NSString*)nonce {
+  if (g_pip_owner == self && _pictureInPicture &&
+      [nonce isEqualToString:_pipNonce]) {
+    [self endPictureInPicture];
+  }
+}
+
+// A frame started a new document: a new page closes the window and ends a
+// request; a frame's only if it was the frame the video is in.
+- (void)engineDocumentChanged:(BOOL)main {
+  if (main) {
+    if (_pipNonce || g_pip_owner == self) {
+      [self endPictureInPicture];
+    }
     return;
   }
-  _pictureInPictureTurn++;
-  _pictureInPictureAsked = NO;
-  [self engineSetPictureInPicture:NO];
+  if (g_pip_owner != self || !_pictureInPicture) {
+    return;
+  }
+  NSString* nonce = _pipNonce;
+  __weak MBWebView* weakSelf = self;
+  [self evaluatePictureInPicture:kPipOpenScript
+                       arguments:""
+                         session:_pipSession
+                         context:_pipContext
+                         gesture:NO
+                            then:^(NSString* answer) {
+                              MBWebView* view = weakSelf;
+                              if (view && g_pip_owner == view &&
+                                  [nonce isEqualToString:view->_pipNonce] &&
+                                  ![answer isEqualToString:@"open"]) {
+                                [view endPictureInPicture];
+                              }
+                            }];
 }
 
 - (void)engineSetThemeColor:(NSString*)color {

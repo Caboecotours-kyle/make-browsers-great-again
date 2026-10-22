@@ -346,12 +346,16 @@ typedef void (^MBExtensionBridge)(NSString* profilePath,
 - (void)probeMedia;
 /// Pauses the media the page is playing, or resumes what was paused.
 - (void)setMediaPaused:(BOOL)paused;
-/// Moves the video the page is playing, muted or not, into Chromium's
-/// picture-in-picture window, unless another tab has the window: for a tab
-/// being switched away from. -webView:didChangeBusy: reports it open.
-- (void)enterPictureInPicture;
-/// Puts the video -enterPictureInPicture moved out back into the page, or
-/// stops the request on its way: for a tab being shown again.
+/// Moves the video the page is playing, muted or not, in its own document
+/// or a frame of its origin, into Chromium's picture-in-picture window,
+/// unless a tab has the window already: for a tab being switched away from.
+/// |done| runs once the window is open or won't be, within a couple of
+/// seconds; until then the page should stay drawn, as a hidden page pauses
+/// a muted video. -webView:didChangeBusy: reports the window open.
+- (void)enterPictureInPicture:(void (^)(void))done;
+/// Puts the video -enterPictureInPicture: moved out back into the page, or
+/// stops the request on its way, leaving a window the page opened itself:
+/// for a page coming on screen.
 - (void)exitPictureInPicture;
 /// Suspends the page (no JavaScript, timers or rendering) while keeping all
 /// of its state, or resumes it.

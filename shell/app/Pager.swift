@@ -215,7 +215,10 @@ final class PagerModel {
 /// Holds the engine views of loaded tabs and shows the visible one. Hidden
 /// views are throttled by the engine automatically.
 final class WebContainerView: NSView {
-    private weak var current: MBWebView?
+    private(set) weak var current: MBWebView?
+    /// Pages switched away from that keep drawing, unseen under the visible
+    /// one, by how many holds each has (see `hold`).
+    private let held = NSMapTable<MBWebView, NSNumber>.weakToStrongObjects()
     /// The size a tab's page shows at instead of filling the container (a
     /// device preview in Developer Mode), or nil.
     var viewport: ((MBWebView) -> NSSize?)?
@@ -304,7 +307,7 @@ final class WebContainerView: NSView {
         }
         // To an empty space too: the page fades out over the empty field.
         guard crossfade, !Motion.reduced else {
-            previous.isHidden = true
+            putAway(previous)
             return
         }
         previous.layer?.zPosition = 1
@@ -314,8 +317,46 @@ final class WebContainerView: NSView {
             guard let previous else { return }
             previous.layer?.zPosition = 0
             previous.alphaValue = 1
-            if previous !== self?.current { previous.isHidden = true }
+            if previous !== self?.current { self?.putAway(previous) }
         }
+    }
+
+    /// Hides a page switched away from, or, held, leaves it drawing unseen.
+    private func putAway(_ view: MBWebView) {
+        if held.object(forKey: view) != nil {
+            view.alphaValue = 0
+            view.layer?.zPosition = -1
+            return
+        }
+        view.isHidden = true
+        view.alphaValue = 1
+        view.layer?.zPosition = 0
+    }
+
+    /// Keeps `view` drawing, unseen under the visible page, once it's
+    /// switched away from, until the returned closure is called: a page
+    /// hidden pauses a muted video.
+    func hold(_ view: MBWebView) -> () -> Void {
+        held.setObject(NSNumber(value: (held.object(forKey: view)?.intValue ?? 0) + 1), forKey: view)
+        var released = false
+        return { [weak self, weak view] in
+            guard let self, let view, !released else { return }
+            released = true
+            let count = (held.object(forKey: view)?.intValue ?? 1) - 1
+            if count > 0 { held.setObject(NSNumber(value: count), forKey: view) } else { held.removeObject(forKey: view) }
+            // One still fading out from a space switch is put away at the end.
+            guard count <= 0, view !== current, view.superview === self, view.layer?.zPosition != 1 else { return }
+            putAway(view)
+        }
+    }
+
+    /// A held page, unseen, takes no clicks meant for the visible one.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        var page: NSView = hit
+        while page !== self, let up = page.superview, up !== self { page = up }
+        guard let page = page as? MBWebView, page !== current, held.object(forKey: page) != nil else { return hit }
+        return current?.hitTest(convert(point, from: superview)) ?? self
     }
 }
 
@@ -328,9 +369,8 @@ extension WebContainerView {
         view.frame = pageArea == .zero ? bounds : pageArea
         view.isHidden = false
         return { [weak self, weak view] in
-            guard let view, view !== self?.current else { return }
-            view.isHidden = true
-            view.layer?.zPosition = 0
+            guard let self, let view, view !== current else { return }
+            putAway(view)
         }
     }
 
