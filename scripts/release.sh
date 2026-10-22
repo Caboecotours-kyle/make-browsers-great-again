@@ -11,6 +11,10 @@
 # the hardened runtime, then by Xcode with the team's Developer ID (managed
 # in the cloud, so no certificate to keep) and notarized by Apple. Set
 # MBGA_SIGN_IDENTITY and MBGA_TEAM to use another team.
+#
+# Xcode talks to Apple with the account signed into it, or, where there is
+# none (the Release workflow in CI), with the App Store Connect API key in
+# MBGA_ASC_KEY_PATH, MBGA_ASC_KEY_ID and MBGA_ASC_ISSUER_ID.
 set -euo pipefail
 
 export MBGA_SIGN_IDENTITY="${MBGA_SIGN_IDENTITY:-Apple Development: Roman Potapov (LKU8Y4CMYF)}"
@@ -23,6 +27,11 @@ VERSION="$(sed -n 's/^set(MBGA_VERSION "\(.*\)")$/\1/p' CMakeLists.txt)"
 PUBLIC_KEY="$(sed -n 's/^set(MBGA_UPDATE_PUBLIC_KEY "\(.*\)")$/\1/p' CMakeLists.txt)"
 TAG="v$VERSION"
 REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
+AUTH=()
+if [[ -n "${MBGA_ASC_KEY_PATH:-}" ]]; then
+  AUTH=(-authenticationKeyPath "$MBGA_ASC_KEY_PATH" -authenticationKeyID "${MBGA_ASC_KEY_ID:?}"
+    -authenticationKeyIssuerID "${MBGA_ASC_ISSUER_ID:?}")
+fi
 
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "Commit or set aside your changes first: a release is built from a commit." >&2
@@ -71,13 +80,14 @@ plistlib.dump({"method": "developer-id", "teamID": team, "signingStyle": "automa
               open(f"{out}/ExportOptions.plist", "wb"))
 PY
 xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist "$OUT/ExportOptions.plist" \
-  -allowProvisioningUpdates >"$OUT/upload.log" 2>&1 || {
+  -allowProvisioningUpdates ${AUTH[@]+"${AUTH[@]}"} >"$OUT/upload.log" 2>&1 || {
   tail -20 "$OUT/upload.log" >&2
   exit 1
 }
 # Apple usually takes a few minutes.
 for _ in $(seq 120); do
-  if xcodebuild -exportNotarizedApp -archivePath "$ARCHIVE" -exportPath "$OUT/notarized" >"$OUT/notarized.log" 2>&1; then
+  if xcodebuild -exportNotarizedApp -archivePath "$ARCHIVE" -exportPath "$OUT/notarized" \
+    ${AUTH[@]+"${AUTH[@]}"} >"$OUT/notarized.log" 2>&1; then
     break
   fi
   if ! grep -q "not ready for distribution" "$OUT/notarized.log"; then

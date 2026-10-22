@@ -1,0 +1,96 @@
+name: Release
+
+# Run from dev for a regular release: it raises the version, publishes the
+# release with its tag and merges it into main. Run from main for a hotfix:
+# the release is merged back into dev instead.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Part of the version to raise
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check the branch
+        if: github.ref_name != 'dev' && github.ref_name != 'main'
+        run: |
+          echo "::error::Release from dev, or from main for a hotfix, not from ${GITHUB_REF_NAME}."
+          exit 1
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - run: rustup toolchain install
+      - uses: actions/cache@v4
+        with:
+          path: third_party/cef
+          key: cef-${{ hashFiles('scripts/fetch-cef.sh') }}
+      - name: Raise the version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          VERSION="$(scripts/bump-version.sh "$BUMP")"
+          echo "version=$VERSION" >>"$GITHUB_OUTPUT"
+          # A retry after a failed release finds the version raised already.
+          if ! git diff --quiet CMakeLists.txt; then
+            git commit -q -m "Call this version of MBGA $VERSION" CMakeLists.txt
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          fi
+      - name: Set up signing
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_DEVELOPMENT_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPMENT_P12_PASSWORD }}
+          ASC_KEY: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$CERTIFICATE" | base64 --decode >"$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$CERTIFICATE_PASSWORD" -f pkcs12 -k "$KEYCHAIN" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          echo "$ASC_KEY" >"$RUNNER_TEMP/AuthKey.p8"
+          echo "MBGA_ASC_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >>"$GITHUB_ENV"
+      - name: Build, notarize and publish
+        env:
+          MBGA_UPDATE_KEY: ${{ secrets.MBGA_UPDATE_KEY }}
+          MBGA_ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          MBGA_ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: scripts/release.sh
+      - name: Merge the release into the other branch
+        env:
+          TAG: v${{ steps.version.outputs.version }}
+        run: |
+          if [[ "$GITHUB_REF_NAME" == dev ]]; then TARGET=main; else TARGET=dev; fi
+          git fetch -q origin "$TARGET"
+          git switch -q -C "$TARGET" "origin/$TARGET"
+          if ! git merge --no-edit "$TAG"; then
+            echo "::error::$TAG is released, but it conflicts with $TARGET. Merge it into $TARGET by hand."
+            exit 1
+          fi
+          git push origin "$TARGET"
+      - name: Clean up signing
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
