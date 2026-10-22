@@ -26,6 +26,8 @@ final class SidebarView: FlippedView {
         super.init(frame: .zero)
         for view in [toolbar, address, favorites, pager, player, bottom] as [NSView] { addSubview(view) }
         player.isHidden = store.mediaTab == nil
+        // Two-finger swipes anywhere in the sidebar switch spaces.
+        store.pager.sidebar = self
         store.observe(self) { [weak self] change in self?.handle(change) }
     }
 
@@ -120,10 +122,6 @@ final class SidebarView: FlippedView {
             listBottom -= 46 + 10
         }
         pager.frame = NSRect(x: 10, y: y, width: width, height: max(listBottom - y, 0))
-        // Two-finger swipes anywhere in the sidebar switch spaces.
-        if let content = window?.contentView {
-            store.pager.sidebarFrame = convert(bounds, to: content)
-        }
     }
 }
 

@@ -126,10 +126,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         // Two-finger swipes in the sidebar switch spaces.
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-            guard let self, let window = self.window, event.window === window,
-                  let host = window.contentView
-            else { return event }
-            return store.pager.handle(event, in: host) ? nil : event
+            guard let self, let window = self.window, event.window === window else { return event }
+            return store.pager.handle(event) ? nil : event
         }
 
         let timer = Timer(timeInterval: 30, repeats: true) { [weak self] _ in

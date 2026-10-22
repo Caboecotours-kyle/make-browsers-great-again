@@ -83,8 +83,10 @@ final class PagerModel {
 
     var pageCount = 1
     var pageWidth: CGFloat = 260
-    /// Sidebar frame in the hosting view's (top-left origin) coordinates.
-    var sidebarFrame: CGRect = .zero
+    /// The sidebar, where swipes switch spaces. Looked up on each swipe: it
+    /// slides in and out and moves onto the peek card without resizing, so
+    /// a frame noted at layout goes stale.
+    weak var sidebar: NSView?
     /// Called with the space index a swipe settled on.
     var onSettle: ((Int) -> Void)?
     /// Called with the space a swipe heads for as it starts.
@@ -116,18 +118,17 @@ final class PagerModel {
 
     private var lastWheelStep: TimeInterval = 0
 
-    private func inSidebar(_ event: NSEvent, _ host: NSView) -> Bool {
-        var point = host.convert(event.locationInWindow, from: nil)
-        if !host.isFlipped { point.y = host.bounds.height - point.y }
-        return sidebarFrame.contains(point)
+    private func inSidebar(_ event: NSEvent) -> Bool {
+        guard let sidebar, sidebar.window === event.window, !sidebar.isHiddenOrHasHiddenAncestor else { return false }
+        return sidebar.bounds.contains(sidebar.convert(event.locationInWindow, from: nil))
     }
 
     /// Returns true if the event was consumed.
-    func handle(_ event: NSEvent, in host: NSView) -> Bool {
-        guard event.hasPreciseScrollingDeltas else { return handleWheel(event, in: host) }
+    func handle(_ event: NSEvent) -> Bool {
+        guard event.hasPreciseScrollingDeltas else { return handleWheel(event) }
 
         if event.phase.contains(.began) {
-            tracking = inSidebar(event, host) && pageCount > 1 ? .undecided(dx: 0, dy: 0) : .idle
+            tracking = inSidebar(event) && pageCount > 1 ? .undecided(dx: 0, dy: 0) : .idle
         }
         let ended = event.phase.contains(.ended) || event.phase.contains(.cancelled)
 
@@ -176,11 +177,11 @@ final class PagerModel {
 
     /// A mouse's horizontal wheel (or Shift-scroll) over the sidebar steps
     /// one space at a time.
-    private func handleWheel(_ event: NSEvent, in host: NSView) -> Bool {
+    private func handleWheel(_ event: NSEvent) -> Bool {
         var dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
         // The system usually turns Shift-scroll horizontal; not always.
         if event.modifierFlags.contains(.shift), dx == 0 { (dx, dy) = (dy, 0) }
-        guard pageCount > 1, abs(dx) >= 1, abs(dx) > abs(dy), inSidebar(event, host) else { return false }
+        guard pageCount > 1, abs(dx) >= 1, abs(dx) > abs(dy), inSidebar(event) else { return false }
         // One step per flick of the wheel, however many notches it reports.
         guard event.timestamp - lastWheelStep > 0.35 else { return true }
         lastWheelStep = event.timestamp
