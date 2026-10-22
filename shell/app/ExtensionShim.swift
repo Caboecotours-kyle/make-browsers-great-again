@@ -121,7 +121,23 @@ enum ExtensionShim {
         if (current) { return theirs; }
         return notCurrent && mbgaCurrent() ? theirs : theirs.concat(notCurrent ? [] : mine);
       }));
-      define(tabs, 'get', api(async id => { await fresh(); return complete(await real.tabs.get(id)); }));
+      define(tabs, 'get', api(async id => {
+        await fresh();
+        // MBGA's tabs asleep have no browser for Chrome to describe.
+        const mine = ours(id);
+        if (mine && mine.discarded) { return mine; }
+        return complete(await real.tabs.get(id));
+      }));
+      const reload = tabs.reload && tabs.reload.bind(tabs);
+      if (reload) {
+        define(tabs, 'reload', api(async (...args) => {
+          await fresh();
+          const id = typeof args[0] === 'number' ? args[0] : undefined;
+          const mine = id === undefined ? null : ours(id);
+          if (mine && mine.discarded) { return call('tabs.reload', {id}); }
+          return reload(...args);
+        }));
+      }
       define(tabs, 'getCurrent', api(async () => {
         await fresh();
         if (state.popup) { return undefined; }
@@ -144,7 +160,8 @@ enum ExtensionShim {
         }
         if (!ours(id)) { return real.tabs.update(id, props); }
         const {url, active, highlighted, pinned} = props || {};
-        if (url) { await real.tabs.update(id, {url}); }
+        if (url && ours(id).discarded) { await call('tabs.update', {id, url}); }
+        else if (url) { await real.tabs.update(id, {url}); }
         if (active || highlighted || pinned !== undefined) {
           await call('tabs.update', {id, active: active || highlighted, pinned});
         }
@@ -379,6 +396,12 @@ enum ExtensionShim {
       define(menus, 'update', api(async (id, props) => { await update(id, props); report('update', {id, props: plain(props)}); }));
       define(menus, 'remove', api(async id => { await remove(id); report('remove', {id}); }));
       define(menus, 'removeAll', api(async () => { await removeAll(); report('removeAll', {}); }));
+    }
+
+    // An extension page in one of MBGA's tabs is the one tab MBGA can't
+    // find by its DevTools target: it says which it is.
+    if (INSTANCE === 'page' && real.tabs && real.tabs.getCurrent) {
+      real.tabs.getCurrent().then(tab => { if (tab) { return call('self', {id: tab.id}); } }).catch(() => {});
     }
 
     globalThis.__mbga = {

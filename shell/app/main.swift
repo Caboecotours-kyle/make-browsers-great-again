@@ -10,6 +10,11 @@ let dataDirectory = ProcessInfo.processInfo.environment["MBGA_DATA_DIR"]
         .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("MBGA", isDirectory: true)
 let core = BrowserCore(dataDir: dataDirectory.path)
+// Extensions need the helper to see MBGA's tabs; without any, it'd only cost.
+let loadsExtensionHelper = hasBrowserDevTools && core.snapshot().profiles.contains {
+    !InstalledExtension.all(in: core.profileDir(profileId: $0.id)).isEmpty
+}
+MBEngine.setLoadsExtensionHelper(loadsExtensionHelper)
 
 // The engine requires its NSApplication subclass to exist before it starts.
 let app = MBApplication.shared

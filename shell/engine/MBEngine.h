@@ -152,6 +152,10 @@ typedef NS_ENUM(NSInteger, MBChromeCommand) {
 /// --remote-debugging-pipe, on file descriptors 3 and 4). Call first thing
 /// in main, before anything opens a file; NO if they were taken.
 + (BOOL)claimDevToolsPipe;
+/// Loads MBGA's helper extension in every profile (Chrome restarts its
+/// worker at each launch, so only when there are extensions to help). Call
+/// before +startWithArgc.
++ (void)setLoadsExtensionHelper:(BOOL)loads;
 /// Receives the connection's replies and events, as JSON, on the main
 /// thread.
 + (void)setBrowserDevToolsHandler:(void (^)(NSString* message))handler;

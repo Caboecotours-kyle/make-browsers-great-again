@@ -76,6 +76,8 @@ std::vector<CefRefPtr<CefBrowser>> g_auxiliary;
 // are our ends. -1 until claimed.
 int g_pipe_write = -1;
 int g_pipe_read = -1;
+// Whether to load MBGA's helper extension (see shell/resources/extension).
+bool g_extension_helper = false;
 void (^g_pipe_handler)(NSString* message) = nil;
 int g_browser_count = 0;
 bool g_quitting = false;
@@ -651,11 +653,13 @@ class BrowserApp : public CefApp {
       // Extension support (see shell/app/Extensions.swift): the browser
       // DevTools connection, and MBGA's helper extension in every profile.
       command_line->AppendSwitch("remote-debugging-pipe");
-      NSString* helper = [NSBundle.mainBundle.resourcePath
-          stringByAppendingPathComponent:@"extension"];
-      AppendToListSwitch(command_line, "load-extension", helper.UTF8String);
       AppendToListSwitch(command_line, "disable-features",
                          "DisableLoadExtensionCommandLineSwitch");
+      if (g_extension_helper) {
+        NSString* helper = [NSBundle.mainBundle.resourcePath
+            stringByAppendingPathComponent:@"extension"];
+        AppendToListSwitch(command_line, "load-extension", helper.UTF8String);
+      }
     }
     AppendSwitchesFromEnvironment(command_line);
 
@@ -2412,6 +2416,10 @@ class CookieKeys : public CefCookieVisitor {
     }
   }];
   return YES;
+}
+
++ (void)setLoadsExtensionHelper:(BOOL)loads {
+  g_extension_helper = loads;
 }
 
 + (void)setBrowserDevToolsHandler:(void (^)(NSString*))handler {

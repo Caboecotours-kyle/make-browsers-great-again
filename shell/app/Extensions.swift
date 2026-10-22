@@ -37,6 +37,10 @@ final class ExtensionHost {
     /// The window id MBGA's main window has in extension APIs; Chrome's own
     /// windows and tabs share a counter that starts far from it.
     static let mainWindowID = 1_000_000_000
+    /// Ids of MBGA's tabs that have no browser now (asleep, or not looked up
+    /// yet), which extensions see as discarded: counting down from far above
+    /// Chrome's own.
+    static let sleepingIDBase = 2_100_000_000
     /// MBGA's helper (shell/resources/extension), loaded in every profile.
     static let helperID = "ngnchdgcmeaekolgcekjmpncoaiepoeb"
 
@@ -83,6 +87,7 @@ final class ExtensionHost {
     private var reported: [String: Report] = [:]
     private var syncPending = false
     private var canonical: [String: String] = [:]
+    private var toldToRestart = false
     /// Called when a toolbar button or menu changes.
     var onChange: (() -> Void)?
     var onOpenPopup: ((Key) -> Void)?
@@ -95,6 +100,9 @@ final class ExtensionHost {
 
     private struct Report {
         var tabs: [Int: [String: Any]]
+        /// MBGA's tab behind each id, to tell a tab that woke (a new id)
+        /// from one that opened.
+        var owners: [Int: UInt64]
         var active: [Int: Int]
         var focused: Int
     }
@@ -223,6 +231,12 @@ final class ExtensionHost {
             if workers[target] == nil, !installed.values.contains(where: { $0.contains { $0.id == id } }), id != Self.helperID {
                 // Just installed (or enabled).
                 refreshInstalled()
+                if !loadsExtensionHelper, !toldToRestart {
+                    // The first extension: the helper comes with the next launch.
+                    toldToRestart = true
+                    store.showToast(Toast(message: "Quit and reopen MBGA to let extensions see your tabs",
+                                          symbol: "puzzlepiece.extension"), duration: 8)
+                }
             }
             workers[target] = id
             if id == Self.helperID, !helperWaiters.isEmpty {
@@ -331,6 +345,12 @@ final class ExtensionHost {
         switch method {
         case "state":
             answer(nil)
+        case "self":
+            if browserID != 0, let id = (args["id"] as? NSNumber)?.intValue, tabIDs[browserID] != id {
+                tabIDs[browserID] = id
+                setNeedsSync()
+            }
+            answer(nil)
         case "listeners":
             // A worker's listeners are added as it starts: the moment to
             // hand it the events it was woken for.
@@ -343,8 +363,15 @@ final class ExtensionHost {
             openTab(args.merging(["extension": extensionID]) { $1 }, profile: profile) { [weak self] tab in
                 answer(tab.flatMap { self?.tabObject(for: $0, profile: profile) })
             }
+        case "tabs.reload":
+            if let id = (args["id"] as? NSNumber)?.intValue, let tab = tab(extensionTabID: id) {
+                if let view = store.views[tab] { view.reload() } else { store.warmTab(tab) }
+            }
+            answer(nil)
         case "tabs.update":
             if let id = (args["id"] as? NSNumber)?.intValue, let tab = tab(extensionTabID: id) {
+                // An asleep tab loads the address when it wakes.
+                if let url = args["url"] as? String, store.views[tab] == nil { store.core.updateTab(id: tab, url: url, title: nil) }
                 if let pinned = args["pinned"] as? Bool, pinned != isPinned(tab) { store.togglePin(tab, in: space(of: tab)) }
                 if args["active"] as? Bool == true { store.select(tab, in: space(of: tab)?.id) }
             }
@@ -475,8 +502,15 @@ final class ExtensionHost {
         return (parts + [name]).joined(separator: "+")
     }
 
+    /// Shows the extension's options in a tab: the one already showing
+    /// them, as Chrome does, or a new one.
     func openOptions(_ key: Key) {
         guard let page = extensions(in: key.profile).first(where: { $0.id == key.extensionID })?.optionsPage else { return }
+        for space in spaces(in: key.profile) {
+            for tab in space.favorites + space.pinned.compactMap(\.tab) + space.today where tab.url.hasPrefix(page) {
+                return store.select(tab.id, in: space.id)
+            }
+        }
         openTab(["url": page, "active": true], profile: key.profile) { _ in }
     }
 
@@ -731,7 +765,10 @@ final class ExtensionHost {
 
     /// MBGA's tab with this extension tab id.
     func tab(extensionTabID id: Int) -> UInt64? {
-        store.views.first { tabIDs[$0.value.browserIdentifier] == id }?.key
+        if let live = store.views.first(where: { tabIDs[$0.value.browserIdentifier] == id })?.key { return live }
+        guard id <= Self.sleepingIDBase, id > Self.sleepingIDBase - 100_000_000 else { return nil }
+        let tab = UInt64(Self.sleepingIDBase - id)
+        return store.core.tab(id: tab) != nil && extensionTabID(of: tab) == nil ? tab : nil
     }
 
     /// The extension tab id of MBGA's tab, once known.
@@ -871,16 +908,23 @@ final class ExtensionHost {
         for space in spaces(in: profile) {
             let pinned = Set((space.favorites + space.pinned.compactMap(\.tab)).map(\.id))
             for tab in space.favorites + space.pinned.compactMap(\.tab) + space.today {
-                guard let view = store.views[tab.id], let id = tabIDs[view.browserIdentifier] else { continue }
+                let view = store.views[tab.id]
+                let known = view.flatMap { tabIDs[$0.browserIdentifier] }
+                // A tab just opened shows up once its id is known, as Chrome's
+                // do, rather than as one asleep that's then replaced.
+                if let view, known == nil, view.browserIdentifier == 0 || (lookedFor[view.browserIdentifier]?.times ?? 0) < 3 {
+                    continue
+                }
+                let id = known ?? Self.sleepingIDBase - Int(tab.id)
                 let window = windowID(of: tab.id)
                 let little = window != Self.mainWindowID
                 let isActive = little || tab.id == active
                 let position = index[window, default: 0]
                 index[window] = position + 1
-                tabs.append(tabObject(tab, id: id, view: view, window: window, index: position, active: isActive,
-                                      pinned: pinned.contains(tab.id)))
+                tabs.append(tabObject(tab, id: id, view: known == nil ? nil : view, window: window, index: position,
+                                      active: isActive, pinned: pinned.contains(tab.id)))
                 if windows[window] == nil {
-                    let host = little ? view.window : store.window
+                    let host = little ? view?.window : store.window
                     windows[window] = windowObject(window, host: host, focused: little ? NSApp.isActive && host?.isKeyWindow == true : mainFocused)
                 }
             }
@@ -897,21 +941,26 @@ final class ExtensionHost {
         ]
     }
 
-    private func tabObject(_ tab: TabInfo, id: Int, view: MBWebView, window: Int, index: Int, active: Bool,
+    /// A tab as extensions see it; without `view` (asleep), discarded.
+    private func tabObject(_ tab: TabInfo, id: Int, view: MBWebView?, window: Int, index: Int, active: Bool,
                            pinned: Bool) -> [String: Any] {
         let loading = store.navStates[tab.id]?.isLoading == true
-        return [
+        var object: [String: Any] = [
             "id": id, "windowId": window, "index": index,
             "active": active, "highlighted": active, "selected": active, "pinned": pinned,
-            "audible": tab.audible, "discarded": false, "autoDiscardable": !tab.keepAwake, "frozen": tab.frozen,
+            "audible": tab.audible, "discarded": view == nil, "autoDiscardable": !tab.keepAwake, "frozen": tab.frozen,
             "mutedInfo": ["muted": false], "groupId": -1, "incognito": false,
-            "url": tab.url, "title": tab.title, "status": loading ? "loading" : "complete",
-            "width": Int(view.bounds.width), "height": Int(view.bounds.height),
+            "url": tab.url, "title": tab.title, "status": view == nil ? "unloaded" : loading ? "loading" : "complete",
         ]
+        if let view {
+            object["width"] = Int(view.bounds.width)
+            object["height"] = Int(view.bounds.height)
+        }
+        return object
     }
 
     func tabObject(for tab: UInt64, profile: String) -> [String: Any]? {
-        guard let id = extensionTabID(of: tab) else { return nil }
+        let id = extensionTabID(of: tab) ?? Self.sleepingIDBase - Int(tab)
         return (state(profile: profile, requester: 0)["tabs"] as? [[String: Any]])?.first { $0["id"] as? Int == id }
     }
 
@@ -980,6 +1029,12 @@ final class ExtensionHost {
     /// windows since last time.
     private func sync() {
         syncPending = false
+        // Nothing to tell, and no reason to wake the helper, with no
+        // extension listening to tab or window events.
+        guard listening.values.contains(where: { $0.contains { $0.hasPrefix("tabs.") || $0.hasPrefix("windows.") } }) else {
+            reported = [:]
+            return
+        }
         resolveTabIDs { [weak self] in self?.report() }
     }
 
@@ -991,17 +1046,27 @@ final class ExtensionHost {
             var active: [Int: Int] = [:]
             for tab in tabs.values where tab["active"] as? Bool == true { active[tab["windowId"] as? Int ?? 0] = tab["id"] as? Int }
             let focused = (now["windows"] as? [[String: Any]] ?? []).first { $0["focused"] as? Bool == true }?["id"] as? Int ?? -1
-            let current = Report(tabs: tabs, active: active, focused: focused)
+            var owners: [Int: UInt64] = [:]
+            for id in tabs.keys { owners[id] = tab(extensionTabID: id) }
+            let current = Report(tabs: tabs, owners: owners, active: active, focused: focused)
             defer { reported[profile] = current }
             guard let before = reported[profile] else { continue }
             var events: [[Any]] = []
-            for (id, tab) in tabs where before.tabs[id] == nil {
+            // A tab that woke or went to sleep has a new id, as a discarded
+            // tab in Chrome that's replaced.
+            var replaced: [Int: Int] = [:]
+            for (old, owner) in before.owners where tabs[old] == nil {
+                if let new = owners.first(where: { $0.value == owner && before.tabs[$0.key] == nil })?.key { replaced[old] = new }
+            }
+            for (old, new) in replaced { events.append(["tabs.onReplaced", [new, old]]) }
+            let added = Set(replaced.values)
+            for (id, tab) in tabs where before.tabs[id] == nil && !added.contains(id) {
                 events.append(["tabs.onCreated", [tab]])
             }
             for (id, tab) in tabs {
                 guard let old = before.tabs[id] else { continue }
                 var change: [String: Any] = [:]
-                for field in ["url", "title", "status", "pinned", "audible"] where !same(old[field], tab[field]) {
+                for field in ["url", "title", "status", "pinned", "audible", "discarded"] where !same(old[field], tab[field]) {
                     change[field] = tab[field]
                 }
                 if !change.isEmpty { events.append(["tabs.onUpdated", [id, change, tab]]) }
@@ -1010,7 +1075,7 @@ final class ExtensionHost {
                 events.append(["tabs.onActivated", [["tabId": id, "windowId": window]]])
                 events.append(["tabs.onHighlighted", [["tabIds": [id], "windowId": window]]])
             }
-            for (id, old) in before.tabs where tabs[id] == nil {
+            for (id, old) in before.tabs where tabs[id] == nil && replaced[id] == nil {
                 events.append(["tabs.onRemoved", [id, ["windowId": old["windowId"] ?? Self.mainWindowID, "isWindowClosing": false]]])
                 for key in tabActions.keys where key.profile == profile { tabActions[key]?[id] = nil }
             }
