@@ -65,6 +65,12 @@ enum DevSite {
             || (octets[0] == 172 && (16...31).contains(octets[1]))
     }
 
+    /// Whether `url` is a web page or a file, rather than one of an
+    /// extension's pages or the browser's own.
+    static func isSite(_ url: String) -> Bool {
+        ["http", "https", "file"].contains(URLComponents(string: url)?.scheme?.lowercased())
+    }
+
     /// "localhost:3000", a file's name, or a site's host.
     static func label(_ url: String) -> String {
         guard let parts = URLComponents(string: url) else { return url }
@@ -837,6 +843,13 @@ final class DevPillView: HoverView {
         if point.x < statusWidth { showMenu(addressMenu(), under: nil) }
     }
 
+    /// A right-click anywhere on the pill offers to get it out of the way.
+    override func rightMouseDown(with event: NSEvent) {
+        let menu = NSMenu()
+        hideItems(in: menu)
+        showMenu(menu, under: nil)
+    }
+
     // MARK: Menus
 
     func scanPorts() {
@@ -923,9 +936,15 @@ final class DevPillView: HoverView {
             }
         }
         menu.addItem(.separator())
-        menu.add("Hide Toolbar on This Tab") { [store] in store.toggleDeveloperToolbar() }
-        menu.add("Developer Settings…") { [store] in store.openSettings?(.developer) }
+        hideItems(in: menu)
         return menu
+    }
+
+    private func hideItems(in menu: NSMenu) {
+        let hide = menu.add("Hide Toolbar on This Tab") { [store] in store.toggleDeveloperToolbar() }
+        hide.keyEquivalent = "d"
+        hide.keyEquivalentModifierMask = [.command, .shift]
+        menu.add("Developer Settings…") { [store] in store.openSettings?(.developer) }
     }
 
     /// Runs once the menu has closed, so the popover has the pill to point at.

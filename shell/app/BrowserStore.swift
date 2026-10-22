@@ -1418,11 +1418,12 @@ extension BrowserStore {
     var visibleDevReport: DevPageReport { visibleTabID.flatMap { devReports[$0] } ?? DevPageReport() }
 
     /// Whether the visible tab gets the developer toolbar: a local site, or
-    /// any site if so set, unless shown or hidden by hand.
+    /// any site if so set (not an extension's own pages), unless shown or
+    /// hidden by hand.
     var developerToolbarShown: Bool {
         guard DeveloperSettings.enabled, !contentFullscreen, let tab = visibleTab, !tab.url.isEmpty else { return false }
         if let shown = devToolbarOverrides[tab.id] { return shown }
-        return DeveloperSettings.everywhere || DevSite.isLocal(tab.url)
+        return DeveloperSettings.everywhere ? DevSite.isSite(tab.url) : DevSite.isLocal(tab.url)
     }
 
     /// Shows or hides the toolbar on the visible tab, turning Developer Mode
