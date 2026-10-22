@@ -585,6 +585,7 @@ final class ElementsPanel: InspectorPanelView, NSOutlineViewDataSource, NSOutlin
     }
 
     private func reloadTree() {
+        changedNodes = [:]
         closingTags = [:]
         tree.reloadData()
         guard let document = model?.document else { return }
@@ -599,16 +600,46 @@ final class ElementsPanel: InspectorPanelView, NSOutlineViewDataSource, NSOutlin
         selectionChanged()
     }
 
+    /// Nodes whose rows changed, reloaded together: a busy page changes
+    /// its DOM many times a frame.
+    private var changedNodes: [ObjectIdentifier: DOMNode] = [:]
+    private lazy var reloadChanged = Coalescer(delay: 0.05) { [weak self] in self?.reloadChangedNodes() }
+
     private func reload(_ node: DOMNode) {
+        changedNodes[ObjectIdentifier(node)] = node
+        reloadChanged.schedule()
+    }
+
+    private func reloadChangedNodes() {
+        guard !changedNodes.isEmpty else { return }
+        let nodes = changedNodes
+        changedNodes = [:]
+        // A node reloaded with its children covers its descendants.
+        let covered = { (node: DOMNode) in
+            var ancestor = node.parent
+            while let current = ancestor {
+                if nodes[ObjectIdentifier(current)] != nil { return true }
+                ancestor = current.parent
+            }
+            return false
+        }
+        if let document = model?.document, nodes[ObjectIdentifier(document)] != nil {
+            reloadRow(document)
+        } else {
+            for node in nodes.values where !covered(node) { reloadRow(node) }
+        }
+        if let selected = model?.selected, tree.row(forItem: selected) >= 0, tree.selectedRow != tree.row(forItem: selected) {
+            selectRow(of: selected)
+        }
+        sizeTreeColumn()
+    }
+
+    private func reloadRow(_ node: DOMNode) {
         let row = tree.row(forItem: node)
         guard row >= 0 || node === model?.document else { return }
         let expanded = tree.isItemExpanded(node)
         tree.reloadItem(node === model?.document ? nil : node, reloadChildren: true)
         if expanded, row >= 0, !tree.isItemExpanded(node) { tree.expandItem(node) }
-        if let selected = model?.selected, tree.row(forItem: selected) >= 0, tree.selectedRow != tree.row(forItem: selected) {
-            selectRow(of: selected)
-        }
-        sizeTreeColumn()
     }
 
     private func selectionChanged() {
@@ -629,6 +660,7 @@ final class ElementsPanel: InspectorPanelView, NSOutlineViewDataSource, NSOutlin
     /// Expands its ancestors and scrolls it into the middle.
     private func revealRow(_ node: DOMNode) {
         guard let model else { return }
+        reloadChanged.flush()
         for ancestor in model.path(to: node).dropLast() where ancestor !== model.document { tree.expandItem(ancestor) }
         let row = tree.row(forItem: node)
         guard row >= 0 else { return }
@@ -1019,13 +1051,21 @@ final class DOMOutlineView: InspectorOutlineView {
         let row = self.row(at: convert(event.locationInWindow, from: nil))
         let value = row >= 0 ? row : nil
         guard value != hovered else { return }
+        setRowHovered(hovered, false)
         hovered = value
+        setRowHovered(value, true)
         onHover?(value)
     }
 
     override func mouseExited(with event: NSEvent) {
+        setRowHovered(hovered, false)
         hovered = nil
         onHover?(nil)
+    }
+
+    private func setRowHovered(_ row: Int?, _ on: Bool) {
+        guard let row, row < numberOfRows else { return }
+        (rowView(atRow: row, makeIfNecessary: false) as? InspectorRowView)?.hovered = on
     }
 }
 
@@ -1448,6 +1488,9 @@ final class StylesView: FlippedView {
         return inherited.contains(name)
     }
 
+    /// A block's lines changed: lays the blocks out again.
+    func blockResized() { layoutBlocks() }
+
     private func setBlocks(_ new: [RuleBlock]) {
         blocks.forEach { $0.removeFromSuperview() }
         blocks = new
@@ -1615,92 +1658,188 @@ struct StyleRule {
     }
 }
 
-/// One rule's block in the Styles pane.
-final class RuleBlock: FlippedView {
+/// One rule's block in the Styles pane, drawn as lines of text: its
+/// heading, media, the selector and source, a line per declaration
+/// (`☑ color: ■ red;`, name and value each editable on click) and the
+/// closing brace. Drawing them rather than making views for each keeps
+/// long user agent rules cheap to show and to lay out again.
+final class RuleBlock: FlippedView, NSViewToolTipOwner {
     private(set) var rule: StyleRule
     private weak var styles: StylesView?
     var filter = ""
-    private var rowViews: [NSView] = []
+    private var lines: [(line: Line, y: CGFloat, height: CGFloat)] = []
+    /// A declaration being added, typed on a line before the brace.
+    private var adding = false
+    private let font = InspectorTheme.mono(11)
+    /// Each declaration's text and colour, made once.
+    private lazy var drawn: [(name: NSAttributedString, nameWidth: CGFloat, value: NSAttributedString, color: NSColor?)] =
+        rule.declarations.map { declaration in
+            let name = nameText(declaration)
+            return (name, ceil(name.size().width) + 2, valueText(declaration), CSSColor.parse(declaration.value))
+        }
+    private lazy var source: NSAttributedString? = makeSourceText()
+    private lazy var sourceWidth: CGFloat = source.map { ceil($0.size().width) + 2 } ?? 0
+
+    private enum Line {
+        case heading(String), media(String), selector, declaration(Int), adding, close
+    }
 
     init(rule: StyleRule, styles: StylesView) {
         self.rule = rule
         self.styles = styles
         super.init(frame: .zero)
-        wantsLayer = true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    /// Lays out its rows for `width`; its height, or 0 when filtered out.
+    /// Its height at `width`, or 0 when filtered out.
     func layoutRows(width: CGFloat) -> CGFloat {
-        rowViews.forEach { $0.removeFromSuperview() }
-        rowViews = []
+        lines = []
         let matches = filter.isEmpty || rule.selector.localizedCaseInsensitiveContains(filter)
-            || rule.declarations.contains { "\($0.name): \($0.value)".localizedCaseInsensitiveContains(filter) }
+            || rule.declarations.contains(where: matchesFilter)
         guard matches else { return 0 }
         var y: CGFloat = 0
-        let font = InspectorTheme.mono(11)
-        if let heading = rule.heading {
-            let label = Label.make(heading, size: 11, weight: .medium, color: .secondaryLabelColor)
-            label.frame = NSRect(x: 8, y: y + 6, width: width - 16, height: 16)
-            add(label)
-            y += 24
+        func add(_ line: Line, _ height: CGFloat) {
+            lines.append((line, y, height))
+            y += height
         }
-        for media in rule.media {
-            let label = NSTextField(labelWithString: media)
-            label.font = InspectorTheme.mono(10.5)
-            label.textColor = .secondaryLabelColor
-            label.lineBreakMode = .byTruncatingTail
-            label.frame = NSRect(x: 8, y: y + 4, width: width - 16, height: 15)
-            add(label)
-            y += 17
+        if let heading = rule.heading { add(.heading(heading), 24) }
+        for media in rule.media { add(.media(media), 17) }
+        add(.selector, 20)
+        let all = filter.isEmpty || rule.selector.localizedCaseInsensitiveContains(filter)
+        for (index, declaration) in rule.declarations.enumerated() where all || matchesFilter(declaration) {
+            add(.declaration(index), 18)
         }
-        // Selector line, with the source on the right.
-        let source = sourceLabel()
-        let sourceWidth = source.map { min($0.textWidth, width * 0.45) } ?? 0
-        let selector = selectorText()
-        let selectorField = ClickableText(selector) { [weak self] in self?.editSelector() }
-        selectorField.frame = NSRect(x: 8, y: y + 4, width: max(width - 24 - sourceWidth, 40), height: 16)
-        add(selectorField)
-        if let source {
-            source.frame = NSRect(x: width - sourceWidth - 8, y: y + 4, width: sourceWidth, height: 16)
-            add(source)
-        }
-        y += 20
-        for (index, declaration) in rule.declarations.enumerated() {
-            guard filter.isEmpty || matchesFilter(declaration) || rule.selector.localizedCaseInsensitiveContains(filter) else { continue }
-            let row = DeclarationRow(declaration, editable: rule.editable)
-            row.onToggle = { [weak self] in self?.toggle(index) }
-            row.onEdit = { [weak self] name, value in self?.edit(index, name: name, value: value) }
-            row.frame = NSRect(x: 0, y: y, width: width, height: 18)
-            add(row)
-            y += 18
-        }
-        let close = ClickableText(NSMutableAttributedString().add("}", .labelColor, font: font)) { [weak self] in self?.addDeclaration() }
-        close.frame = NSRect(x: 8, y: y, width: width - 16, height: 16)
-        close.toolTip = rule.editable ? "Click to add a declaration" : nil
-        add(close)
-        y += 22
-        // A hairline under the block.
-        let line = NSView(frame: NSRect(x: 0, y: y - 1, width: width, height: 1))
-        line.wantsLayer = true
-        line.layer?.backgroundColor = InspectorTheme.separator.cgColor
-        add(line)
+        if adding { add(.adding, 18) }
+        add(.close, 22)
+        needsDisplay = true
+        window?.invalidateCursorRects(for: self)
         return y
     }
 
-    private func add(_ view: NSView) {
-        addSubview(view)
-        rowViews.append(view)
+    override func layout() {
+        super.layout()
+        removeAllToolTips()
+        for entry in lines {
+            switch entry.line {
+            case .selector where source != nil: addToolTip(sourceRect(entry.y), owner: self, userData: nil)
+            case .declaration(let index) where tip(for: rule.declarations[index]) != nil:
+                addToolTip(NSRect(x: 0, y: entry.y, width: bounds.width, height: entry.height), owner: self, userData: nil)
+            default: break
+            }
+        }
     }
 
-    private func matchesFilter(_ declaration: StyleDeclaration) -> Bool {
-        "\(declaration.name): \(declaration.value)".localizedCaseInsensitiveContains(filter)
+    // MARK: Drawing
+
+    override func draw(_ dirtyRect: NSRect) {
+        for entry in lines where entry.y < dirtyRect.maxY && entry.y + entry.height > dirtyRect.minY {
+            let y = entry.y
+            switch entry.line {
+            case .heading(let heading):
+                draw(NSAttributedString(string: heading, attributes: [.font: Theme.font(11, .medium), .foregroundColor: NSColor.secondaryLabelColor]),
+                     in: NSRect(x: 8, y: y + 6, width: bounds.width - 16, height: 16))
+            case .media(let media):
+                draw(NSMutableAttributedString().add(media, .secondaryLabelColor, font: InspectorTheme.mono(10.5)),
+                     in: NSRect(x: 8, y: y + 4, width: bounds.width - 16, height: 15))
+            case .selector:
+                draw(selectorText(), in: selectorRect(y))
+                source?.draw(with: sourceRect(y), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+            case .declaration(let index):
+                drawDeclaration(index, at: y)
+            case .adding:
+                drawCheckbox(on: true, enabled: true, at: y)
+            case .close:
+                draw(NSMutableAttributedString().add("}", .labelColor, font: font), in: NSRect(x: 8, y: y, width: 20, height: 16))
+            }
+        }
+        InspectorTheme.separator.setFill()
+        NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
+    }
+
+    /// A small checkbox, drawn: the system's is slow to draw by the hundred.
+    private func drawCheckbox(on: Bool, enabled: Bool, at y: CGFloat) {
+        let box = NSRect(x: 11, y: y + 3, width: 12, height: 12)
+        let path = NSBezierPath(roundedRect: box, xRadius: 3, yRadius: 3)
+        if on {
+            (enabled ? NSColor.controlAccentColor : Theme.faint(0.16)).setFill()
+            path.fill()
+            let check = NSBezierPath()
+            check.move(to: NSPoint(x: box.minX + 3, y: box.midY))
+            check.line(to: NSPoint(x: box.minX + 5.2, y: box.maxY - 3.2))
+            check.line(to: NSPoint(x: box.maxX - 2.8, y: box.minY + 3.2))
+            check.lineWidth = 1.6
+            check.lineCapStyle = .round
+            check.lineJoinStyle = .round
+            (enabled ? NSColor.white : NSColor.secondaryLabelColor).setStroke()
+            check.stroke()
+        } else {
+            Theme.faint(enabled ? 0.4 : 0.2).setStroke()
+            let inner = NSBezierPath(roundedRect: box.insetBy(dx: 0.5, dy: 0.5), xRadius: 2.5, yRadius: 2.5)
+            inner.lineWidth = 1
+            inner.stroke()
+        }
+    }
+
+    private func drawDeclaration(_ index: Int, at y: CGFloat) {
+        let declaration = rule.declarations[index]
+        drawCheckbox(on: declaration.enabled, enabled: rule.editable, at: y)
+        let (name, value, swatch) = parts(index, y: y)
+        draw(drawn[index].name, in: name)
+        if let swatch, let color = drawn[index].color {
+            let path = NSBezierPath(roundedRect: swatch, xRadius: 2, yRadius: 2)
+            color.setFill()
+            path.fill()
+            NSColor.black.withAlphaComponent(0.3).setStroke()
+            path.lineWidth = 0.5
+            path.stroke()
+        }
+        draw(drawn[index].value, in: value)
+    }
+
+    private func draw(_ text: NSAttributedString, in rect: NSRect) {
+        text.draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+    }
+
+    // MARK: Text and geometry
+
+    private func nameText(_ declaration: StyleDeclaration) -> NSAttributedString {
+        let dim = declaration.overridden || !declaration.enabled || declaration.inactive
+        let color = !declaration.parsedOK ? InspectorTheme.warning
+            : dim ? InspectorTheme.property.withAlphaComponent(0.5) : InspectorTheme.property
+        let text = NSMutableAttributedString(string: declaration.name, attributes: struck(declaration, color))
+        text.add(":", .secondaryLabelColor, font: font)
+        return text
+    }
+
+    private func valueText(_ declaration: StyleDeclaration) -> NSAttributedString {
+        let dim = declaration.overridden || !declaration.enabled || declaration.inactive
+        let text = NSMutableAttributedString(string: declaration.value + (declaration.important ? " !important" : ""),
+                                             attributes: struck(declaration, dim ? .tertiaryLabelColor : .labelColor))
+        text.add(";", .secondaryLabelColor, font: font)
+        return text
+    }
+
+    private func struck(_ declaration: StyleDeclaration, _ color: NSColor) -> [NSAttributedString.Key: Any] {
+        var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+        if declaration.overridden || !declaration.enabled { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+        return attributes
+    }
+
+    /// Where a declaration's name, value and colour swatch go.
+    private func parts(_ index: Int, y: CGFloat) -> (name: NSRect, value: NSRect, swatch: NSRect?) {
+        let name = NSRect(x: 26, y: y + 1, width: min(drawn[index].nameWidth, bounds.width * 0.5), height: 16)
+        var x = name.maxX + 4
+        var swatch: NSRect?
+        if drawn[index].color != nil {
+            swatch = NSRect(x: x, y: y + 4, width: 10, height: 10)
+            x += 14
+        }
+        return (name, NSRect(x: x, y: y + 1, width: max(bounds.width - x - 8, 20), height: 16), swatch)
     }
 
     private func selectorText() -> NSAttributedString {
         let out = NSMutableAttributedString()
-        let font = InspectorTheme.mono(11)
         if rule.selectors.count > 1, let matching = rule.matching {
             for (i, selector) in rule.selectors.enumerated() {
                 if i > 0 { out.add(", ", .secondaryLabelColor, font: font) }
@@ -1713,30 +1852,100 @@ final class RuleBlock: FlippedView {
         return out
     }
 
-    private func sourceLabel() -> NSTextField? {
+    /// `style.css:12`, `user agent stylesheet` or nothing for inline styles.
+    private func makeSourceText() -> NSAttributedString? {
         let text: String
         switch rule.origin {
         case "user-agent": text = "user agent stylesheet"
-        case "inline" where rule.styleSheetID == nil, "attributes": return nil
-        case "inline": return nil
+        case "inline", "attributes": return nil
         case "inspector": text = "inspector-stylesheet"
         default:
             guard let source = rule.source else { return nil }
             var name = URL(string: source)?.lastPathComponent ?? source
             // A <style> in the page, as DevTools names the document.
             if name.isEmpty || name == "/" { name = "(index)" }
-            let line = (rule.range?.int("startLine") ?? 0) + 1
-            text = "\(name.isEmpty ? source : name):\(line)"
+            text = "\(name):\((rule.range?.int("startLine") ?? 0) + 1)"
         }
-        let label = ClickableText(NSMutableAttributedString().add(text, rule.origin == "user-agent" ? .tertiaryLabelColor : InspectorTheme.link,
-                                                                   font: InspectorTheme.mono(10.5))) { [weak self] in
-            guard let self else { return }
-            styles?.reveal(rule)
+        let style = NSMutableParagraphStyle()
+        style.alignment = .right
+        style.lineBreakMode = .byTruncatingHead
+        return NSAttributedString(string: text, attributes: [
+            .font: InspectorTheme.mono(10.5), .paragraphStyle: style,
+            .foregroundColor: rule.origin == "user-agent" ? NSColor.tertiaryLabelColor : InspectorTheme.link,
+        ])
+    }
+
+    private func sourceRect(_ y: CGFloat) -> NSRect {
+        let width = min(sourceWidth, bounds.width * 0.45)
+        return NSRect(x: bounds.width - width - 8, y: y + 4, width: width, height: 16)
+    }
+
+    private func selectorRect(_ y: CGFloat) -> NSRect {
+        let source = self.source == nil ? 0 : sourceRect(y).width
+        return NSRect(x: 8, y: y + 4, width: max(bounds.width - 24 - source, 40), height: 16)
+    }
+
+    private func matchesFilter(_ declaration: StyleDeclaration) -> Bool {
+        "\(declaration.name): \(declaration.value)".localizedCaseInsensitiveContains(filter)
+    }
+
+    private func line(at point: NSPoint) -> (line: Line, y: CGFloat, height: CGFloat)? {
+        lines.first { point.y >= $0.y && point.y < $0.y + $0.height }
+    }
+
+    private func tip(for declaration: StyleDeclaration) -> String? {
+        declaration.inactive ? "Not inherited" : !declaration.parsedOK ? "Invalid property value" : nil
+    }
+
+    func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
+        guard let entry = line(at: point) else { return "" }
+        switch entry.line {
+        case .selector: return rule.source ?? ""
+        case .declaration(let index): return tip(for: rule.declarations[index]) ?? ""
+        default: return ""
         }
-        label.alignment = .right
-        label.lineBreakMode = .byTruncatingHead
-        label.toolTip = rule.source
-        return label
+    }
+
+    // MARK: Clicks
+
+    override func resetCursorRects() {
+        guard rule.editable else { return }
+        for entry in lines {
+            switch entry.line {
+            case .selector where rule.origin != "inline": addCursorRect(selectorRect(entry.y), cursor: .iBeam)
+            case .declaration(let index):
+                let parts = parts(index, y: entry.y)
+                addCursorRect(parts.name, cursor: .iBeam)
+                addCursorRect(parts.value, cursor: .iBeam)
+            default: break
+            }
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let entry = line(at: point) else { return }
+        switch entry.line {
+        case .selector:
+            if source != nil, sourceRect(entry.y).contains(point) {
+                styles?.reveal(rule)
+            } else if selectorRect(entry.y).contains(point) {
+                editSelector(at: entry.y)
+            }
+        case .declaration(let index):
+            let parts = parts(index, y: entry.y)
+            if point.x < parts.name.minX {
+                toggle(index)
+            } else if point.x < parts.value.minX {
+                editName(index, at: entry.y)
+            } else {
+                editValue(index, at: entry.y)
+            }
+        case .close:
+            addDeclaration()
+        default:
+            break
+        }
     }
 
     private func toggle(_ index: Int) {
@@ -1744,6 +1953,33 @@ final class RuleBlock: FlippedView {
         var declarations = rule.declarations
         declarations[index].enabled.toggle()
         styles?.setStyleText(rule, rule.text(with: declarations))
+    }
+
+    /// The name edited: typing `a: 1` replaces the whole declaration, and
+    /// leaving the name as it was moves on to an empty value.
+    private func editName(_ index: Int, at y: CGFloat) {
+        guard rule.editable else { return }
+        let declaration = rule.declarations[index]
+        InlineEditor.edit(declaration.name, at: parts(index, y: y).name, in: self, minWidth: 120) { [weak self] text in
+            guard let self, let text else { return }
+            if text.contains(":") {
+                edit(index, name: text, value: "")
+            } else if text != declaration.name {
+                edit(index, name: text, value: declaration.value)
+            } else if declaration.value.isEmpty {
+                editValue(index, at: y)
+            }
+        }
+    }
+
+    private func editValue(_ index: Int, at y: CGFloat) {
+        guard rule.editable else { return }
+        let declaration = rule.declarations[index]
+        let current = declaration.value + (declaration.important ? " !important" : "")
+        InlineEditor.edit(current, at: parts(index, y: y).value, in: self, minWidth: 140) { [weak self] text in
+            guard let self, let text, text != current else { return }
+            edit(index, name: declaration.name, value: text)
+        }
     }
 
     /// A name or value edited: "" removes the declaration; a value with
@@ -1776,24 +2012,38 @@ final class RuleBlock: FlippedView {
         }
     }
 
+    /// A new declaration on a line before the brace: its name, then its
+    /// value.
     private func addDeclaration() {
-        guard rule.editable else { return }
+        guard rule.editable, !adding else { return }
+        adding = true
+        styles?.blockResized()
+        guard let entry = lines.first(where: { if case .adding = $0.line { true } else { false } }) else { return }
         let index = rule.declarations.count
-        let row = DeclarationRow(StyleDeclaration(name: "", value: "", important: false, enabled: true, parsedOK: true), editable: true)
-        row.onEdit = { [weak self] name, value in
-            guard !name.isEmpty else { return }
-            self?.edit(index, name: name, value: value)
+        let nameRect = NSRect(x: 26, y: entry.y + 1, width: 120, height: 16)
+        InlineEditor.edit("", at: nameRect, in: self, minWidth: 120) { [weak self] name in
+            guard let self else { return }
+            guard let name, !name.isEmpty else { return finishAdding() }
+            if name.contains(":") {
+                finishAdding()
+                return edit(index, name: name, value: "")
+            }
+            InlineEditor.edit("", at: NSRect(x: nameRect.minX + 128, y: nameRect.minY, width: 140, height: 16), in: self, minWidth: 140) { [weak self] value in
+                guard let self else { return }
+                finishAdding()
+                if let value, !value.isEmpty { edit(index, name: name, value: value) }
+            }
         }
-        let closing = rowViews.last(where: { $0 is ClickableText }) ?? self
-        row.frame = NSRect(x: 0, y: closing.frame.minY, width: bounds.width, height: 18)
-        closing.frame.origin.y += 18
-        add(row)
-        row.beginEditingName()
     }
 
-    private func editSelector() {
-        guard rule.editable, rule.origin != "inline", let field = rowViews.first(where: { $0 is ClickableText }) else { return }
-        InlineEditor.edit(rule.selector, over: field, in: self) { [weak self] text in
+    private func finishAdding() {
+        adding = false
+        styles?.blockResized()
+    }
+
+    private func editSelector(at y: CGFloat) {
+        guard rule.editable, rule.origin != "inline" else { return }
+        InlineEditor.edit(rule.selector, at: selectorRect(y), in: self) { [weak self] text in
             guard let self, let text, !text.isEmpty, text != rule.selector else { return }
             styles?.setSelector(rule, text)
         }
@@ -1802,119 +2052,6 @@ final class RuleBlock: FlippedView {
 
 private extension Array {
     subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
-}
-
-/// `☑ color: ■ red;`: a checkbox, the name and value (each editable on
-/// click) and a swatch before colours.
-final class DeclarationRow: FlippedView {
-    private let declaration: StyleDeclaration
-    private let editable: Bool
-    private let check = NSButton(checkboxWithTitle: "", target: nil, action: nil)
-    private let name = ClickableText(NSAttributedString())
-    private let value = ClickableText(NSAttributedString())
-    private let swatch = NSView()
-    var onToggle: (() -> Void)?
-    var onEdit: ((String, String) -> Void)?
-
-    init(_ declaration: StyleDeclaration, editable: Bool) {
-        self.declaration = declaration
-        self.editable = editable
-        super.init(frame: .zero)
-        check.controlSize = .mini
-        check.state = declaration.enabled ? .on : .off
-        check.isEnabled = editable
-        check.onAction { [weak self] in self?.onToggle?() }
-        addSubview(check)
-        let font = InspectorTheme.mono(11)
-        let dim = declaration.overridden || !declaration.enabled || declaration.inactive
-        var attributes: [NSAttributedString.Key: Any] = [.font: font]
-        if declaration.overridden || !declaration.enabled { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
-        let nameText = NSMutableAttributedString(string: declaration.name, attributes: attributes)
-        nameText.addAttribute(.foregroundColor, value: dim ? InspectorTheme.property.withAlphaComponent(0.5) : InspectorTheme.property,
-                              range: NSRange(location: 0, length: nameText.length))
-        if !declaration.parsedOK { nameText.addAttribute(.foregroundColor, value: InspectorTheme.warning, range: NSRange(location: 0, length: nameText.length)) }
-        nameText.append(NSAttributedString(string: ":", attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
-        name.attributedStringValue = nameText
-        let valueText = NSMutableAttributedString(string: declaration.value + (declaration.important ? " !important" : ""), attributes: attributes)
-        valueText.addAttribute(.foregroundColor, value: dim ? NSColor.tertiaryLabelColor : NSColor.labelColor,
-                               range: NSRange(location: 0, length: valueText.length))
-        valueText.append(NSAttributedString(string: ";", attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
-        value.attributedStringValue = valueText
-        name.onClick = { [weak self] in self?.beginEditingName() }
-        value.onClick = { [weak self] in self?.beginEditingValue() }
-        addSubview(name)
-        addSubview(value)
-        swatch.wantsLayer = true
-        swatch.layer?.cornerRadius = 2
-        swatch.layer?.borderWidth = 0.5
-        swatch.layer?.borderColor = NSColor.black.withAlphaComponent(0.3).cgColor
-        if let color = CSSColor.parse(declaration.value) {
-            swatch.layer?.backgroundColor = color.cgColor
-        } else {
-            swatch.isHidden = true
-        }
-        addSubview(swatch)
-        toolTip = declaration.inactive ? "Not inherited" : !declaration.parsedOK ? "Invalid property value" : nil
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-    override func layout() {
-        super.layout()
-        check.frame = NSRect(x: 10, y: 2, width: 14, height: 14)
-        let nameWidth = min(name.textWidth, bounds.width * 0.5)
-        name.frame = NSRect(x: 26, y: 1, width: nameWidth, height: 16)
-        var x = name.frame.maxX + 2
-        if !swatch.isHidden {
-            swatch.frame = NSRect(x: x + 2, y: 4, width: 10, height: 10)
-            x += 16
-        }
-        value.frame = NSRect(x: x, y: 1, width: max(bounds.width - x - 8, 20), height: 16)
-    }
-
-    func beginEditingName() {
-        guard editable else { return }
-        InlineEditor.edit(declaration.name, over: name, in: self, minWidth: 120) { [weak self] text in
-            guard let self, let text else { return }
-            if text.contains(":") {
-                onEdit?(text, "")
-            } else if text != declaration.name {
-                onEdit?(text, declaration.value.isEmpty ? "" : declaration.value)
-            } else if declaration.value.isEmpty {
-                beginEditingValue()
-            }
-        }
-    }
-
-    func beginEditingValue() {
-        guard editable else { return }
-        let current = declaration.value + (declaration.important ? " !important" : "")
-        InlineEditor.edit(current, over: value, in: self, minWidth: 140) { [weak self] text in
-            guard let self, let text, text != current else { return }
-            onEdit?(declaration.name, text)
-        }
-    }
-}
-
-/// A one-line label that reports clicks.
-final class ClickableText: NSTextField {
-    var onClick: (() -> Void)?
-
-    convenience init(_ text: NSAttributedString, onClick: (() -> Void)? = nil) {
-        self.init(labelWithAttributedString: text)
-        self.onClick = onClick
-        lineBreakMode = .byTruncatingTail
-        maximumNumberOfLines = 1
-        cell?.truncatesLastVisibleLine = true
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        if let onClick { onClick() } else { super.mouseDown(with: event) }
-    }
-
-    override func resetCursorRects() {
-        if onClick != nil { addCursorRect(bounds, cursor: .iBeam) }
-    }
 }
 
 /// Edits a short text in place over a label: Return or leaving commits,
@@ -1950,7 +2087,8 @@ enum InlineEditor {
 
     private nonisolated(unsafe) static var key: UInt8 = 0
 
-    static func edit(_ text: String, over view: NSView, in host: NSView, minWidth: CGFloat = 80, done: @escaping (String?) -> Void) {
+    /// Edits over `frame`, in `host`'s coordinates.
+    static func edit(_ text: String, at frame: NSRect, in host: NSView, minWidth: CGFloat = 80, done: @escaping (String?) -> Void) {
         let field = NSTextField(string: text)
         field.font = InspectorTheme.mono(11)
         field.isBordered = true
@@ -1958,7 +2096,6 @@ enum InlineEditor {
         field.focusRingType = .none
         field.drawsBackground = true
         field.backgroundColor = InspectorTheme.surface
-        let frame = host.convert(view.frame, from: view.superview)
         field.frame = NSRect(x: frame.minX - 2, y: frame.minY - 1, width: max(frame.width + 8, minWidth),
                              height: frame.height + 2).intersection(host.bounds.insetBy(dx: 0, dy: -4))
         let delegate = Delegate(done)

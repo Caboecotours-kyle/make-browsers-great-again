@@ -226,7 +226,11 @@ final class ConsoleModel: InspectorModel {
 
     /// Commands typed at the prompt, oldest first, shared by every tab.
     static var history: [String] = UserDefaults.standard.stringArray(forKey: "inspector.console.history") ?? [] {
-        didSet { UserDefaults.standard.set(Array(history.suffix(200)), forKey: "inspector.console.history") }
+        didSet {
+            // Test copies share the person's defaults; theirs isn't kept.
+            guard InspectorSettings.debugPanel == nil else { return }
+            UserDefaults.standard.set(Array(history.suffix(200)), forKey: "inspector.console.history")
+        }
     }
 
     /// Runs `expression` as typed at the prompt, in the paused frame if the
@@ -1106,7 +1110,6 @@ final class ConsolePrompt: FlippedView, NSTextViewDelegate {
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        layer?.backgroundColor = InspectorTheme.surface.cgColor
         line.backgroundColor = InspectorTheme.separator.cgColor
     }
 

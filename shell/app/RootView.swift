@@ -147,8 +147,10 @@ final class RootView: NSView {
         let colors = store.tintColors(matchPage: UserDefaults.standard.bool(forKey: TintStyle.matchPageKey), dark: dark)
         // Docked DevTools taking the keyboard doesn't make the window inactive.
         let active = window.map { $0.isKeyWindow || $0.isMainWindow || NSApp.keyWindow?.parent === $0 } ?? true
-        let stops = Theme.gradient(for: Theme.blend(colors, at: store.pager.position), dark: dark, active: active,
-                                   style: TintStyle.saved).map(\.cgColor)
+        let tint = Theme.gradient(for: Theme.blend(colors, at: store.pager.position), dark: dark, active: active,
+                                  style: TintStyle.saved)
+        inspector.setTint(tint, curve: curve)
+        let stops = tint.map(\.cgColor)
         backdrop.setColors(stops, curve: curve)
         peek.backdrop.setColors(stops, curve: curve)
         smear.colors = stops

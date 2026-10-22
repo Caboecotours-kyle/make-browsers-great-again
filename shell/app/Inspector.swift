@@ -77,6 +77,14 @@ final class InspectorView: FlippedView {
         didSet { if cornerRadius != oldValue { card.cornerRadius = cornerRadius } }
     }
 
+    /// Follows the window's tint, the gradient's stops, along `curve` or at once.
+    func setTint(_ stops: [RGB], curve: Motion.Curve?) {
+        guard stops != InspectorTheme.tint else { return }
+        InspectorTheme.tint = stops
+        card.updateSurface(curve: curve)
+        NotificationCenter.default.post(name: InspectorTheme.tintChanged, object: nil)
+    }
+
     init(store: BrowserStore) {
         self.store = store
         header = InspectorHeaderView(store: store)
@@ -194,6 +202,22 @@ final class InspectorCardView: NSView {
 
     override var wantsUpdateLayer: Bool { true }
 
+    /// The surface's colour changed with the window's tint.
+    func updateSurface(curve: Motion.Curve?) {
+        CATransaction.begin()
+        if let curve, !Motion.reduced {
+            CATransaction.setAnimationDuration(curve.duration)
+            CATransaction.setAnimationTimingFunction(curve.timing)
+        } else {
+            CATransaction.setDisableActions(true)
+        }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            content.layer?.backgroundColor = InspectorTheme.surface.cgColor
+            shadowLayer.backgroundColor = InspectorTheme.surface.cgColor
+        }
+        CATransaction.commit()
+    }
+
     override func layout() {
         super.layout()
         content.frame = bounds
@@ -212,9 +236,9 @@ final class InspectorCardView: NSView {
             content.layer?.backgroundColor = InspectorTheme.surface.cgColor
             shadowLayer.backgroundColor = InspectorTheme.surface.cgColor
         }
-        shadowLayer.shadowColor = NSColor.black.withAlphaComponent(dark ? 0.3 : 0.07).cgColor
+        shadowLayer.shadowColor = NSColor.black.withAlphaComponent(dark ? 0.25 : 0.06).cgColor
         content.layer?.borderWidth = 1 / (window?.backingScaleFactor ?? 2)
-        content.layer?.borderColor = (dark ? NSColor.white.withAlphaComponent(0.1) : NSColor.black.withAlphaComponent(0.08)).cgColor
+        content.layer?.borderColor = (dark ? NSColor.white.withAlphaComponent(0.08) : NSColor.white.withAlphaComponent(0.6)).cgColor
     }
 }
 

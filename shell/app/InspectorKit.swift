@@ -39,20 +39,28 @@ enum InspectorTheme {
         $0.isDark ? NSColor(srgbRed: 0.33, green: 0.26, blue: 0.05, alpha: 0.45) : NSColor(srgbRed: 1, green: 0.98, blue: 0.88, alpha: 1)
     }
 
-    /// The panels' surface, a solid card beside the page.
-    static let surface = NSColor(name: nil) {
-        $0.isDark ? NSColor(white: 0.135, alpha: 1) : NSColor(white: 1, alpha: 1)
+    /// The window's tint (its gradient's stops), which the surface takes.
+    static var tint: [RGB] = []
+    /// The surface changed with the tint.
+    static let tintChanged = Notification.Name("MBGAInspectorTintChanged")
+
+    /// The panels' surface: the window's tint, deepened in the dark and
+    /// lightened in the light so code reads on it, as the sidebar sits on it.
+    static let surface = NSColor(name: nil) { appearance in
+        let dark = appearance.isDark
+        guard tint.count == 2 else { return dark ? NSColor(white: 0.135, alpha: 1) : .white }
+        let middle = tint[0].mixed(with: tint[1], 0.5)
+        return (dark ? middle.mixed(with: RGB(0x141416), 0.3) : middle.mixed(with: .white, 0.5)).nsColor
     }
-    /// Bars across a panel (toolbars, headers).
+    /// Bars across a panel (toolbars, headers): a shade over the surface.
     static let bar = NSColor(name: nil) {
-        $0.isDark ? NSColor(white: 0.165, alpha: 1) : NSColor(white: 0.965, alpha: 1)
+        $0.isDark ? .white.withAlphaComponent(0.035) : .white.withAlphaComponent(0.4)
     }
     static let separator = NSColor(name: nil) {
-        $0.isDark ? .white.withAlphaComponent(0.09) : .black.withAlphaComponent(0.09)
+        $0.isDark ? .white.withAlphaComponent(0.08) : .black.withAlphaComponent(0.07)
     }
-    static let selection = NSColor(name: nil) {
-        $0.isDark ? NSColor(srgbRed: 0.2, green: 0.36, blue: 0.62, alpha: 0.55) : NSColor(srgbRed: 0.83, green: 0.89, blue: 0.99, alpha: 1)
-    }
+    /// Selected rows: the sidebar's selected tab, as a pill.
+    static let selection = Theme.selectedFill
     /// The line the debugger is paused on.
     static let pausedLine = NSColor(name: nil) {
         $0.isDark ? NSColor(srgbRed: 0.2, green: 0.4, blue: 0.2, alpha: 0.6) : NSColor(srgbRed: 0.85, green: 0.95, blue: 0.85, alpha: 1)
@@ -257,7 +265,7 @@ final class InspectorButton: HoverView {
     }
 
     override func updateLayer() {
-        fill.paint(fill: hovering && isEnabled ? Theme.faint(0.08) : nil, in: effectiveAppearance)
+        fill.paint(fill: hovering && isEnabled ? Theme.hoverFill : nil, in: effectiveAppearance)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -325,14 +333,16 @@ final class InspectorChips: FlippedView {
         var on = false {
             didSet { needsDisplay = true; label.textColor = on ? .labelColor : .secondaryLabelColor }
         }
-        var width: CGFloat { label.textWidth + 8 }
+        var width: CGFloat { label.textWidth + 10 }
+
+        private let fill = FillLayer()
 
         init(_ title: String, click: @escaping () -> Void) {
             label = Label.make(title, size: 11, weight: .medium, color: .secondaryLabelColor)
             self.click = click
             super.init(frame: .zero)
-            layer?.cornerRadius = 5
-            layer?.cornerCurve = .continuous
+            layer?.addSublayer(fill)
+            fill.cornerRadius = 6
             addSubview(label)
         }
 
@@ -340,13 +350,13 @@ final class InspectorChips: FlippedView {
 
         override func layout() {
             super.layout()
-            label.frame = NSRect(x: 4, y: (bounds.height - 15) / 2, width: bounds.width - 6, height: 15)
+            label.frame = NSRect(x: 5, y: (bounds.height - 15) / 2, width: bounds.width - 8, height: 15)
+            fill.frame = bounds.insetBy(dx: 0, dy: 1)
         }
 
         override func updateLayer() {
-            effectiveAppearance.performAsCurrentDrawingAppearance {
-                layer?.backgroundColor = on ? Theme.faint(0.12).cgColor : hovering ? Theme.faint(0.06).cgColor : nil
-            }
+            fill.paint(fill: on ? Theme.selectedFill : hovering ? Theme.hoverFill : nil,
+                       shadow: on ? Theme.selectedShadow : nil, in: effectiveAppearance)
         }
 
         override func mouseUp(with event: NSEvent) {
@@ -355,9 +365,26 @@ final class InspectorChips: FlippedView {
     }
 }
 
-/// A search field sized for toolbars.
+/// A search field sized for toolbars, filled like the sidebar's fields.
 final class InspectorFilterField: NSSearchField {
     var onChange: ((String) -> Void)?
+    private let fill = FillLayer()
+
+    override class var cellClass: AnyClass? {
+        get { Cell.self }
+        set {}
+    }
+
+    /// Text centred in the field, which loses its bezel's insets.
+    private final class Cell: NSSearchFieldCell {
+        private func centred(_ rect: NSRect) -> NSRect {
+            let height = ceil((font?.ascender ?? 10) - (font?.descender ?? -3) + 1)
+            return NSRect(x: rect.minX, y: rect.midY - height / 2, width: rect.width, height: height)
+        }
+
+        override func searchTextRect(forBounds rect: NSRect) -> NSRect { centred(super.searchTextRect(forBounds: rect)) }
+        override func drawingRect(forBounds rect: NSRect) -> NSRect { centred(super.drawingRect(forBounds: rect)) }
+    }
 
     init(placeholder: String) {
         super.init(frame: .zero)
@@ -366,11 +393,35 @@ final class InspectorFilterField: NSSearchField {
         font = Theme.font(11)
         sendsSearchStringImmediately = true
         focusRingType = .none
+        isBezeled = false
+        isBordered = false
+        drawsBackground = false
+        wantsLayer = true
+        layer?.insertSublayer(fill, at: 0)
+        fill.cornerRadius = 6
         target = self
         action = #selector(changed)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fill.frame = bounds
+        CATransaction.commit()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        fill.paint(fill: Theme.controlFill, in: effectiveAppearance)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        fill.paint(fill: Theme.controlFill, in: effectiveAppearance)
+    }
 
     @objc private func changed() { onChange?(stringValue) }
 }
@@ -532,17 +583,30 @@ enum InspectorTable {
 /// accent colour, which is loud for dense lists.
 class InspectorRowView: NSTableRowView {
     var fill: NSColor?
+    /// Under the pointer, where a list shows it.
+    var hovered = false {
+        didSet { if hovered != oldValue { needsDisplay = true } }
+    }
 
     override func drawBackground(in dirtyRect: NSRect) {
         if let fill {
             fill.setFill()
             bounds.fill()
         }
+        if hovered, !isSelected {
+            Theme.hoverFill.setFill()
+            pill.fill()
+        }
+    }
+
+    private var pill: NSBezierPath {
+        let rect = bounds.insetBy(dx: 4, dy: 0.5)
+        return NSBezierPath(roundedRect: rect, xRadius: min(6, rect.height / 2), yRadius: min(6, rect.height / 2))
     }
 
     override func drawSelection(in dirtyRect: NSRect) {
         InspectorTheme.selection.setFill()
-        bounds.fill()
+        pill.fill()
     }
 
     override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
@@ -1163,7 +1227,10 @@ private final class LineNumberRuler: NSRulerView {
         clientView = textView
         ruleThickness = 36
         NotificationCenter.default.addObserver(self, selector: #selector(textChanged), name: NSText.didChangeNotification, object: textView)
+        NotificationCenter.default.addObserver(self, selector: #selector(tintChanged), name: InspectorTheme.tintChanged, object: nil)
     }
+
+    @objc private func tintChanged() { needsDisplay = true }
 
     required init(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
@@ -1196,6 +1263,9 @@ private final class LineNumberRuler: NSRulerView {
 
     override func drawHashMarksAndLabels(in rect: NSRect) {
         guard let textView, let layout = textView.layoutManager, let container = textView.textContainer else { return }
+        // Solid, over the text scrolled beneath it.
+        InspectorTheme.surface.setFill()
+        bounds.fill()
         InspectorTheme.bar.setFill()
         bounds.fill()
         let visible = textView.visibleRect

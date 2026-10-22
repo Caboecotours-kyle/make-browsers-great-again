@@ -837,6 +837,16 @@ class WebClient : public BaseClient,
 
   void OnFaviconURLChange(CefRefPtr<CefBrowser> browser,
                           const std::vector<CefString>& icon_urls) override {
+    // The same icons again (enabling DevTools domains announces them anew):
+    // the tab keeps the one it has.
+    std::vector<std::string> urls;
+    for (const auto& url : icon_urls) {
+      urls.push_back(url.ToString());
+    }
+    if (urls == favicon_urls_) {
+      return;
+    }
+    favicon_urls_ = urls;
     FaviconCallback::Start(view_, browser, icon_urls);
   }
 
@@ -1535,6 +1545,8 @@ class WebClient : public BaseClient,
   // The page script registered for new documents, and requests in flight.
   std::string document_script_;
   std::string deferred_url_;
+  // The page's icons last announced.
+  std::vector<std::string> favicon_urls_;
   // When the tab's engine view was made, for load timings in debug logs.
   CFAbsoluteTime created_;
   std::string prepared_url_;
