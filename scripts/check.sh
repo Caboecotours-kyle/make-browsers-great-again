@@ -32,6 +32,15 @@ if ((${#missing[@]})); then
   exit 1
 fi
 
+# An older SwiftFormat fails on rules it doesn't know before it gets to
+# .swiftformat's own --minversion, with a less helpful message.
+need="$(sed -n 's/^--minversion //p' .swiftformat)"
+have="$(swiftformat --version)"
+if [[ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -1)" != "$need" ]]; then
+  echo "SwiftFormat $have is older than $need, which .swiftformat needs: brew upgrade swiftformat" >&2
+  exit 1
+fi
+
 FAILED=()
 step() {
   local name="$1"
