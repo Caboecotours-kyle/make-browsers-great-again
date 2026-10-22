@@ -52,6 +52,30 @@ def wait_exit(proc, timeout=30):
         proc.wait()
 
 
+def quit_app(pid, timeout=60):
+    """Quits this process the way Cmd+Q does (a quit Apple event to it
+    alone, so another copy of the same app keeps running). Returns whether
+    it exited in time."""
+    script = (f"ObjC.import('AppKit'); "
+              f"var app = $.NSRunningApplication.runningApplicationWithProcessIdentifier({pid}); "
+              f"app.isNil() ? false : app.terminate")
+    subprocess.run(["osascript", "-l", "JavaScript", "-e", script], capture_output=True, timeout=30)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            # Our own child lingers until reaped, so collect it first.
+            if os.waitpid(pid, os.WNOHANG)[0] == pid:
+                return True
+        except ChildProcessError:
+            pass
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.2)
+    return False
+
+
 def wait_for_window(pid, timeout=30):
     start = time.time()
     while time.time() - start < timeout:

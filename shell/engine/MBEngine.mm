@@ -3104,6 +3104,16 @@ class CookieKeys : public CefCookieVisitor {
 
 - (void)engineDidCreateBrowser:(CefRefPtr<CefBrowser>)browser {
   _browser = browser;
+  // Chromium takes a page made in a hidden view for a visible one, and only
+  // looks again when its view is hidden, shown or moved. A tab loaded off
+  // screen (another space's, readied at launch) kept painting every frame
+  // and running its timers at full speed until first shown. Moving the
+  // engine's view out and back in makes Chromium look.
+  if (self.isHiddenOrHasHiddenAncestor) {
+    NSView* host = (__bridge NSView*)browser->GetHost()->GetWindowHandle();
+    [host removeFromSuperview];
+    [self addSubview:host];
+  }
   [self applyEmulations];
   NSArray<dispatch_block_t>* pending = _pendingCommands;
   _pendingCommands = nil;
