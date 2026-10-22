@@ -1302,9 +1302,12 @@ final class BrowserStore: NSObject {
 
     /// Archives old Today tabs if the person chose to, puts idle tabs to
     /// sleep and freezes idle hidden Today tabs according to the core's
-    /// policy, then asks the remaining hidden tabs whether they play audio so
-    /// they are kept awake.
+    /// policy. Refreshes native PiP state first so a manual window whose
+    /// frame scan is unresolved keeps its possible source awake.
     func sleepIdleTabs(pressure: MemoryPressure = .normal) {
+        for store in Self.open.allObjects {
+            for (id, view) in store.views where id != store.visibleTabID { view.probeMedia() }
+        }
         let archived = core.archiveByPolicy()
         destroyViews(archived)
         let sleepers = core.collectSleepers(pressure: pressure)
@@ -1312,9 +1315,6 @@ final class BrowserStore: NSObject {
         let freezers = core.collectFreezers()
         for id in freezers { keeper(of: id).views[id]?.setFrozen(true) }
         if !archived.isEmpty || !sleepers.isEmpty || !freezers.isEmpty { setNeedsRefresh() }
-        for store in Self.open.allObjects {
-            for (id, view) in store.views where id != store.visibleTabID { view.probeMedia() }
-        }
         updateCleanupOffer()
     }
 }
@@ -1849,6 +1849,7 @@ extension BrowserStore: MBWebViewDelegate {
         MainActor.assumeIsolated {
             guard isCurrent(view) else { return }
             core.setAudible(id: view.tabID, audible: busy)
+            if busy, core.thaw(id: view.tabID) { view.setFrozen(false) }
             setNeedsRefresh()
         }
     }

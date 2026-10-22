@@ -24,9 +24,11 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_cookie.h"
+#include "include/cef_pack_strings.h"
 #include "include/cef_parser.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_context_handler.h"
+#include "include/cef_resource_bundle.h"
 #include "include/cef_resource_handler.h"
 #include "include/wrapper/cef_library_loader.h"
 
@@ -2685,6 +2687,7 @@ class CookieKeys : public CefCookieVisitor {
   // session and context are the world of the frame the video is in. Done
   // is called once a switch away from the page is settled.
   BOOL _pictureInPicture;
+  BOOL _pipUncertainBusy;
   BOOL _pipByPage;
   NSString* _pipNonce;
   // An unanswered ownership scan outlives automatic-entry permission, so
@@ -3176,6 +3179,7 @@ class CookieKeys : public CefCookieVisitor {
 }
 
 - (void)probeMedia {
+  [self refreshPictureInPicture];
   if (_browser && !_capturing) {
     _browser->GetMainFrame()->ExecuteJavaScript(kMediaProbeScript, "", 0);
   }
@@ -3194,6 +3198,57 @@ static __weak MBWebView* g_pip_owner = nil;
 // An older scan cannot replace an owner observed or closed since it began.
 // Reserving automatic entry alone does not change this revision.
 static uint64_t g_pip_revision = 0;
+
+// The pinned CEF build's native video window is a floating AppKit window,
+// even when its video is in a frame the bounded scan cannot reach. Closing
+// it hides it without destroying it. Check visibility at the entry decision,
+// so an incomplete scan cannot become a permanent browser-wide veto.
+static BOOL PipWindowShown() {
+  if (NSApp.hidden) {
+    return YES;
+  }
+  NSArray<NSWindow*>* windows = NSApp.windows;
+  if (windows.count > 128) {
+    return YES;
+  }
+  static NSString* title = nil;
+  if (!title) {
+    auto bundle = CefResourceBundle::GetGlobal();
+    if (bundle) {
+      title =
+          ToNS(bundle->GetLocalizedString(IDS_PICTURE_IN_PICTURE_TITLE_TEXT));
+    }
+  }
+  if (title.length == 0) {
+    return YES;
+  }
+  for (NSWindow* window in windows) {
+    if (window.visible && ![window isKindOfClass:NSPanel.class] &&
+        window.level >= NSFloatingWindowLevel &&
+        ([window.title isEqualToString:title] ||
+         (window.collectionBehavior &
+          NSWindowCollectionBehaviorCanJoinAllSpaces))) {
+      return YES;
+    }
+  }
+  return NO;
+}
+
+// An unresolved source may own a manual window. Keep it awake while that
+// window is present and no observed owner can account for it. The existing
+// media probe refreshes this before the core's sleep/freeze decision.
+- (void)refreshPictureInPicture {
+  MBWebView* owner = g_pip_owner;
+  BOOL busy =
+      _pipScanNonce && !(owner && owner->_pictureInPicture) && PipWindowShown();
+  BOOL wasBusy =
+      _mediaPlaying || _capturing || _pictureInPicture || _pipUncertainBusy;
+  _pipUncertainBusy = busy;
+  if (wasBusy !=
+      (_mediaPlaying || _capturing || _pictureInPicture || _pipUncertainBusy)) {
+    [self.delegate webView:self didChangeBusy:!wasBusy];
+  }
+}
 
 - (void)enterPictureInPicture:(void (^)(void))done {
   [self settlePictureInPicture];
@@ -3280,7 +3335,7 @@ static uint64_t g_pip_revision = 0;
     if (!view || ![nonce isEqualToString:view->_pipNonce]) {
       return;
     }
-    if (taken || g_pip_owner != view || !view->_browser) {
+    if (taken || g_pip_owner != view || !view->_browser || PipWindowShown()) {
       [view endPictureInPicture];
       return;
     }
@@ -3312,9 +3367,9 @@ static uint64_t g_pip_revision = 0;
   }
 }
 
-// Pages on screen that have a window open take it over. Ones being switched
-// away from, including hidden ones whose ownership scan is unanswered,
-// are only looked at: |then| gets whether one has it.
+// Pages on screen that have a window open take it over. A page whose leave
+// is still pending is only looked at. Unresolved hidden pages need no new
+// scan: the native window check protects their manual window before entry.
 - (void)findOtherPicturesInPicture:(void (^)(BOOL taken))then {
   NSMutableArray<MBWebView*>* shown = [NSMutableArray array];
   NSMutableArray<MBWebView*>* leaving = [NSMutableArray array];
@@ -3322,7 +3377,7 @@ static uint64_t g_pip_revision = 0;
     if (view == self || !view->_browser || view->_closing || view->_frozen) {
       continue;
     }
-    if (view->_pipDone || view->_pipScanNonce) {
+    if (view->_pipDone) {
       [leaving addObject:view];
     } else if (view.window && !view.isHiddenOrHasHiddenAncestor) {
       [shown addObject:view];
@@ -3338,7 +3393,8 @@ static uint64_t g_pip_revision = 0;
     [view scanPictureInPicture:nil
                           then:^(PipFrames frames) {
                             if (!frames) {
-                              taken = YES;
+                              taken = taken || PipWindowShown();
+                              [view refreshPictureInPicture];
                             } else {
                               for (const PipFrame& frame : *frames) {
                                 taken = taken || frame.answer == "open";
@@ -3357,7 +3413,7 @@ static uint64_t g_pip_revision = 0;
                           then:^(PipFrames frames) {
                             MBWebView* other = weakView;
                             if (!frames) {
-                              taken = YES;
+                              taken = taken || PipWindowShown();
                             } else if (other &&
                                        [nonce isEqualToString:other->
                                                               _pipScanNonce]) {
@@ -3371,6 +3427,7 @@ static uint64_t g_pip_revision = 0;
                                 }
                               }
                             }
+                            [other refreshPictureInPicture];
                             if (--waiting == 0) {
                               then(taken);
                             }
@@ -3404,6 +3461,7 @@ static uint64_t g_pip_revision = 0;
     // Entry is cancelled, but the scan may still identify a manual window.
     // Keep its watch separate from the now-expired automatic callbacks.
     _pipNonce = nil;
+    [self refreshPictureInPicture];
     [self settlePictureInPicture];
     return;
   }
@@ -3437,6 +3495,7 @@ static uint64_t g_pip_revision = 0;
   _pipSession = nil;
   _pipContext = 0;
   [self engineSetPictureInPicture:NO];
+  [self refreshPictureInPicture];
   [self settlePictureInPicture];
 }
 
@@ -3709,6 +3768,12 @@ static uint64_t g_pip_revision = 0;
 }
 
 - (void)setFrozen:(BOOL)frozen {
+  if (frozen) {
+    [self refreshPictureInPicture];
+    if (_pipUncertainBusy) {
+      return;
+    }
+  }
   if (!_browser || _frozen == frozen) {
     return;
   }
@@ -3861,17 +3926,21 @@ static uint64_t g_pip_revision = 0;
 }
 
 - (void)engineSetMediaPlaying:(BOOL)playing {
-  BOOL wasBusy = _mediaPlaying || _capturing || _pictureInPicture;
+  BOOL wasBusy =
+      _mediaPlaying || _capturing || _pictureInPicture || _pipUncertainBusy;
   _mediaPlaying = playing;
-  if (wasBusy != (_mediaPlaying || _capturing || _pictureInPicture)) {
+  if (wasBusy !=
+      (_mediaPlaying || _capturing || _pictureInPicture || _pipUncertainBusy)) {
     [self.delegate webView:self didChangeBusy:!wasBusy];
   }
 }
 
 - (void)engineSetPictureInPicture:(BOOL)open {
-  BOOL wasBusy = _mediaPlaying || _capturing || _pictureInPicture;
+  BOOL wasBusy =
+      _mediaPlaying || _capturing || _pictureInPicture || _pipUncertainBusy;
   _pictureInPicture = open;
-  if (wasBusy != (_mediaPlaying || _capturing || _pictureInPicture)) {
+  if (wasBusy !=
+      (_mediaPlaying || _capturing || _pictureInPicture || _pipUncertainBusy)) {
     [self.delegate webView:self didChangeBusy:!wasBusy];
   }
 }
@@ -3938,9 +4007,11 @@ static uint64_t g_pip_revision = 0;
 }
 
 - (void)engineSetCapturing:(BOOL)capturing {
-  BOOL wasBusy = _mediaPlaying || _capturing || _pictureInPicture;
+  BOOL wasBusy =
+      _mediaPlaying || _capturing || _pictureInPicture || _pipUncertainBusy;
   _capturing = capturing;
-  if (wasBusy != (_mediaPlaying || _capturing || _pictureInPicture)) {
+  if (wasBusy !=
+      (_mediaPlaying || _capturing || _pictureInPicture || _pipUncertainBusy)) {
     [self.delegate webView:self didChangeBusy:!wasBusy];
   }
 }
